@@ -32,13 +32,15 @@ void ViewportWidget::initializeGL() {
 
     // Create renderer
     renderer_ = std::make_unique<Renderer>();
+    if (!renderer_->Initialize()) {
+        qWarning() << "Failed to initialize renderer!";
+    }
 }
 
 void ViewportWidget::paintGL() {
-    glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT);
-
-    // TODO: Render scene in Sprint 2
-    // For now, just clear the screen
+    if (renderer_) {
+        renderer_->Render(*camera_, width(), height());
+    }
 }
 
 void ViewportWidget::resizeGL(int w, int h) {
@@ -92,26 +94,46 @@ void ViewportWidget::keyPressEvent(QKeyEvent *event) {
 
         case Qt::Key_1:
             if (event->modifiers() == Qt::NoModifier) {
-                // TODO: Front view
+                camera_->SetProjectionMode(ProjectionMode::OrthographicFront);
+                camera_->SetPosition(Vector3(0.0f, 0.0f, 5.0f));
+                camera_->SetTarget(Vector3(0.0f, 0.0f, 0.0f));
+                update();
             }
             break;
 
         case Qt::Key_3:
             if (event->modifiers() == Qt::NoModifier) {
-                // TODO: Right view
+                camera_->SetProjectionMode(ProjectionMode::OrthographicRight);
+                camera_->SetPosition(Vector3(5.0f, 0.0f, 0.0f));
+                camera_->SetTarget(Vector3(0.0f, 0.0f, 0.0f));
+                update();
             }
             break;
 
         case Qt::Key_7:
             if (event->modifiers() == Qt::NoModifier) {
-                // TODO: Top view
+                camera_->SetProjectionMode(ProjectionMode::OrthographicTop);
+                camera_->SetPosition(Vector3(0.0f, 5.0f, 0.0f));
+                camera_->SetTarget(Vector3(0.0f, 0.0f, 0.0f));
+                update();
             }
             break;
 
         case Qt::Key_5:
             if (event->modifiers() == Qt::NoModifier) {
-                // TODO: Toggle perspective/ortho
+                if (camera_->GetProjectionMode() == ProjectionMode::Perspective) {
+                    camera_->SetProjectionMode(ProjectionMode::OrthographicFront);
+                } else {
+                    camera_->SetProjectionMode(ProjectionMode::Perspective);
+                }
+                update();
             }
+            break;
+
+        case Qt::Key_F:
+            // Focus on selection - for now just reset camera
+            camera_->Reset();
+            update();
             break;
 
         default:
