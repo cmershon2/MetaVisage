@@ -1,0 +1,54 @@
+# Build directories
+build/
+bin/
+lib/
+*.exe
+*.dll
+*.so
+*.dylib
+
+# Qt MOC files
+moc_*.cpp
+ui_*.h
+qrc_*.cpp
+
+# CMake
+CMakeCache.txt
+CMakeFiles/
+cmake_install.cmake
+Makefile
+*.cmake
+
+# IDE files
+.vscode/
+.idea/
+*.pro.user
+*.vcxproj
+*.vcxproj.filters
+*.sln
+
+# Compiler output
+*.o
+*.obj
+*.a
+*.lib
+
+# Temporary files
+*.tmp
+*.log
+*.swp
+*.swo
+*~
+
+# OS files
+.DS_Store
+Thumbs.db
+desktop.ini
+
+# Project files
+*.mmproj
+*.autosave
+
+# User config
+config.ini
+.settings
