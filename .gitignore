@@ -21,6 +21,7 @@ Makefile
 
 # IDE files
 .vscode/
+.claude
 .idea/
 *.pro.user
 *.vcxproj
