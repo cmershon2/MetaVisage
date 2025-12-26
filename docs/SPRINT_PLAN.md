@@ -30,13 +30,13 @@ This sprint plan breaks down the MetaVisage development into 12 two-week sprints
 
 #### Story 1.1: Development Environment Setup
 **Tasks:**
-- [ ] Install and configure Qt 6.x framework *(User requirement)*
+- [x] Install and configure Qt 6.x framework *(User requirement)*
 - [x] Set up CMake build system
 - [x] Configure OpenGL 4.3+ rendering context
 - [ ] Install and link Assimp library *(Sprint 2)*
 - [x] Create Git repository with .gitignore
 - [x] Set up project folder structure
-- [ ] Configure IDE (Visual Studio/CLion) *(User requirement)*
+- [x] Configure IDE (Visual Studio/CLion) *(User requirement)*
 
 #### Story 1.2: Application Shell
 **Tasks:**
@@ -61,7 +61,7 @@ This sprint plan breaks down the MetaVisage development into 12 two-week sprints
 - [x] Status bar displays text
 - [x] Application can be closed cleanly
 - [x] Core data model classes compile without errors
-- [ ] Project builds successfully on Windows 10/11 *(Requires Qt installation)*
+- [x] Project builds successfully on Windows 10/11 *(Requires Qt installation)*
 
 ### Progress Notes (Dec 26, 2025)
 **Completed:**
