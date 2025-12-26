@@ -1,6 +1,13 @@
 #include "core/Mesh.h"
 #include <algorithm>
 #include <cmath>
+#ifdef HAVE_ASSIMP
+#include <assimp/Importer.hpp>
+#include <assimp/scene.h>
+#include <assimp/postprocess.h>
+#endif
+#include <QDebug>
+#include <QFileInfo>
 
 namespace MetaVisage {
 
@@ -11,9 +18,118 @@ Mesh::~Mesh() {
 }
 
 bool Mesh::Load(const QString& filepath) {
-    // TODO: Implement Assimp loading in Sprint 2
+    Clear();
     filepath_ = filepath;
+
+#ifdef HAVE_ASSIMP
+    Assimp::Importer importer;
+    const aiScene* scene = importer.ReadFile(
+        filepath.toStdString(),
+        aiProcess_Triangulate |
+        aiProcess_JoinIdenticalVertices |
+        aiProcess_GenSmoothNormals |
+        aiProcess_FlipUVs
+    );
+
+    if (!scene || scene->mFlags & AI_SCENE_FLAGS_INCOMPLETE || !scene->mRootNode) {
+        qWarning() << "Assimp error:" << importer.GetErrorString();
+        return false;
+    }
+
+    // For simplicity, load only the first mesh
+    if (scene->mNumMeshes == 0) {
+        qWarning() << "No meshes found in file:" << filepath;
+        return false;
+    }
+
+    aiMesh* mesh = scene->mMeshes[0];
+    name_ = QString::fromStdString(mesh->mName.C_Str());
+    if (name_.isEmpty()) {
+        QFileInfo fileInfo(filepath);
+        name_ = fileInfo.baseName();
+    }
+
+    // Load vertices
+    vertices_.reserve(mesh->mNumVertices);
+    for (unsigned int i = 0; i < mesh->mNumVertices; ++i) {
+        aiVector3D vertex = mesh->mVertices[i];
+        vertices_.push_back(Vector3(vertex.x, vertex.y, vertex.z));
+    }
+
+    // Load normals
+    if (mesh->HasNormals()) {
+        normals_.reserve(mesh->mNumVertices);
+        for (unsigned int i = 0; i < mesh->mNumVertices; ++i) {
+            aiVector3D normal = mesh->mNormals[i];
+            normals_.push_back(Vector3(normal.x, normal.y, normal.z));
+        }
+    }
+
+    // Load UVs (first texture coordinate set)
+    if (mesh->HasTextureCoords(0)) {
+        uvs_.reserve(mesh->mNumVertices);
+        for (unsigned int i = 0; i < mesh->mNumVertices; ++i) {
+            aiVector3D uv = mesh->mTextureCoords[0][i];
+            uvs_.push_back(Vector2(uv.x, uv.y));
+        }
+    }
+
+    // Load faces
+    faces_.reserve(mesh->mNumFaces);
+    for (unsigned int i = 0; i < mesh->mNumFaces; ++i) {
+        aiFace face = mesh->mFaces[i];
+        Face meshFace;
+        meshFace.vertexIndices.reserve(face.mNumIndices);
+        for (unsigned int j = 0; j < face.mNumIndices; ++j) {
+            meshFace.vertexIndices.push_back(face.mIndices[j]);
+        }
+        meshFace.materialIndex = mesh->mMaterialIndex;
+        faces_.push_back(meshFace);
+    }
+
+    // Load materials
+    if (scene->HasMaterials()) {
+        materials_.reserve(scene->mNumMaterials);
+        for (unsigned int i = 0; i < scene->mNumMaterials; ++i) {
+            aiMaterial* mat = scene->mMaterials[i];
+            Material material;
+
+            aiString name;
+            if (mat->Get(AI_MATKEY_NAME, name) == AI_SUCCESS) {
+                material.name = name.C_Str();
+            }
+
+            aiColor3D diffuse(0.8f, 0.8f, 0.8f);
+            mat->Get(AI_MATKEY_COLOR_DIFFUSE, diffuse);
+            material.diffuseColor = Vector3(diffuse.r, diffuse.g, diffuse.b);
+
+            aiColor3D specular(1.0f, 1.0f, 1.0f);
+            mat->Get(AI_MATKEY_COLOR_SPECULAR, specular);
+            material.specularColor = Vector3(specular.r, specular.g, specular.b);
+
+            float shininess = 32.0f;
+            mat->Get(AI_MATKEY_SHININESS, shininess);
+            material.shininess = shininess;
+
+            materials_.push_back(material);
+        }
+    }
+
+    CalculateBounds();
+
+    qDebug() << "Loaded mesh:" << name_;
+    qDebug() << "  Vertices:" << vertices_.size();
+    qDebug() << "  Faces:" << faces_.size();
+    qDebug() << "  Normals:" << normals_.size();
+    qDebug() << "  UVs:" << uvs_.size();
+    qDebug() << "  Materials:" << materials_.size();
+
+    return Validate();
+#else
+    qWarning() << "Assimp not available - cannot load mesh:" << filepath;
+    qWarning() << "To enable mesh loading, install Assimp: vcpkg install assimp:x64-mingw-dynamic";
     return false;
+#endif
 }
 
 bool Mesh::Save(const QString& filepath) {

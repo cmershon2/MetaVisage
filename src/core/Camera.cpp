@@ -87,13 +87,20 @@ void Camera::UpdatePositionFromAngles() {
 }
 
 Matrix4x4 Camera::GetViewMatrix() const {
-    // TODO: Implement proper view matrix calculation
-    return Matrix4x4::Identity();
+    return Matrix4x4::LookAt(position_, target_, up_);
 }
 
 Matrix4x4 Camera::GetProjectionMatrix(float aspectRatio) const {
-    // TODO: Implement proper projection matrix calculation
-    return Matrix4x4::Identity();
+    if (projectionMode_ == ProjectionMode::Perspective) {
+        return Matrix4x4::Perspective(fov_, aspectRatio, nearPlane_, farPlane_);
+    } else {
+        float orthoSize = distance_;
+        float left = -orthoSize * aspectRatio;
+        float right = orthoSize * aspectRatio;
+        float bottom = -orthoSize;
+        float top = orthoSize;
+        return Matrix4x4::Orthographic(left, right, bottom, top, nearPlane_, farPlane_);
+    }
 }
 
 } // namespace MetaVisage

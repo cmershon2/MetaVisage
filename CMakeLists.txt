@@ -24,6 +24,16 @@ find_package(Qt6 REQUIRED COMPONENTS
 # Find OpenGL
 find_package(OpenGL REQUIRED)
 
+# Find Assimp (optional for Sprint 2 testing)
+find_package(assimp CONFIG)
+
+if(assimp_FOUND)
+    message(STATUS "Assimp found - mesh loading enabled")
+    add_compile_definitions(HAVE_ASSIMP)
+else()
+    message(WARNING "Assimp not found - mesh loading will be disabled. Install with: vcpkg install assimp:x64-mingw-dynamic")
+endif()
+
 # Include directories
 include_directories(
     ${CMAKE_CURRENT_SOURCE_DIR}/include
@@ -73,6 +83,11 @@ target_link_libraries(${PROJECT_NAME}
     OpenGL::GL
 )
 
+# Link Assimp if found
+if(assimp_FOUND)
+    target_link_libraries(${PROJECT_NAME} assimp::assimp)
+endif()
+
 # Set compiler warnings
 if(MSVC)
     target_compile_options(${PROJECT_NAME} PRIVATE /W4)
@@ -81,8 +96,16 @@ else()
 endif()
 
 # Copy assets to build directory
-file(COPY ${CMAKE_CURRENT_SOURCE_DIR}/assets
-     DESTINATION ${CMAKE_RUNTIME_OUTPUT_DIRECTORY})
+# For multi-config generators (MSVC), copy to each config directory
+if(MSVC)
+    file(COPY ${CMAKE_CURRENT_SOURCE_DIR}/assets
+         DESTINATION ${CMAKE_RUNTIME_OUTPUT_DIRECTORY}/Debug)
+    file(COPY ${CMAKE_CURRENT_SOURCE_DIR}/assets
+         DESTINATION ${CMAKE_RUNTIME_OUTPUT_DIRECTORY}/Release)
+else()
+    file(COPY ${CMAKE_CURRENT_SOURCE_DIR}/assets
+         DESTINATION ${CMAKE_RUNTIME_OUTPUT_DIRECTORY})
+endif()
 
 # Installation
 install(TARGETS ${PROJECT_NAME}

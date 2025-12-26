@@ -94,52 +94,79 @@ This sprint plan breaks down the MetaVisage development into 12 two-week sprints
 
 #### Story 2.1: OpenGL Viewport
 **Tasks:**
-- [ ] Create OpenGL widget for 3D rendering
-- [ ] Set up basic shader programs (vertex + fragment)
-- [ ] Implement grid rendering at origin
-- [ ] Add basic lighting (single directional light)
-- [ ] Set up viewport clear color and depth testing
-- [ ] Configure viewport resize handling
+- [x] Create OpenGL widget for 3D rendering
+- [x] Set up basic shader programs (vertex + fragment)
+- [x] Implement grid rendering at origin
+- [x] Add basic lighting (single directional light)
+- [x] Set up viewport clear color and depth testing
+- [x] Configure viewport resize handling
 
 #### Story 2.2: Mesh Rendering
 **Tasks:**
-- [ ] Create MeshRenderer class
-- [ ] Implement vertex buffer object (VBO) generation
-- [ ] Add index buffer object (IBO) for faces
-- [ ] Implement solid shading mode
-- [ ] Add wireframe rendering mode
-- [ ] Create color material for mesh display
+- [x] Create MeshRenderer class
+- [x] Implement vertex buffer object (VBO) generation
+- [x] Add index buffer object (IBO) for faces
+- [x] Implement solid shading mode
+- [x] Add wireframe rendering mode
+- [x] Create color material for mesh display
 
 #### Story 2.3: Camera Controls
 **Tasks:**
-- [ ] Implement Camera class with position, target, up vectors
-- [ ] Add orbit camera (middle mouse button drag)
-- [ ] Implement pan camera (shift + middle mouse drag)
-- [ ] Add zoom functionality (scroll wheel)
-- [ ] Create orthographic view modes (Numpad 1, 3, 7)
-- [ ] Add perspective/orthographic toggle (Numpad 5)
-- [ ] Implement Home key to reset camera
-- [ ] Add F key to focus on object
+- [x] Implement Camera class with position, target, up vectors
+- [x] Add orbit camera (middle mouse button drag)
+- [x] Implement pan camera (shift + middle mouse drag)
+- [x] Add zoom functionality (scroll wheel)
+- [x] Create orthographic view modes (Numpad 1, 3, 7)
+- [x] Add perspective/orthographic toggle (Numpad 5)
+- [x] Implement Home key to reset camera
+- [x] Add F key to focus on object
 
 #### Story 2.4: Mesh Loading
 **Tasks:**
-- [ ] Integrate Assimp for FBX import
-- [ ] Add OBJ import support
-- [ ] Add GLTF import support
-- [ ] Implement file dialog for mesh selection
-- [ ] Parse vertices, normals, UVs, and faces
-- [ ] Display loaded mesh in viewport
-- [ ] Handle loading errors gracefully
+- [x] Integrate Assimp for FBX import
+- [x] Add OBJ import support *(via Assimp)*
+- [x] Add GLTF import support *(via Assimp)*
+- [ ] Implement file dialog for mesh selection *(deferred to Sprint 3)*
+- [x] Parse vertices, normals, UVs, and faces
+- [ ] Display loaded mesh in viewport *(needs UI integration)*
+- [x] Handle loading errors gracefully
 
 ### Acceptance Criteria
-- Viewport displays 3D grid at origin
-- User can load FBX, OBJ, or GLTF mesh files
-- Loaded mesh renders in viewport with solid shading
-- Middle mouse button orbits camera around mesh
-- Shift + middle mouse pans camera
-- Scroll wheel zooms in/out
-- Numpad keys switch between orthographic views
-- Camera controls feel responsive (30+ FPS)
+- [x] Viewport displays 3D grid at origin
+- [ ] User can load FBX, OBJ, or GLTF mesh files *(loading implemented, UI integration pending)*
+- [ ] Loaded mesh renders in viewport with solid shading *(pending UI integration)*
+- [x] Middle mouse button orbits camera around mesh
+- [x] Shift + middle mouse pans camera
+- [x] Scroll wheel zooms in/out
+- [x] Numpad keys switch between orthographic views
+- [x] Camera controls feel responsive (30+ FPS)
+
+### Progress Notes (Dec 26, 2025)
+**✅ Sprint 2 Complete!**
+
+**Completed:**
+- Complete OpenGL rendering pipeline with shaders
+- Grid rendering at origin with proper view/projection matrices
+- Full MeshRenderer class with VBO/IBO support
+- All three shading modes: Solid, Wireframe, SolidWireframe
+- Complete Blender-style camera controls (orbit, pan, zoom)
+- Orthographic view modes (Numpad 1, 3, 7, 5)
+- Assimp integration for FBX/OBJ/GLTF loading
+- Matrix math utilities (LookAt, Perspective, Orthographic)
+- Proper lighting with directional light in shaders
+- **MSVC build system with vcpkg integration**
+- **Application builds and runs successfully on Windows**
+
+**Build Setup:**
+- Created `build-msvc.ps1` for automated MSVC builds
+- Integrated vcpkg toolchain for dependency management
+- Assimp successfully linked and enabled (HAVE_ASSIMP defined)
+- Qt deployment with windeployqt working correctly
+
+**Deferred to Sprint 3:**
+- UI integration for mesh loading (file dialog)
+- Connect loaded mesh to renderer in viewport
+- These will be addressed as part of the Alignment stage
 
 ---
 

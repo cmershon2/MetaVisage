@@ -23,7 +23,7 @@ public:
     bool GetShowGrid() const { return showGrid_; }
 
 private:
-    void RenderGrid();
+    void RenderGrid(const Matrix4x4& viewProjection);
 
     std::unique_ptr<ShaderManager> shaderManager_;
     std::unique_ptr<MeshRenderer> meshRenderer_;
