@@ -12,6 +12,7 @@
 namespace MetaVisage {
 
 class Renderer;
+class Project;
 
 class ViewportWidget : public QOpenGLWidget, protected QOpenGLFunctions_4_3_Core {
     Q_OBJECT
@@ -19,6 +20,9 @@ class ViewportWidget : public QOpenGLWidget, protected QOpenGLFunctions_4_3_Core
 public:
     explicit ViewportWidget(QWidget *parent = nullptr);
     ~ViewportWidget();
+
+    void SetProject(Project* project) { project_ = project; }
+    Camera* GetCamera() { return camera_.get(); }
 
 protected:
     // OpenGL functions
@@ -36,6 +40,7 @@ protected:
 private:
     std::unique_ptr<Camera> camera_;
     std::unique_ptr<Renderer> renderer_;
+    Project* project_;
 
     // Mouse state
     QPoint lastMousePos_;

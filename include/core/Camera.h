@@ -32,6 +32,7 @@ public:
     void Zoom(float delta);
     void Reset();
     void FocusOn(const Vector3& point, float distance);
+    void FocusOnBounds(const BoundingBox& bounds);
 
     // Matrix generation
     Matrix4x4 GetViewMatrix() const;

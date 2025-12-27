@@ -11,6 +11,7 @@ namespace MetaVisage {
 // Forward declarations
 class Mesh;
 class Material;
+struct Matrix4x4;
 
 // Basic vector types
 struct Vector2 {
@@ -70,6 +71,25 @@ struct Quaternion {
     Quaternion(float x_, float y_, float z_, float w_) : x(x_), y(y_), z(z_), w(w_) {}
 
     static Quaternion Identity() { return Quaternion(0.0f, 0.0f, 0.0f, 1.0f); }
+
+    // Create quaternion from axis-angle (angle in degrees)
+    static Quaternion FromAxisAngle(const Vector3& axis, float angleDegrees) {
+        const float PI = 3.14159265359f;
+        float angleRad = angleDegrees * PI / 180.0f;
+        float halfAngle = angleRad * 0.5f;
+        float s = std::sin(halfAngle);
+        Vector3 normalizedAxis = axis.Normalized();
+        return Quaternion(
+            normalizedAxis.x * s,
+            normalizedAxis.y * s,
+            normalizedAxis.z * s,
+            std::cos(halfAngle)
+        );
+    }
+
+    // Convert quaternion to rotation matrix (column-major for OpenGL)
+    // Defined after Matrix4x4
+    Matrix4x4 ToMatrix() const;
 };
 
 struct Matrix4x4 {
@@ -133,13 +153,35 @@ struct Matrix4x4 {
         return result;
     }
 
+    // Create translation matrix (column-major for OpenGL)
+    static Matrix4x4 Translation(const Vector3& t) {
+        Matrix4x4 result;
+        result.m[12] = t.x;
+        result.m[13] = t.y;
+        result.m[14] = t.z;
+        return result;
+    }
+
+    // Create scale matrix (column-major for OpenGL)
+    static Matrix4x4 Scale(const Vector3& s) {
+        Matrix4x4 result;
+        result.m[0] = s.x;
+        result.m[5] = s.y;
+        result.m[10] = s.z;
+        return result;
+    }
+
+    // Column-major matrix multiplication (for OpenGL)
+    // result = this * other (column-major convention)
     Matrix4x4 operator*(const Matrix4x4& other) const {
         Matrix4x4 result;
-        for (int i = 0; i < 4; ++i) {
-            for (int j = 0; j < 4; ++j) {
-                result.m[i * 4 + j] = 0.0f;
+        for (int i = 0; i < 16; ++i) result.m[i] = 0.0f;
+
+        for (int col = 0; col < 4; ++col) {
+            for (int row = 0; row < 4; ++row) {
                 for (int k = 0; k < 4; ++k) {
-                    result.m[i * 4 + j] += m[i * 4 + k] * other.m[k * 4 + j];
+                    // Column-major: element at (row, col) is at index [col * 4 + row]
+                    result.m[col * 4 + row] += m[k * 4 + row] * other.m[col * 4 + k];
                 }
             }
         }
@@ -156,8 +198,179 @@ struct Matrix4x4 {
         return result;
     }
 
+    // Inverse for 4x4 matrix (used for normal matrix calculation)
+    Matrix4x4 Inverse() const {
+        Matrix4x4 inv;
+        float det;
+
+        inv.m[0] = m[5]  * m[10] * m[15] -
+                   m[5]  * m[11] * m[14] -
+                   m[9]  * m[6]  * m[15] +
+                   m[9]  * m[7]  * m[14] +
+                   m[13] * m[6]  * m[11] -
+                   m[13] * m[7]  * m[10];
+
+        inv.m[4] = -m[4]  * m[10] * m[15] +
+                    m[4]  * m[11] * m[14] +
+                    m[8]  * m[6]  * m[15] -
+                    m[8]  * m[7]  * m[14] -
+                    m[12] * m[6]  * m[11] +
+                    m[12] * m[7]  * m[10];
+
+        inv.m[8] = m[4]  * m[9] * m[15] -
+                   m[4]  * m[11] * m[13] -
+                   m[8]  * m[5] * m[15] +
+                   m[8]  * m[7] * m[13] +
+                   m[12] * m[5] * m[11] -
+                   m[12] * m[7] * m[9];
+
+        inv.m[12] = -m[4]  * m[9] * m[14] +
+                     m[4]  * m[10] * m[13] +
+                     m[8]  * m[5] * m[14] -
+                     m[8]  * m[6] * m[13] -
+                     m[12] * m[5] * m[10] +
+                     m[12] * m[6] * m[9];
+
+        inv.m[1] = -m[1]  * m[10] * m[15] +
+                    m[1]  * m[11] * m[14] +
+                    m[9]  * m[2] * m[15] -
+                    m[9]  * m[3] * m[14] -
+                    m[13] * m[2] * m[11] +
+                    m[13] * m[3] * m[10];
+
+        inv.m[5] = m[0]  * m[10] * m[15] -
+                   m[0]  * m[11] * m[14] -
+                   m[8]  * m[2] * m[15] +
+                   m[8]  * m[3] * m[14] +
+                   m[12] * m[2] * m[11] -
+                   m[12] * m[3] * m[10];
+
+        inv.m[9] = -m[0]  * m[9] * m[15] +
+                    m[0]  * m[11] * m[13] +
+                    m[8]  * m[1] * m[15] -
+                    m[8]  * m[3] * m[13] -
+                    m[12] * m[1] * m[11] +
+                    m[12] * m[3] * m[9];
+
+        inv.m[13] = m[0]  * m[9] * m[14] -
+                    m[0]  * m[10] * m[13] -
+                    m[8]  * m[1] * m[14] +
+                    m[8]  * m[2] * m[13] +
+                    m[12] * m[1] * m[10] -
+                    m[12] * m[2] * m[9];
+
+        inv.m[2] = m[1]  * m[6] * m[15] -
+                   m[1]  * m[7] * m[14] -
+                   m[5]  * m[2] * m[15] +
+                   m[5]  * m[3] * m[14] +
+                   m[13] * m[2] * m[7] -
+                   m[13] * m[3] * m[6];
+
+        inv.m[6] = -m[0]  * m[6] * m[15] +
+                    m[0]  * m[7] * m[14] +
+                    m[4]  * m[2] * m[15] -
+                    m[4]  * m[3] * m[14] -
+                    m[12] * m[2] * m[7] +
+                    m[12] * m[3] * m[6];
+
+        inv.m[10] = m[0]  * m[5] * m[15] -
+                    m[0]  * m[7] * m[13] -
+                    m[4]  * m[1] * m[15] +
+                    m[4]  * m[3] * m[13] +
+                    m[12] * m[1] * m[7] -
+                    m[12] * m[3] * m[5];
+
+        inv.m[14] = -m[0]  * m[5] * m[14] +
+                     m[0]  * m[6] * m[13] +
+                     m[4]  * m[1] * m[14] -
+                     m[4]  * m[2] * m[13] -
+                     m[12] * m[1] * m[6] +
+                     m[12] * m[2] * m[5];
+
+        inv.m[3] = -m[1] * m[6] * m[11] +
+                    m[1] * m[7] * m[10] +
+                    m[5] * m[2] * m[11] -
+                    m[5] * m[3] * m[10] -
+                    m[9] * m[2] * m[7] +
+                    m[9] * m[3] * m[6];
+
+        inv.m[7] = m[0] * m[6] * m[11] -
+                   m[0] * m[7] * m[10] -
+                   m[4] * m[2] * m[11] +
+                   m[4] * m[3] * m[10] +
+                   m[8] * m[2] * m[7] -
+                   m[8] * m[3] * m[6];
+
+        inv.m[11] = -m[0] * m[5] * m[11] +
+                     m[0] * m[7] * m[9] +
+                     m[4] * m[1] * m[11] -
+                     m[4] * m[3] * m[9] -
+                     m[8] * m[1] * m[7] +
+                     m[8] * m[3] * m[5];
+
+        inv.m[15] = m[0] * m[5] * m[10] -
+                    m[0] * m[6] * m[9] -
+                    m[4] * m[1] * m[10] +
+                    m[4] * m[2] * m[9] +
+                    m[8] * m[1] * m[6] -
+                    m[8] * m[2] * m[5];
+
+        det = m[0] * inv.m[0] + m[1] * inv.m[4] + m[2] * inv.m[8] + m[3] * inv.m[12];
+
+        if (det == 0.0f) {
+            return Matrix4x4::Identity();
+        }
+
+        det = 1.0f / det;
+
+        Matrix4x4 result;
+        for (int i = 0; i < 16; i++) {
+            result.m[i] = inv.m[i] * det;
+        }
+
+        return result;
+    }
+
     const float* Data() const { return m; }
 };
+
+// Quaternion::ToMatrix implementation (needs Matrix4x4 to be fully defined)
+inline Matrix4x4 Quaternion::ToMatrix() const {
+    Matrix4x4 result;
+
+    float xx = x * x;
+    float xy = x * y;
+    float xz = x * z;
+    float xw = x * w;
+    float yy = y * y;
+    float yz = y * z;
+    float yw = y * w;
+    float zz = z * z;
+    float zw = z * w;
+
+    // Column-major order for OpenGL
+    result.m[0] = 1.0f - 2.0f * (yy + zz);
+    result.m[1] = 2.0f * (xy + zw);
+    result.m[2] = 2.0f * (xz - yw);
+    result.m[3] = 0.0f;
+
+    result.m[4] = 2.0f * (xy - zw);
+    result.m[5] = 1.0f - 2.0f * (xx + zz);
+    result.m[6] = 2.0f * (yz + xw);
+    result.m[7] = 0.0f;
+
+    result.m[8] = 2.0f * (xz + yw);
+    result.m[9] = 2.0f * (yz - xw);
+    result.m[10] = 1.0f - 2.0f * (xx + yy);
+    result.m[11] = 0.0f;
+
+    result.m[12] = 0.0f;
+    result.m[13] = 0.0f;
+    result.m[14] = 0.0f;
+    result.m[15] = 1.0f;
+
+    return result;
+}
 
 struct BoundingBox {
     Vector3 min;

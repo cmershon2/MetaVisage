@@ -8,6 +8,7 @@ ViewportWidget::ViewportWidget(QWidget *parent)
     : QOpenGLWidget(parent),
       camera_(std::make_unique<Camera>()),
       renderer_(nullptr),
+      project_(nullptr),
       isOrbiting_(false),
       isPanning_(false) {
 
@@ -30,6 +31,9 @@ void ViewportWidget::initializeGL() {
     glEnable(GL_DEPTH_TEST);
     glEnable(GL_MULTISAMPLE);
 
+    // Disable backface culling so we can see the mesh from any angle
+    glDisable(GL_CULL_FACE);
+
     // Create renderer
     renderer_ = std::make_unique<Renderer>();
     if (!renderer_->Initialize()) {
@@ -39,7 +43,7 @@ void ViewportWidget::initializeGL() {
 
 void ViewportWidget::paintGL() {
     if (renderer_) {
-        renderer_->Render(*camera_, width(), height());
+        renderer_->Render(*camera_, width(), height(), project_);
     }
 }
 

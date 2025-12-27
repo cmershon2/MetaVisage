@@ -2,6 +2,9 @@
 #include <QGroupBox>
 #include <QPushButton>
 #include <QSpacerItem>
+#include <QRadioButton>
+#include <QButtonGroup>
+#include <QComboBox>
 
 namespace MetaVisage {
 
@@ -49,6 +52,7 @@ SidebarWidget::SidebarWidget(QWidget *parent)
         "}"
     );
     nextStageButton_->setEnabled(false);
+    connect(nextStageButton_, &QPushButton::clicked, this, &SidebarWidget::NextStageRequested);
     layout_->addWidget(nextStageButton_);
 
     SetStage(WorkflowStage::Alignment);
@@ -86,12 +90,53 @@ void SidebarWidget::SetStage(WorkflowStage stage) {
 void SidebarWidget::CreateAlignmentControls() {
     QVBoxLayout* controlsLayout = new QVBoxLayout(controlsWidget_);
     controlsLayout->setContentsMargins(0, 0, 0, 0);
+    controlsLayout->setSpacing(16);
 
-    QLabel* info = new QLabel("Load meshes and align them.");
+    QLabel* info = new QLabel("Load both meshes using File menu (Ctrl+M for Morph, Ctrl+T for Target)");
     info->setWordWrap(true);
     controlsLayout->addWidget(info);
 
-    // TODO: Add alignment controls in Sprint 3
+    // Mesh Status Group
+    QGroupBox* meshStatusGroup = new QGroupBox("Mesh Status");
+    QVBoxLayout* meshStatusLayout = new QVBoxLayout(meshStatusGroup);
+
+    QLabel* morphStatus = new QLabel("Morph Mesh: Not Loaded");
+    morphStatus->setObjectName("morphStatus");
+    morphStatus->setStyleSheet("QLabel { color: #E74C3C; }"); // Red
+    meshStatusLayout->addWidget(morphStatus);
+
+    QLabel* targetStatus = new QLabel("Target Mesh: Not Loaded");
+    targetStatus->setObjectName("targetStatus");
+    targetStatus->setStyleSheet("QLabel { color: #E74C3C; }"); // Red
+    meshStatusLayout->addWidget(targetStatus);
+
+    controlsLayout->addWidget(meshStatusGroup);
+
+    // Shading Mode Group
+    QGroupBox* shadingGroup = new QGroupBox("Shading Mode");
+    QVBoxLayout* shadingLayout = new QVBoxLayout(shadingGroup);
+
+    QComboBox* shadingCombo = new QComboBox();
+    shadingCombo->addItem("Solid", static_cast<int>(ShadingMode::Solid));
+    shadingCombo->addItem("Wireframe", static_cast<int>(ShadingMode::Wireframe));
+    shadingCombo->addItem("Solid + Wireframe", static_cast<int>(ShadingMode::SolidWireframe));
+    shadingCombo->setCurrentIndex(0);
+    shadingLayout->addWidget(shadingCombo);
+
+    controlsLayout->addWidget(shadingGroup);
+
+    // Transform Tools Group
+    QGroupBox* toolsGroup = new QGroupBox("Transform Tools");
+    QVBoxLayout* toolsLayout = new QVBoxLayout(toolsGroup);
+
+    QLabel* toolsInfo = new QLabel("Use G (Move), R (Rotate), S (Scale) keys\nTransform gizmos coming in next update");
+    toolsInfo->setWordWrap(true);
+    toolsInfo->setStyleSheet("QLabel { color: #95A5A6; font-size: 9pt; }");
+    toolsLayout->addWidget(toolsInfo);
+
+    controlsLayout->addWidget(toolsGroup);
+
+    controlsLayout->addStretch();
 }
 
 void SidebarWidget::CreatePointReferenceControls() {

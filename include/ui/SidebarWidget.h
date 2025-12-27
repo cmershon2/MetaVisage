@@ -17,6 +17,10 @@ public:
     ~SidebarWidget();
 
     void SetStage(WorkflowStage stage);
+    void SetNextStageEnabled(bool enabled) { nextStageButton_->setEnabled(enabled); }
+
+signals:
+    void NextStageRequested();
 
 private:
     void CreateAlignmentControls();
