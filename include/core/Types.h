@@ -87,6 +87,79 @@ struct Quaternion {
         );
     }
 
+    // Quaternion multiplication (Hamilton product)
+    // Combines rotations: result = this * other (this rotation applied after other)
+    Quaternion operator*(const Quaternion& other) const {
+        return Quaternion(
+            w * other.x + x * other.w + y * other.z - z * other.y,
+            w * other.y - x * other.z + y * other.w + z * other.x,
+            w * other.z + x * other.y - y * other.x + z * other.w,
+            w * other.w - x * other.x - y * other.y - z * other.z
+        );
+    }
+
+    // Normalize quaternion to unit length
+    Quaternion Normalized() const {
+        float len = std::sqrt(x * x + y * y + z * z + w * w);
+        if (len > 0.0f) {
+            return Quaternion(x / len, y / len, z / len, w / len);
+        }
+        return Identity();
+    }
+
+    // Create quaternion from Euler angles (in degrees, XYZ order)
+    static Quaternion FromEulerAngles(float pitchDeg, float yawDeg, float rollDeg) {
+        const float PI = 3.14159265359f;
+        float pitch = pitchDeg * PI / 180.0f * 0.5f;  // X
+        float yaw = yawDeg * PI / 180.0f * 0.5f;      // Y
+        float roll = rollDeg * PI / 180.0f * 0.5f;    // Z
+
+        float cp = std::cos(pitch);
+        float sp = std::sin(pitch);
+        float cy = std::cos(yaw);
+        float sy = std::sin(yaw);
+        float cr = std::cos(roll);
+        float sr = std::sin(roll);
+
+        return Quaternion(
+            sr * cp * cy - cr * sp * sy,  // x
+            cr * sp * cy + sr * cp * sy,  // y
+            cr * cp * sy - sr * sp * cy,  // z
+            cr * cp * cy + sr * sp * sy   // w
+        );
+    }
+
+    // Convert quaternion to Euler angles (in degrees, XYZ order)
+    Vector3 ToEulerAngles() const {
+        const float PI = 3.14159265359f;
+        Vector3 euler;
+
+        // Roll (X-axis rotation)
+        float sinr_cosp = 2.0f * (w * x + y * z);
+        float cosr_cosp = 1.0f - 2.0f * (x * x + y * y);
+        euler.x = std::atan2(sinr_cosp, cosr_cosp);
+
+        // Pitch (Y-axis rotation)
+        float sinp = 2.0f * (w * y - z * x);
+        if (std::abs(sinp) >= 1.0f) {
+            euler.y = std::copysign(PI / 2.0f, sinp);  // Use 90 degrees if out of range
+        } else {
+            euler.y = std::asin(sinp);
+        }
+
+        // Yaw (Z-axis rotation)
+        float siny_cosp = 2.0f * (w * z + x * y);
+        float cosy_cosp = 1.0f - 2.0f * (y * y + z * z);
+        euler.z = std::atan2(siny_cosp, cosy_cosp);
+
+        // Convert to degrees
+        euler.x *= 180.0f / PI;
+        euler.y *= 180.0f / PI;
+        euler.z *= 180.0f / PI;
+
+        return euler;
+    }
+
     // Convert quaternion to rotation matrix (column-major for OpenGL)
     // Defined after Matrix4x4
     Matrix4x4 ToMatrix() const;
@@ -442,6 +515,22 @@ enum class WorkflowStage {
     PointReference = 1,
     Morph = 2,
     TouchUp = 3
+};
+
+// Transform tool modes (for alignment stage)
+enum class TransformMode {
+    None,       // No transform active - camera controls work normally
+    Move,       // G key - translate target mesh
+    Rotate,     // R key - rotate target mesh
+    Scale       // S key - scale target mesh
+};
+
+// Axis constraint for transform tools
+enum class AxisConstraint {
+    None,       // Free movement on all axes
+    X,          // Constrain to X axis only
+    Y,          // Constrain to Y axis only
+    Z           // Constrain to Z axis only
 };
 
 } // namespace MetaVisage

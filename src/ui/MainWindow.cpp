@@ -112,10 +112,32 @@ void MainWindow::CreateMenus() {
     connect(resetCameraAction, &QAction::triggered, this, &MainWindow::OnResetCamera);
 
     // Tools Menu
+    // Note: G, R, S shortcuts are handled by ViewportWidget::keyPressEvent directly
+    // to avoid conflicts with menu shortcuts. The menu shows the shortcuts for reference.
     QMenu* toolsMenu = menuBar_->addMenu(tr("&Tools"));
-    toolsMenu->addAction(tr("Move"))->setShortcut(QKeySequence(Qt::Key_G));
-    toolsMenu->addAction(tr("Rotate"))->setShortcut(QKeySequence(Qt::Key_R));
-    toolsMenu->addAction(tr("Scale"))->setShortcut(QKeySequence(Qt::Key_S));
+    QAction* moveAction = toolsMenu->addAction(tr("Move (G)"));
+    connect(moveAction, &QAction::triggered, this, [this]() {
+        if (viewportWidget_) {
+            viewportWidget_->setFocus();
+            viewportWidget_->SetTransformMode(TransformMode::Move);
+        }
+    });
+
+    QAction* rotateAction = toolsMenu->addAction(tr("Rotate (R)"));
+    connect(rotateAction, &QAction::triggered, this, [this]() {
+        if (viewportWidget_) {
+            viewportWidget_->setFocus();
+            viewportWidget_->SetTransformMode(TransformMode::Rotate);
+        }
+    });
+
+    QAction* scaleAction = toolsMenu->addAction(tr("Scale (S)"));
+    connect(scaleAction, &QAction::triggered, this, [this]() {
+        if (viewportWidget_) {
+            viewportWidget_->setFocus();
+            viewportWidget_->SetTransformMode(TransformMode::Scale);
+        }
+    });
 
     // Help Menu
     QMenu* helpMenu = menuBar_->addMenu(tr("&Help"));
@@ -169,10 +191,24 @@ void MainWindow::CreateCentralWidget() {
     sidebarWidget_ = new SidebarWidget(centralWidget);
     sidebarWidget_->setMinimumWidth(320);
     sidebarWidget_->setMaximumWidth(400);
+    sidebarWidget_->SetProject(project_.get());
     layout->addWidget(sidebarWidget_, 1);
 
     // Connect sidebar next stage button to MainWindow slot
     connect(sidebarWidget_, &SidebarWidget::NextStageRequested, this, &MainWindow::OnNextStage);
+
+    // Connect sidebar reset transform button to MainWindow slot
+    connect(sidebarWidget_, &SidebarWidget::ResetTransformRequested, this, &MainWindow::OnResetTransform);
+
+    // Connect viewport transform signals to sidebar slots
+    connect(viewportWidget_, &ViewportWidget::TransformModeChanged,
+            sidebarWidget_, &SidebarWidget::OnTransformModeChanged);
+    connect(viewportWidget_, &ViewportWidget::TargetTransformChanged,
+            sidebarWidget_, &SidebarWidget::OnTargetTransformChanged);
+
+    // Connect sidebar spinbox changes to viewport update
+    connect(sidebarWidget_, &SidebarWidget::TransformValuesChanged,
+            viewportWidget_, QOverload<>::of(&ViewportWidget::update));
 
     setCentralWidget(centralWidget);
 }
@@ -456,6 +492,16 @@ void MainWindow::OnAbout() {
 }
 
 // Sidebar actions
+void MainWindow::OnResetTransform() {
+    if (project_ && project_->GetTargetMesh().isLoaded) {
+        project_->GetTargetMesh().transform.Reset();
+        viewportWidget_->CancelTransform();  // Also cancel any active transform mode
+        viewportWidget_->update();
+        sidebarWidget_->OnTargetTransformChanged();  // Update sidebar display
+        statusLabel_->setText("Target transform reset");
+    }
+}
+
 void MainWindow::OnNextStage() {
     if (!project_->CanProceedToNextStage()) {
         QString message;

@@ -197,7 +197,7 @@ This sprint plan breaks down the MetaVisage development into 12 two-week sprints
 - [ ] Add gizmo dragging with mouse *(deferred to future sprint)*
 - [ ] Display active gizmo based on selected tool *(deferred to future sprint)*
 
-**Note:** Transform gizmos are deferred for now. Basic alignment can be achieved through keyboard shortcuts and will be enhanced in a future sprint after core workflow is complete.
+**Note:** Visual transform gizmos are deferred for now. Interactive transform tools are fully functional via keyboard shortcuts + mouse drag.
 
 #### Story 3.3: Transform Tools & Sidebar
 **Tasks:**
@@ -205,10 +205,12 @@ This sprint plan breaks down the MetaVisage development into 12 two-week sprints
 - [x] Add shading mode selector (Solid/Wireframe/Both)
 - [x] Display transform tool information (G/R/S hotkeys)
 - [ ] Add tool selector buttons (Move/Rotate/Scale) *(deferred - hotkeys sufficient for now)*
-- [ ] Implement active tool switching with G/R/S hotkeys *(deferred)*
-- [ ] Add numeric input fields for X, Y, Z transforms *(deferred)*
-- [ ] Create Reset Transform button *(deferred)*
-- [ ] Update transform when gizmo dragged *(deferred - gizmos deferred)*
+- [x] Implement active tool switching with G/R/S hotkeys
+- [x] Add numeric display fields for X, Y, Z position and scale values
+- [x] Create Reset Transform button
+- [x] Implement axis constraint with X/Y/Z keys
+- [x] Implement mouse-drag transform application (left-click + drag)
+- [x] Show active transform mode and axis constraint in sidebar
 - [ ] Update gizmo when numeric values changed *(deferred - gizmos deferred)*
 
 #### Story 3.4: Stage Navigation
@@ -230,14 +232,17 @@ This sprint plan breaks down the MetaVisage development into 12 two-week sprints
 - [x] Mesh status updates in sidebar when meshes are loaded
 - [x] Camera auto-focuses on loaded meshes
 - [x] Stage indicator shows current stage (1/4)
-- [ ] Transform gizmo appears when tool selected *(deferred)*
-- [ ] User can move target mesh with gizmo or numeric inputs *(deferred)*
-- [ ] G, R, S keys switch between transform tools *(deferred)*
-- [ ] X, Y, Z keys constrain transforms to axis *(deferred)*
-- [ ] Transforms apply only to target mesh, not morph mesh *(deferred)*
+- [ ] Transform gizmo appears when tool selected *(deferred - visual gizmos)*
+- [x] User can move target mesh with left-click + drag
+- [x] G, R, S keys switch between transform tools
+- [x] X, Y, Z keys constrain transforms to axis
+- [x] Transforms apply only to target mesh, not morph mesh
+- [x] Transform mode and axis constraint displayed in sidebar
+- [x] Position and scale values displayed in sidebar
+- [x] Reset Transform button resets target mesh to identity transform
 
 ### Progress Notes (Dec 26, 2025)
-**✅ Sprint 3 Core Features Complete!**
+**✅ Sprint 3 Complete - Including Transform Tools!**
 
 **Completed:**
 - File menu integration for mesh loading (Ctrl+M for Morph, Ctrl+T for Target)
@@ -248,19 +253,28 @@ This sprint plan breaks down the MetaVisage development into 12 two-week sprints
 - Stage navigation with "Next Stage" button
 - Auto-focus camera on loaded meshes
 - Updated keyboard shortcuts help dialog
+- **Transform Tools Implementation:**
+  - G/R/S keys activate Move/Rotate/Scale modes
+  - X/Y/Z keys constrain transforms to specific axis
+  - Left-click + drag applies transforms to target mesh
+  - Escape cancels current transform mode
+  - Transform mode and axis constraint displayed in sidebar
+  - Position (X, Y, Z) and Scale (X, Y, Z) values displayed in sidebar
+  - Reset Transform button to restore target mesh to identity transform
+  - Fixed quaternion multiplication bug in Transform::Rotate()
+  - Added Quaternion operator* and Normalized() methods
 
 **Deferred to Future Sprints:**
-- Transform gizmos (visual handles for Move/Rotate/Scale)
-- Numeric transform inputs
-- Interactive transform tools with keyboard shortcuts
+- Visual transform gizmos (arrows, circles, handles)
+- Numeric transform input fields (editable spinboxes)
 - Mesh visibility toggles
 
 **Rationale for Deferrals:**
-Transform gizmos and interactive tools are nice-to-have features for the alignment stage. The core workflow (load meshes → place points → morph → export) can proceed without them. These features will be revisited after the complete pipeline is functional to ensure we deliver an end-to-end working tool first.
+Visual transform gizmos would improve UX but the current keyboard + mouse drag approach is fully functional and follows Blender conventions. These visual enhancements will be revisited after the complete pipeline is functional.
 
 **Build Status:**
 - Application builds successfully with MSVC
-- All core mesh loading and rendering features functional
+- All mesh loading, rendering, and transform features functional
 - Camera controls working (orbit, pan, zoom, orthographic views)
 
 ---

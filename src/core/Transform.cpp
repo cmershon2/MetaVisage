@@ -32,8 +32,9 @@ void Transform::Translate(const Vector3& delta) {
 }
 
 void Transform::Rotate(const Quaternion& delta) {
-    // TODO: Implement quaternion multiplication
-    rotation_ = delta;
+    // Quaternion multiplication: new rotation = delta * current rotation
+    // This applies the delta rotation to the existing rotation
+    rotation_ = (delta * rotation_).Normalized();
 }
 
 void Transform::Scale(const Vector3& delta) {

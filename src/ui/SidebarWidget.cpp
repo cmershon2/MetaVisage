@@ -1,19 +1,34 @@
 #include "ui/SidebarWidget.h"
+#include "core/Project.h"
 #include <QGroupBox>
 #include <QPushButton>
 #include <QSpacerItem>
 #include <QRadioButton>
 #include <QButtonGroup>
 #include <QComboBox>
+#include <QGridLayout>
 
 namespace MetaVisage {
 
 SidebarWidget::SidebarWidget(QWidget *parent)
     : QWidget(parent),
+      project_(nullptr),
       layout_(nullptr),
       stageLabel_(nullptr),
       nextStageButton_(nullptr),
-      controlsWidget_(nullptr) {
+      controlsWidget_(nullptr),
+      transformModeLabel_(nullptr),
+      posXSpinBox_(nullptr),
+      posYSpinBox_(nullptr),
+      posZSpinBox_(nullptr),
+      rotXSpinBox_(nullptr),
+      rotYSpinBox_(nullptr),
+      rotZSpinBox_(nullptr),
+      scaleXSpinBox_(nullptr),
+      scaleYSpinBox_(nullptr),
+      scaleZSpinBox_(nullptr),
+      resetTransformButton_(nullptr),
+      updatingTransformDisplay_(false) {
 
     setStyleSheet("QWidget { background-color: #2C3E50; color: white; }");
 
@@ -129,14 +144,216 @@ void SidebarWidget::CreateAlignmentControls() {
     QGroupBox* toolsGroup = new QGroupBox("Transform Tools");
     QVBoxLayout* toolsLayout = new QVBoxLayout(toolsGroup);
 
-    QLabel* toolsInfo = new QLabel("Use G (Move), R (Rotate), S (Scale) keys\nTransform gizmos coming in next update");
+    // Tool instructions
+    QLabel* toolsInfo = new QLabel(
+        "G - Move | R - Rotate | S - Scale\n"
+        "X/Y/Z - Constrain to axis\n"
+        "Esc - Cancel | Left-click + drag to apply"
+    );
     toolsInfo->setWordWrap(true);
     toolsInfo->setStyleSheet("QLabel { color: #95A5A6; font-size: 9pt; }");
     toolsLayout->addWidget(toolsInfo);
 
+    // Current transform mode display
+    transformModeLabel_ = new QLabel("Mode: None");
+    transformModeLabel_->setStyleSheet("QLabel { color: #3498DB; font-weight: bold; font-size: 10pt; }");
+    toolsLayout->addWidget(transformModeLabel_);
+
     controlsLayout->addWidget(toolsGroup);
 
+    // Target Transform Group
+    QGroupBox* transformGroup = new QGroupBox("Target Transform");
+    QGridLayout* transformLayout = new QGridLayout(transformGroup);
+    transformLayout->setSpacing(4);
+    transformLayout->setColumnStretch(1, 1);
+    transformLayout->setColumnStretch(3, 1);
+    transformLayout->setColumnStretch(5, 1);
+
+    // Spinbox style for dark theme
+    QString spinBoxStyle =
+        "QDoubleSpinBox {"
+        "    background-color: #34495E;"
+        "    color: white;"
+        "    border: 1px solid #555;"
+        "    border-radius: 3px;"
+        "    padding: 2px;"
+        "}"
+        "QDoubleSpinBox::up-button, QDoubleSpinBox::down-button {"
+        "    background-color: #3498DB;"
+        "    border: none;"
+        "    width: 14px;"
+        "}"
+        "QDoubleSpinBox::up-button:hover, QDoubleSpinBox::down-button:hover {"
+        "    background-color: #2980B9;"
+        "}";
+
+    // Helper lambda to create position spinbox
+    auto createPosSpinBox = [&]() -> QDoubleSpinBox* {
+        QDoubleSpinBox* spinBox = new QDoubleSpinBox();
+        spinBox->setRange(-1000.0, 1000.0);
+        spinBox->setDecimals(2);
+        spinBox->setSingleStep(0.01);
+        spinBox->setValue(0.0);
+        spinBox->setStyleSheet(spinBoxStyle);
+        spinBox->setMinimumWidth(55);
+        return spinBox;
+    };
+
+    // Helper lambda to create rotation spinbox (degrees)
+    auto createRotSpinBox = [&]() -> QDoubleSpinBox* {
+        QDoubleSpinBox* spinBox = new QDoubleSpinBox();
+        spinBox->setRange(-360.0, 360.0);
+        spinBox->setDecimals(1);
+        spinBox->setSingleStep(1.0);
+        spinBox->setValue(0.0);
+        spinBox->setSuffix(QString::fromUtf8("\u00B0"));  // Degree symbol
+        spinBox->setStyleSheet(spinBoxStyle);
+        spinBox->setMinimumWidth(55);
+        return spinBox;
+    };
+
+    // Helper lambda to create scale spinbox
+    auto createScaleSpinBox = [&]() -> QDoubleSpinBox* {
+        QDoubleSpinBox* spinBox = new QDoubleSpinBox();
+        spinBox->setRange(0.001, 100.0);
+        spinBox->setDecimals(3);
+        spinBox->setSingleStep(0.01);
+        spinBox->setValue(1.0);
+        spinBox->setStyleSheet(spinBoxStyle);
+        spinBox->setMinimumWidth(55);
+        return spinBox;
+    };
+
+    int row = 0;
+
+    // Position row - all 3 axes in one row
+    QLabel* posLabel = new QLabel("Pos:");
+    posLabel->setStyleSheet("QLabel { font-weight: bold; }");
+    transformLayout->addWidget(posLabel, row, 0);
+
+    QLabel* posXLabel = new QLabel("X");
+    posXLabel->setStyleSheet("QLabel { color: #E74C3C; }");
+    posXLabel->setAlignment(Qt::AlignRight | Qt::AlignVCenter);
+    transformLayout->addWidget(posXLabel, row, 1);
+    posXSpinBox_ = createPosSpinBox();
+    transformLayout->addWidget(posXSpinBox_, row, 2);
+
+    QLabel* posYLabel = new QLabel("Y");
+    posYLabel->setStyleSheet("QLabel { color: #2ECC71; }");
+    posYLabel->setAlignment(Qt::AlignRight | Qt::AlignVCenter);
+    transformLayout->addWidget(posYLabel, row, 3);
+    posYSpinBox_ = createPosSpinBox();
+    transformLayout->addWidget(posYSpinBox_, row, 4);
+
+    QLabel* posZLabel = new QLabel("Z");
+    posZLabel->setStyleSheet("QLabel { color: #3498DB; }");
+    posZLabel->setAlignment(Qt::AlignRight | Qt::AlignVCenter);
+    transformLayout->addWidget(posZLabel, row, 5);
+    posZSpinBox_ = createPosSpinBox();
+    transformLayout->addWidget(posZSpinBox_, row, 6);
+
+    row++;
+
+    // Rotation row - all 3 axes in one row (Euler angles in degrees)
+    QLabel* rotLabel = new QLabel("Rot:");
+    rotLabel->setStyleSheet("QLabel { font-weight: bold; }");
+    transformLayout->addWidget(rotLabel, row, 0);
+
+    QLabel* rotXLabel = new QLabel("X");
+    rotXLabel->setStyleSheet("QLabel { color: #E74C3C; }");
+    rotXLabel->setAlignment(Qt::AlignRight | Qt::AlignVCenter);
+    transformLayout->addWidget(rotXLabel, row, 1);
+    rotXSpinBox_ = createRotSpinBox();
+    transformLayout->addWidget(rotXSpinBox_, row, 2);
+
+    QLabel* rotYLabel = new QLabel("Y");
+    rotYLabel->setStyleSheet("QLabel { color: #2ECC71; }");
+    rotYLabel->setAlignment(Qt::AlignRight | Qt::AlignVCenter);
+    transformLayout->addWidget(rotYLabel, row, 3);
+    rotYSpinBox_ = createRotSpinBox();
+    transformLayout->addWidget(rotYSpinBox_, row, 4);
+
+    QLabel* rotZLabel = new QLabel("Z");
+    rotZLabel->setStyleSheet("QLabel { color: #3498DB; }");
+    rotZLabel->setAlignment(Qt::AlignRight | Qt::AlignVCenter);
+    transformLayout->addWidget(rotZLabel, row, 5);
+    rotZSpinBox_ = createRotSpinBox();
+    transformLayout->addWidget(rotZSpinBox_, row, 6);
+
+    row++;
+
+    // Scale row - all 3 axes in one row
+    QLabel* scaleLabel = new QLabel("Scale:");
+    scaleLabel->setStyleSheet("QLabel { font-weight: bold; }");
+    transformLayout->addWidget(scaleLabel, row, 0);
+
+    QLabel* scaleXLabel = new QLabel("X");
+    scaleXLabel->setStyleSheet("QLabel { color: #E74C3C; }");
+    scaleXLabel->setAlignment(Qt::AlignRight | Qt::AlignVCenter);
+    transformLayout->addWidget(scaleXLabel, row, 1);
+    scaleXSpinBox_ = createScaleSpinBox();
+    transformLayout->addWidget(scaleXSpinBox_, row, 2);
+
+    QLabel* scaleYLabel = new QLabel("Y");
+    scaleYLabel->setStyleSheet("QLabel { color: #2ECC71; }");
+    scaleYLabel->setAlignment(Qt::AlignRight | Qt::AlignVCenter);
+    transformLayout->addWidget(scaleYLabel, row, 3);
+    scaleYSpinBox_ = createScaleSpinBox();
+    transformLayout->addWidget(scaleYSpinBox_, row, 4);
+
+    QLabel* scaleZLabel = new QLabel("Z");
+    scaleZLabel->setStyleSheet("QLabel { color: #3498DB; }");
+    scaleZLabel->setAlignment(Qt::AlignRight | Qt::AlignVCenter);
+    transformLayout->addWidget(scaleZLabel, row, 5);
+    scaleZSpinBox_ = createScaleSpinBox();
+    transformLayout->addWidget(scaleZSpinBox_, row, 6);
+
+    row++;
+
+    // Connect spinbox value changes to update the transform
+    connect(posXSpinBox_, QOverload<double>::of(&QDoubleSpinBox::valueChanged),
+            this, [this](double) { OnSpinBoxValueChanged(); });
+    connect(posYSpinBox_, QOverload<double>::of(&QDoubleSpinBox::valueChanged),
+            this, [this](double) { OnSpinBoxValueChanged(); });
+    connect(posZSpinBox_, QOverload<double>::of(&QDoubleSpinBox::valueChanged),
+            this, [this](double) { OnSpinBoxValueChanged(); });
+    connect(rotXSpinBox_, QOverload<double>::of(&QDoubleSpinBox::valueChanged),
+            this, [this](double) { OnSpinBoxValueChanged(); });
+    connect(rotYSpinBox_, QOverload<double>::of(&QDoubleSpinBox::valueChanged),
+            this, [this](double) { OnSpinBoxValueChanged(); });
+    connect(rotZSpinBox_, QOverload<double>::of(&QDoubleSpinBox::valueChanged),
+            this, [this](double) { OnSpinBoxValueChanged(); });
+    connect(scaleXSpinBox_, QOverload<double>::of(&QDoubleSpinBox::valueChanged),
+            this, [this](double) { OnSpinBoxValueChanged(); });
+    connect(scaleYSpinBox_, QOverload<double>::of(&QDoubleSpinBox::valueChanged),
+            this, [this](double) { OnSpinBoxValueChanged(); });
+    connect(scaleZSpinBox_, QOverload<double>::of(&QDoubleSpinBox::valueChanged),
+            this, [this](double) { OnSpinBoxValueChanged(); });
+
+    // Reset button
+    resetTransformButton_ = new QPushButton("Reset Transform");
+    resetTransformButton_->setStyleSheet(
+        "QPushButton {"
+        "    background-color: #E74C3C;"
+        "    color: white;"
+        "    border: none;"
+        "    padding: 6px 12px;"
+        "    font-size: 10pt;"
+        "    border-radius: 4px;"
+        "}"
+        "QPushButton:hover {"
+        "    background-color: #C0392B;"
+        "}"
+    );
+    connect(resetTransformButton_, &QPushButton::clicked, this, &SidebarWidget::ResetTransformRequested);
+    transformLayout->addWidget(resetTransformButton_, row, 0, 1, 7);
+
+    controlsLayout->addWidget(transformGroup);
+
     controlsLayout->addStretch();
+
+    // Update initial display
+    UpdateTransformDisplay();
 }
 
 void SidebarWidget::CreatePointReferenceControls() {
@@ -173,6 +390,19 @@ void SidebarWidget::CreateTouchUpControls() {
 }
 
 void SidebarWidget::ClearControls() {
+    // Reset pointers before clearing (they will be deleted with their widgets)
+    transformModeLabel_ = nullptr;
+    posXSpinBox_ = nullptr;
+    posYSpinBox_ = nullptr;
+    posZSpinBox_ = nullptr;
+    rotXSpinBox_ = nullptr;
+    rotYSpinBox_ = nullptr;
+    rotZSpinBox_ = nullptr;
+    scaleXSpinBox_ = nullptr;
+    scaleYSpinBox_ = nullptr;
+    scaleZSpinBox_ = nullptr;
+    resetTransformButton_ = nullptr;
+
     if (controlsWidget_->layout()) {
         QLayoutItem* item;
         while ((item = controlsWidget_->layout()->takeAt(0))) {
@@ -181,6 +411,132 @@ void SidebarWidget::ClearControls() {
         }
         delete controlsWidget_->layout();
     }
+}
+
+void SidebarWidget::OnTransformModeChanged(TransformMode mode, AxisConstraint axis) {
+    if (!transformModeLabel_) return;
+
+    QString modeStr;
+    switch (mode) {
+        case TransformMode::Move:
+            modeStr = "Move";
+            break;
+        case TransformMode::Rotate:
+            modeStr = "Rotate";
+            break;
+        case TransformMode::Scale:
+            modeStr = "Scale";
+            break;
+        case TransformMode::None:
+        default:
+            modeStr = "None";
+            break;
+    }
+
+    QString axisStr;
+    switch (axis) {
+        case AxisConstraint::X:
+            axisStr = " [X only]";
+            break;
+        case AxisConstraint::Y:
+            axisStr = " [Y only]";
+            break;
+        case AxisConstraint::Z:
+            axisStr = " [Z only]";
+            break;
+        case AxisConstraint::None:
+        default:
+            axisStr = "";
+            break;
+    }
+
+    transformModeLabel_->setText("Mode: " + modeStr + axisStr);
+
+    // Highlight active mode with different colors
+    if (mode == TransformMode::None) {
+        transformModeLabel_->setStyleSheet("QLabel { color: #95A5A6; font-weight: bold; font-size: 10pt; }");
+    } else {
+        transformModeLabel_->setStyleSheet("QLabel { color: #2ECC71; font-weight: bold; font-size: 10pt; }");
+    }
+}
+
+void SidebarWidget::OnTargetTransformChanged() {
+    UpdateTransformDisplay();
+}
+
+void SidebarWidget::UpdateTransformDisplay() {
+    if (!project_ || !posXSpinBox_ || !posYSpinBox_ || !posZSpinBox_ ||
+        !rotXSpinBox_ || !rotYSpinBox_ || !rotZSpinBox_ ||
+        !scaleXSpinBox_ || !scaleYSpinBox_ || !scaleZSpinBox_) {
+        return;
+    }
+
+    // Set flag to prevent feedback loop when updating spinboxes programmatically
+    updatingTransformDisplay_ = true;
+
+    const Transform& transform = project_->GetTargetMesh().transform;
+    Vector3 pos = transform.GetPosition();
+    Vector3 euler = transform.GetRotation().ToEulerAngles();
+    Vector3 scale = transform.GetScale();
+
+    posXSpinBox_->setValue(pos.x);
+    posYSpinBox_->setValue(pos.y);
+    posZSpinBox_->setValue(pos.z);
+
+    rotXSpinBox_->setValue(euler.x);
+    rotYSpinBox_->setValue(euler.y);
+    rotZSpinBox_->setValue(euler.z);
+
+    scaleXSpinBox_->setValue(scale.x);
+    scaleYSpinBox_->setValue(scale.y);
+    scaleZSpinBox_->setValue(scale.z);
+
+    updatingTransformDisplay_ = false;
+}
+
+void SidebarWidget::OnSpinBoxValueChanged() {
+    // Ignore changes while we're programmatically updating the display
+    if (updatingTransformDisplay_) {
+        return;
+    }
+
+    if (!project_ || !project_->GetTargetMesh().isLoaded) {
+        return;
+    }
+
+    if (!posXSpinBox_ || !posYSpinBox_ || !posZSpinBox_ ||
+        !rotXSpinBox_ || !rotYSpinBox_ || !rotZSpinBox_ ||
+        !scaleXSpinBox_ || !scaleYSpinBox_ || !scaleZSpinBox_) {
+        return;
+    }
+
+    // Get current spinbox values
+    Vector3 newPos(
+        static_cast<float>(posXSpinBox_->value()),
+        static_cast<float>(posYSpinBox_->value()),
+        static_cast<float>(posZSpinBox_->value())
+    );
+
+    Quaternion newRot = Quaternion::FromEulerAngles(
+        static_cast<float>(rotXSpinBox_->value()),
+        static_cast<float>(rotYSpinBox_->value()),
+        static_cast<float>(rotZSpinBox_->value())
+    );
+
+    Vector3 newScale(
+        static_cast<float>(scaleXSpinBox_->value()),
+        static_cast<float>(scaleYSpinBox_->value()),
+        static_cast<float>(scaleZSpinBox_->value())
+    );
+
+    // Apply to the target mesh transform
+    Transform& transform = project_->GetTargetMesh().transform;
+    transform.SetPosition(newPos);
+    transform.SetRotation(newRot);
+    transform.SetScale(newScale);
+
+    // Signal that transform values changed so viewport can update
+    emit TransformValuesChanged();
 }
 
 } // namespace MetaVisage

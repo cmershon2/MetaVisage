@@ -51,6 +51,7 @@ private slots:
 
     // Sidebar actions
     void OnNextStage();
+    void OnResetTransform();
 
 private:
     void CreateMenus();
