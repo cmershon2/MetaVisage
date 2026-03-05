@@ -52,6 +52,11 @@ public:
     // Point rendering settings
     void SetPointSize(float size);
 
+    // Morph stage
+    void SetMorphPreviewMode(MorphPreviewMode mode);
+    void InvalidateMesh(const Mesh* mesh);
+    void UploadHeatMapColors(const Mesh* mesh, const std::vector<float>& displacements, float maxDisplacement);
+
 signals:
     // Signal emitted when transform mode changes
     void TransformModeChanged(TransformMode mode, AxisConstraint axis);

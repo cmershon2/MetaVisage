@@ -39,6 +39,19 @@ SidebarWidget::SidebarWidget(QWidget *parent)
       pointSizeSlider_(nullptr),
       symmetryCheckBox_(nullptr),
       symmetryAxisCombo_(nullptr),
+      stiffnessSlider_(nullptr),
+      smoothnessSlider_(nullptr),
+      stiffnessValueLabel_(nullptr),
+      smoothnessValueLabel_(nullptr),
+      kernelTypeCombo_(nullptr),
+      processButton_(nullptr),
+      cancelButton_(nullptr),
+      progressBar_(nullptr),
+      progressLabel_(nullptr),
+      previewModeCombo_(nullptr),
+      acceptButton_(nullptr),
+      reprocessButton_(nullptr),
+      resetDefaultsButton_(nullptr),
       updatingTransformDisplay_(false),
       selectedPointIndex_(-1) {
 
@@ -529,9 +542,251 @@ void SidebarWidget::CreatePointReferenceControls() {
 void SidebarWidget::CreateMorphControls() {
     QVBoxLayout* controlsLayout = new QVBoxLayout(controlsWidget_);
     controlsLayout->setContentsMargins(0, 0, 0, 0);
-    QLabel* info = new QLabel("Adjust parameters and process the morph.");
+    controlsLayout->setSpacing(16);
+
+    // Info label
+    QLabel* info = new QLabel(
+        "Adjust deformation parameters and process the morph. "
+        "After processing, preview the result and accept or re-process."
+    );
     info->setWordWrap(true);
+    info->setStyleSheet("QLabel { color: #BDC3C7; }");
     controlsLayout->addWidget(info);
+
+    // Common styles
+    QString groupBoxStyle =
+        "QGroupBox { border: 1px solid #555; border-radius: 4px; margin-top: 8px; padding-top: 8px; }"
+        "QGroupBox::title { subcontrol-origin: margin; left: 10px; padding: 0 5px; }";
+    QString sliderStyle =
+        "QSlider::groove:horizontal { background: #34495E; height: 6px; border-radius: 3px; }"
+        "QSlider::handle:horizontal { background: #3498DB; width: 14px; margin: -4px 0; border-radius: 7px; }";
+    QString comboStyle =
+        "QComboBox { background-color: #34495E; color: white; border: 1px solid #555; padding: 4px; border-radius: 3px; }"
+        "QComboBox::drop-down { border: none; }"
+        "QComboBox QAbstractItemView { background-color: #34495E; color: white; selection-background-color: #3498DB; }";
+
+    // --- Parameters Group ---
+    QGroupBox* paramsGroup = new QGroupBox("Deformation Parameters");
+    paramsGroup->setStyleSheet(groupBoxStyle);
+    QVBoxLayout* paramsLayout = new QVBoxLayout(paramsGroup);
+
+    // Stiffness slider
+    QHBoxLayout* stiffLayout = new QHBoxLayout();
+    QLabel* stiffLabel = new QLabel("Stiffness:");
+    stiffLabel->setMinimumWidth(75);
+    stiffLayout->addWidget(stiffLabel);
+    stiffnessSlider_ = new QSlider(Qt::Horizontal);
+    stiffnessSlider_->setRange(0, 100);
+    stiffnessSlider_->setValue(50);
+    stiffnessSlider_->setStyleSheet(sliderStyle);
+    stiffLayout->addWidget(stiffnessSlider_);
+    stiffnessValueLabel_ = new QLabel("0.50");
+    stiffnessValueLabel_->setMinimumWidth(35);
+    stiffnessValueLabel_->setAlignment(Qt::AlignRight | Qt::AlignVCenter);
+    stiffLayout->addWidget(stiffnessValueLabel_);
+    paramsLayout->addLayout(stiffLayout);
+
+    // Smoothness slider
+    QHBoxLayout* smoothLayout = new QHBoxLayout();
+    QLabel* smoothLabel = new QLabel("Smoothness:");
+    smoothLabel->setMinimumWidth(75);
+    smoothLayout->addWidget(smoothLabel);
+    smoothnessSlider_ = new QSlider(Qt::Horizontal);
+    smoothnessSlider_->setRange(0, 100);
+    smoothnessSlider_->setValue(50);
+    smoothnessSlider_->setStyleSheet(sliderStyle);
+    smoothLayout->addWidget(smoothnessSlider_);
+    smoothnessValueLabel_ = new QLabel("0.50");
+    smoothnessValueLabel_->setMinimumWidth(35);
+    smoothnessValueLabel_->setAlignment(Qt::AlignRight | Qt::AlignVCenter);
+    smoothLayout->addWidget(smoothnessValueLabel_);
+    paramsLayout->addLayout(smoothLayout);
+
+    // Kernel type dropdown
+    QHBoxLayout* kernelLayout = new QHBoxLayout();
+    QLabel* kernelLabel = new QLabel("Kernel:");
+    kernelLabel->setMinimumWidth(75);
+    kernelLayout->addWidget(kernelLabel);
+    kernelTypeCombo_ = new QComboBox();
+    kernelTypeCombo_->addItem("Thin-Plate Spline", static_cast<int>(DeformationAlgorithm::RBF_TPS));
+    kernelTypeCombo_->addItem("Gaussian", static_cast<int>(DeformationAlgorithm::RBF_GAUSSIAN));
+    kernelTypeCombo_->addItem("Multiquadric", static_cast<int>(DeformationAlgorithm::RBF_MULTIQUADRIC));
+    kernelTypeCombo_->setCurrentIndex(0);
+    kernelTypeCombo_->setStyleSheet(comboStyle);
+    kernelLayout->addWidget(kernelTypeCombo_);
+    paramsLayout->addLayout(kernelLayout);
+
+    // Connect parameter change signals
+    connect(stiffnessSlider_, &QSlider::valueChanged, this, &SidebarWidget::OnStiffnessChanged);
+    connect(smoothnessSlider_, &QSlider::valueChanged, this, &SidebarWidget::OnSmoothnessChanged);
+    connect(kernelTypeCombo_, QOverload<int>::of(&QComboBox::currentIndexChanged),
+            this, &SidebarWidget::OnKernelTypeChanged);
+
+    controlsLayout->addWidget(paramsGroup);
+
+    // --- Processing Group ---
+    QGroupBox* processGroup = new QGroupBox("Processing");
+    processGroup->setStyleSheet(groupBoxStyle);
+    QVBoxLayout* processLayout = new QVBoxLayout(processGroup);
+
+    processButton_ = new QPushButton("Process Morph");
+    processButton_->setStyleSheet(
+        "QPushButton {"
+        "    background-color: #3498DB;"
+        "    color: white;"
+        "    border: none;"
+        "    padding: 8px 16px;"
+        "    font-size: 11pt;"
+        "    font-weight: bold;"
+        "    border-radius: 4px;"
+        "}"
+        "QPushButton:hover {"
+        "    background-color: #2980B9;"
+        "}"
+        "QPushButton:disabled {"
+        "    background-color: #555;"
+        "}"
+    );
+    connect(processButton_, &QPushButton::clicked, this, &SidebarWidget::ProcessMorphRequested);
+    processLayout->addWidget(processButton_);
+
+    cancelButton_ = new QPushButton("Cancel");
+    cancelButton_->setStyleSheet(
+        "QPushButton {"
+        "    background-color: #E74C3C;"
+        "    color: white;"
+        "    border: none;"
+        "    padding: 6px 12px;"
+        "    font-size: 10pt;"
+        "    border-radius: 4px;"
+        "}"
+        "QPushButton:hover {"
+        "    background-color: #C0392B;"
+        "}"
+    );
+    cancelButton_->setVisible(false);
+    connect(cancelButton_, &QPushButton::clicked, this, &SidebarWidget::CancelMorphRequested);
+    processLayout->addWidget(cancelButton_);
+
+    progressBar_ = new QProgressBar();
+    progressBar_->setRange(0, 100);
+    progressBar_->setValue(0);
+    progressBar_->setVisible(false);
+    progressBar_->setStyleSheet(
+        "QProgressBar {"
+        "    background-color: #34495E;"
+        "    border: 1px solid #555;"
+        "    border-radius: 4px;"
+        "    text-align: center;"
+        "    color: white;"
+        "    height: 20px;"
+        "}"
+        "QProgressBar::chunk {"
+        "    background-color: #3498DB;"
+        "    border-radius: 3px;"
+        "}"
+    );
+    processLayout->addWidget(progressBar_);
+
+    progressLabel_ = new QLabel("Ready to process");
+    progressLabel_->setAlignment(Qt::AlignCenter);
+    progressLabel_->setStyleSheet("QLabel { color: #95A5A6; font-size: 9pt; }");
+    processLayout->addWidget(progressLabel_);
+
+    controlsLayout->addWidget(processGroup);
+
+    // --- Preview Group ---
+    QGroupBox* previewGroup = new QGroupBox("Preview Mode");
+    previewGroup->setStyleSheet(groupBoxStyle);
+    QVBoxLayout* previewLayout = new QVBoxLayout(previewGroup);
+
+    previewModeCombo_ = new QComboBox();
+    previewModeCombo_->addItem("Deformed", static_cast<int>(MorphPreviewMode::Deformed));
+    previewModeCombo_->addItem("Original", static_cast<int>(MorphPreviewMode::Original));
+    previewModeCombo_->addItem("Overlay", static_cast<int>(MorphPreviewMode::Overlay));
+    previewModeCombo_->addItem("Heat Map", static_cast<int>(MorphPreviewMode::HeatMap));
+    previewModeCombo_->setCurrentIndex(0);
+    previewModeCombo_->setEnabled(false);
+    previewModeCombo_->setStyleSheet(comboStyle);
+    connect(previewModeCombo_, QOverload<int>::of(&QComboBox::currentIndexChanged),
+            this, &SidebarWidget::OnPreviewModeChanged);
+    previewLayout->addWidget(previewModeCombo_);
+
+    controlsLayout->addWidget(previewGroup);
+
+    // --- Actions Group ---
+    QGroupBox* actionsGroup = new QGroupBox("Actions");
+    actionsGroup->setStyleSheet(groupBoxStyle);
+    QVBoxLayout* actionsLayout = new QVBoxLayout(actionsGroup);
+
+    acceptButton_ = new QPushButton("Accept Result");
+    acceptButton_->setEnabled(false);
+    acceptButton_->setStyleSheet(
+        "QPushButton {"
+        "    background-color: #2ECC71;"
+        "    color: white;"
+        "    border: none;"
+        "    padding: 8px 16px;"
+        "    font-size: 10pt;"
+        "    font-weight: bold;"
+        "    border-radius: 4px;"
+        "}"
+        "QPushButton:hover {"
+        "    background-color: #27AE60;"
+        "}"
+        "QPushButton:disabled {"
+        "    background-color: #555;"
+        "}"
+    );
+    connect(acceptButton_, &QPushButton::clicked, this, &SidebarWidget::AcceptMorphRequested);
+    actionsLayout->addWidget(acceptButton_);
+
+    reprocessButton_ = new QPushButton("Re-process");
+    reprocessButton_->setEnabled(false);
+    reprocessButton_->setStyleSheet(
+        "QPushButton {"
+        "    background-color: #F39C12;"
+        "    color: white;"
+        "    border: none;"
+        "    padding: 6px 12px;"
+        "    font-size: 10pt;"
+        "    border-radius: 4px;"
+        "}"
+        "QPushButton:hover {"
+        "    background-color: #E67E22;"
+        "}"
+        "QPushButton:disabled {"
+        "    background-color: #555;"
+        "}"
+    );
+    connect(reprocessButton_, &QPushButton::clicked, this, &SidebarWidget::ProcessMorphRequested);
+    actionsLayout->addWidget(reprocessButton_);
+
+    resetDefaultsButton_ = new QPushButton("Reset to Defaults");
+    resetDefaultsButton_->setStyleSheet(
+        "QPushButton {"
+        "    background-color: #7F8C8D;"
+        "    color: white;"
+        "    border: none;"
+        "    padding: 6px 12px;"
+        "    font-size: 9pt;"
+        "    border-radius: 4px;"
+        "}"
+        "QPushButton:hover {"
+        "    background-color: #95A5A6;"
+        "}"
+    );
+    connect(resetDefaultsButton_, &QPushButton::clicked, this, [this]() {
+        if (stiffnessSlider_) stiffnessSlider_->setValue(50);
+        if (smoothnessSlider_) smoothnessSlider_->setValue(50);
+        if (kernelTypeCombo_) kernelTypeCombo_->setCurrentIndex(0);
+    });
+    actionsLayout->addWidget(resetDefaultsButton_);
+
+    controlsLayout->addWidget(actionsGroup);
+    controlsLayout->addStretch();
+
+    nextStageButton_->setEnabled(false);
 }
 
 void SidebarWidget::CreateTouchUpControls() {
@@ -552,6 +807,11 @@ void SidebarWidget::ClearControls() {
     matchStatusLabel_ = nullptr; pointListScroll_ = nullptr; pointListContent_ = nullptr;
     clearAllPointsButton_ = nullptr; pointSizeSlider_ = nullptr;
     symmetryCheckBox_ = nullptr; symmetryAxisCombo_ = nullptr;
+    stiffnessSlider_ = nullptr; smoothnessSlider_ = nullptr;
+    stiffnessValueLabel_ = nullptr; smoothnessValueLabel_ = nullptr;
+    kernelTypeCombo_ = nullptr; processButton_ = nullptr; cancelButton_ = nullptr;
+    progressBar_ = nullptr; progressLabel_ = nullptr; previewModeCombo_ = nullptr;
+    acceptButton_ = nullptr; reprocessButton_ = nullptr; resetDefaultsButton_ = nullptr;
     selectedPointIndex_ = -1;
 
     if (controlsWidget_->layout()) {
@@ -728,6 +988,90 @@ void SidebarWidget::UpdateTransformDisplay() {
     scaleXSpinBox_->setValue(scale.x); scaleYSpinBox_->setValue(scale.y); scaleZSpinBox_->setValue(scale.z);
 
     updatingTransformDisplay_ = false;
+}
+
+void SidebarWidget::OnStiffnessChanged(int value) {
+    if (stiffnessValueLabel_) {
+        stiffnessValueLabel_->setText(QString::number(value / 100.0f, 'f', 2));
+    }
+    if (project_) {
+        project_->GetMorphData().stiffness = value / 100.0f;
+    }
+    emit MorphParameterChanged();
+}
+
+void SidebarWidget::OnSmoothnessChanged(int value) {
+    if (smoothnessValueLabel_) {
+        smoothnessValueLabel_->setText(QString::number(value / 100.0f, 'f', 2));
+    }
+    if (project_) {
+        project_->GetMorphData().smoothness = value / 100.0f;
+    }
+    emit MorphParameterChanged();
+}
+
+void SidebarWidget::OnKernelTypeChanged(int index) {
+    Q_UNUSED(index);
+    if (project_ && kernelTypeCombo_) {
+        project_->GetMorphData().algorithm =
+            static_cast<DeformationAlgorithm>(kernelTypeCombo_->currentData().toInt());
+    }
+    emit MorphParameterChanged();
+}
+
+void SidebarWidget::OnPreviewModeChanged(int index) {
+    if (!previewModeCombo_) return;
+    MorphPreviewMode mode = static_cast<MorphPreviewMode>(previewModeCombo_->itemData(index).toInt());
+    emit MorphPreviewModeChanged(mode);
+}
+
+void SidebarWidget::OnMorphProgress(float progress, const QString& message) {
+    if (progressBar_) {
+        progressBar_->setValue(static_cast<int>(progress * 100));
+    }
+    if (progressLabel_) {
+        progressLabel_->setText(message);
+        progressLabel_->setStyleSheet("QLabel { color: #3498DB; font-size: 9pt; }");
+    }
+}
+
+void SidebarWidget::OnMorphComplete(bool success, const QString& message) {
+    SetMorphProcessing(false);
+
+    if (progressLabel_) {
+        progressLabel_->setText(message);
+        if (success) {
+            progressLabel_->setStyleSheet("QLabel { color: #2ECC71; font-size: 9pt; font-weight: bold; }");
+        } else {
+            progressLabel_->setStyleSheet("QLabel { color: #E74C3C; font-size: 9pt; font-weight: bold; }");
+        }
+    }
+
+    if (success) {
+        if (previewModeCombo_) previewModeCombo_->setEnabled(true);
+        if (acceptButton_) acceptButton_->setEnabled(true);
+        if (reprocessButton_) reprocessButton_->setEnabled(true);
+    }
+}
+
+void SidebarWidget::SetMorphProcessing(bool processing) {
+    if (processButton_) processButton_->setEnabled(!processing);
+    if (cancelButton_) cancelButton_->setVisible(processing);
+    if (progressBar_) {
+        progressBar_->setVisible(processing);
+        if (processing) progressBar_->setValue(0);
+    }
+    if (stiffnessSlider_) stiffnessSlider_->setEnabled(!processing);
+    if (smoothnessSlider_) smoothnessSlider_->setEnabled(!processing);
+    if (kernelTypeCombo_) kernelTypeCombo_->setEnabled(!processing);
+    if (resetDefaultsButton_) resetDefaultsButton_->setEnabled(!processing);
+    if (acceptButton_) acceptButton_->setEnabled(false);
+    if (reprocessButton_) reprocessButton_->setEnabled(false);
+
+    if (processing && progressLabel_) {
+        progressLabel_->setText("Processing...");
+        progressLabel_->setStyleSheet("QLabel { color: #3498DB; font-size: 9pt; }");
+    }
 }
 
 void SidebarWidget::OnSpinBoxValueChanged() {

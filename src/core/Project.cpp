@@ -45,8 +45,8 @@ bool Project::CanProceedToNextStage() const {
             }
 
         case WorkflowStage::Morph:
-            // Morph must be processed
-            return morph_.isProcessed;
+            // Morph must be processed and accepted
+            return morph_.isProcessed && morph_.isAccepted;
 
         case WorkflowStage::TouchUp:
             // Always can proceed (to export)

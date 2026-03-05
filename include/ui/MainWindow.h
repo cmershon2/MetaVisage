@@ -6,6 +6,7 @@
 #include <QToolBar>
 #include <QStatusBar>
 #include <QLabel>
+#include <QThread>
 #include <memory>
 #include "core/Project.h"
 
@@ -62,6 +63,18 @@ private slots:
     void OnPointSelectedFromList(int correspondenceIndex);
     void OnPointSizeChanged(float size);
 
+    // Morph processing actions
+    void OnProcessMorph();
+    void OnCancelMorph();
+    void OnAcceptMorph();
+    void OnMorphProgress(float progress, const QString& message);
+    void OnMorphComplete(bool success, const QString& errorMessage,
+                         std::shared_ptr<Mesh> deformedMesh,
+                         const std::vector<float>& displacements,
+                         float maxDisplacement, float avgDisplacement);
+    void OnMorphPreviewModeChanged(MorphPreviewMode mode);
+    void OnMorphParameterChanged();
+
 private:
     void CreateMenus();
     void CreateToolBar();
@@ -88,6 +101,10 @@ private:
 
     // Project data
     std::unique_ptr<Project> project_;
+
+    // Morph processing
+    QThread* morphThread_;
+    class MorphWorker* morphWorker_;
 };
 
 } // namespace MetaVisage

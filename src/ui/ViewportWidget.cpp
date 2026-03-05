@@ -72,6 +72,27 @@ void ViewportWidget::SetPointSize(float size) {
     update();
 }
 
+void ViewportWidget::SetMorphPreviewMode(MorphPreviewMode mode) {
+    if (renderer_) {
+        renderer_->SetMorphPreviewMode(mode);
+    }
+    update();
+}
+
+void ViewportWidget::InvalidateMesh(const Mesh* mesh) {
+    if (renderer_) {
+        renderer_->InvalidateMesh(mesh);
+    }
+}
+
+void ViewportWidget::UploadHeatMapColors(const Mesh* mesh, const std::vector<float>& displacements, float maxDisplacement) {
+    makeCurrent();
+    if (renderer_) {
+        renderer_->UploadHeatMapColors(mesh, displacements, maxDisplacement);
+    }
+    doneCurrent();
+}
+
 void ViewportWidget::initializeGL() {
     initializeOpenGLFunctions();
 

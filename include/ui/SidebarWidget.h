@@ -10,6 +10,7 @@
 #include <QSlider>
 #include <QCheckBox>
 #include <QComboBox>
+#include <QProgressBar>
 #include "core/Types.h"
 
 namespace MetaVisage {
@@ -32,6 +33,11 @@ public:
     void UpdatePointList();
     void SetSelectedPointIndex(int index);
 
+    // Morph stage updates
+    void OnMorphProgress(float progress, const QString& message);
+    void OnMorphComplete(bool success, const QString& message);
+    void SetMorphProcessing(bool processing);
+
 public slots:
     // Update display when transform mode changes
     void OnTransformModeChanged(TransformMode mode, AxisConstraint axis);
@@ -47,6 +53,11 @@ private slots:
     void OnSymmetryToggled(bool enabled);
     // Handle symmetry axis change
     void OnSymmetryAxisChanged(int index);
+    // Handle morph parameter changes
+    void OnStiffnessChanged(int value);
+    void OnSmoothnessChanged(int value);
+    void OnKernelTypeChanged(int index);
+    void OnPreviewModeChanged(int index);
 
 signals:
     void NextStageRequested();
@@ -56,6 +67,13 @@ signals:
     void PointSelectedFromList(int correspondenceIndex);
     void PointSizeChanged(float size);
     void SymmetryChanged(bool enabled, Axis axis);
+
+    // Morph stage signals
+    void ProcessMorphRequested();
+    void CancelMorphRequested();
+    void AcceptMorphRequested();
+    void MorphParameterChanged();
+    void MorphPreviewModeChanged(MorphPreviewMode mode);
 
 private:
     void CreateAlignmentControls();
@@ -96,6 +114,21 @@ private:
     QSlider* pointSizeSlider_;
     QCheckBox* symmetryCheckBox_;
     QComboBox* symmetryAxisCombo_;
+
+    // Morph stage UI elements (only valid during Morph stage)
+    QSlider* stiffnessSlider_;
+    QSlider* smoothnessSlider_;
+    QLabel* stiffnessValueLabel_;
+    QLabel* smoothnessValueLabel_;
+    QComboBox* kernelTypeCombo_;
+    QPushButton* processButton_;
+    QPushButton* cancelButton_;
+    QProgressBar* progressBar_;
+    QLabel* progressLabel_;
+    QComboBox* previewModeCombo_;
+    QPushButton* acceptButton_;
+    QPushButton* reprocessButton_;
+    QPushButton* resetDefaultsButton_;
 
     // Flag to prevent feedback loops when updating spinboxes programmatically
     bool updatingTransformDisplay_;
