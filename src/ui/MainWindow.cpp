@@ -2,6 +2,7 @@
 #include "ui/ViewportWidget.h"
 #include "ui/ViewportContainer.h"
 #include "ui/SidebarWidget.h"
+#include "utils/RayCaster.h"
 #include <QHBoxLayout>
 #include <QWidget>
 #include <QMenu>
@@ -219,6 +220,22 @@ void MainWindow::ConnectViewportSignals() {
     // Connect sidebar spinbox changes to viewport update
     connect(sidebarWidget_, &SidebarWidget::TransformValuesChanged,
             viewportContainer_->GetPrimaryViewport(), QOverload<>::of(&ViewportWidget::update));
+
+    // Connect point signals from viewport container
+    connect(viewportContainer_, &ViewportContainer::PointPlaced,
+            this, &MainWindow::OnPointPlaced);
+    connect(viewportContainer_, &ViewportContainer::PointSelected,
+            this, &MainWindow::OnPointSelected);
+    connect(viewportContainer_, &ViewportContainer::PointDeleteRequested,
+            this, &MainWindow::OnPointDeleteRequested);
+
+    // Connect sidebar point list selection
+    connect(sidebarWidget_, &SidebarWidget::PointSelectedFromList,
+            this, &MainWindow::OnPointSelectedFromList);
+
+    // Connect sidebar point size slider
+    connect(sidebarWidget_, &SidebarWidget::PointSizeChanged,
+            this, &MainWindow::OnPointSizeChanged);
 }
 
 void MainWindow::UpdateWindowTitle() {
@@ -261,11 +278,7 @@ void MainWindow::OnNewProject() {
 
 void MainWindow::OnOpenProject() {
     QString filepath = QFileDialog::getOpenFileName(
-        this,
-        tr("Open Project"),
-        QString(),
-        tr("MetaVisage Project (*.mmproj)")
-    );
+        this, tr("Open Project"), QString(), tr("MetaVisage Project (*.mmproj)"));
 
     if (!filepath.isEmpty()) {
         QMessageBox::information(this, tr("Not Implemented"),
@@ -276,18 +289,12 @@ void MainWindow::OnOpenProject() {
 void MainWindow::OnSaveProject() {
     if (project_->GetPath().isEmpty()) {
         OnSaveProjectAs();
-    } else {
-        // TODO: Save project
     }
 }
 
 void MainWindow::OnSaveProjectAs() {
     QString filepath = QFileDialog::getSaveFileName(
-        this,
-        tr("Save Project As"),
-        QString(),
-        tr("MetaVisage Project (*.mmproj)")
-    );
+        this, tr("Save Project As"), QString(), tr("MetaVisage Project (*.mmproj)"));
 
     if (!filepath.isEmpty()) {
         QMessageBox::information(this, tr("Not Implemented"),
@@ -297,11 +304,8 @@ void MainWindow::OnSaveProjectAs() {
 
 void MainWindow::OnImportMorphMesh() {
     QString filepath = QFileDialog::getOpenFileName(
-        this,
-        tr("Import Morph Mesh (MetaHuman)"),
-        QString(),
-        tr("3D Models (*.fbx *.obj *.gltf *.glb)")
-    );
+        this, tr("Import Morph Mesh (MetaHuman)"), QString(),
+        tr("3D Models (*.fbx *.obj *.gltf *.glb)"));
 
     if (!filepath.isEmpty()) {
         MeshReference& morphMesh = project_->GetMorphMesh();
@@ -310,7 +314,6 @@ void MainWindow::OnImportMorphMesh() {
         if (morphMesh.mesh->Load(filepath)) {
             morphMesh.filepath = filepath;
             morphMesh.isLoaded = true;
-            // Apply -90 degree rotation around X-axis to correct MetaHuman orientation
             Transform initialTransform;
             Quaternion xRotation = Quaternion::FromAxisAngle(Vector3(1.0f, 0.0f, 0.0f), -90.0f);
             initialTransform.SetRotation(xRotation);
@@ -318,21 +321,16 @@ void MainWindow::OnImportMorphMesh() {
 
             statusLabel_->setText("Morph mesh loaded: " + morphMesh.mesh->GetName());
 
-            // Update sidebar mesh status
             QLabel* morphStatus = sidebarWidget_->findChild<QLabel*>("morphStatus");
             if (morphStatus) {
                 morphStatus->setText("Morph Mesh: " + morphMesh.mesh->GetName());
                 morphStatus->setStyleSheet("QLabel { color: #2ECC71; }");
             }
 
-            // Enable next stage button if both meshes are loaded
             sidebarWidget_->SetNextStageEnabled(project_->CanProceedToNextStage());
 
-            // Auto-focus camera on the loaded mesh
             const BoundingBox& bounds = morphMesh.mesh->GetBounds();
             viewportContainer_->GetPrimaryViewport()->GetCamera()->FocusOnBounds(bounds);
-
-            // Update viewport
             viewportContainer_->GetPrimaryViewport()->update();
         } else {
             QMessageBox::critical(this, tr("Error"),
@@ -343,11 +341,8 @@ void MainWindow::OnImportMorphMesh() {
 
 void MainWindow::OnImportTargetMesh() {
     QString filepath = QFileDialog::getOpenFileName(
-        this,
-        tr("Import Target Mesh (Custom)"),
-        QString(),
-        tr("3D Models (*.fbx *.obj *.gltf *.glb)")
-    );
+        this, tr("Import Target Mesh (Custom)"), QString(),
+        tr("3D Models (*.fbx *.obj *.gltf *.glb)"));
 
     if (!filepath.isEmpty()) {
         MeshReference& targetMesh = project_->GetTargetMesh();
@@ -356,25 +351,20 @@ void MainWindow::OnImportTargetMesh() {
         if (targetMesh.mesh->Load(filepath)) {
             targetMesh.filepath = filepath;
             targetMesh.isLoaded = true;
-            targetMesh.transform = Transform(); // Identity transform
+            targetMesh.transform = Transform();
 
             statusLabel_->setText("Target mesh loaded: " + targetMesh.mesh->GetName());
 
-            // Update sidebar mesh status
             QLabel* targetStatus = sidebarWidget_->findChild<QLabel*>("targetStatus");
             if (targetStatus) {
                 targetStatus->setText("Target Mesh: " + targetMesh.mesh->GetName());
                 targetStatus->setStyleSheet("QLabel { color: #2ECC71; }");
             }
 
-            // Enable next stage button if both meshes are loaded
             sidebarWidget_->SetNextStageEnabled(project_->CanProceedToNextStage());
 
-            // Auto-focus camera on the loaded mesh
             const BoundingBox& bounds = targetMesh.mesh->GetBounds();
             viewportContainer_->GetPrimaryViewport()->GetCamera()->FocusOnBounds(bounds);
-
-            // Update viewport
             viewportContainer_->GetPrimaryViewport()->update();
         } else {
             QMessageBox::critical(this, tr("Error"),
@@ -393,13 +383,8 @@ void MainWindow::OnExit() {
 }
 
 // Edit menu slots
-void MainWindow::OnUndo() {
-    // TODO: Implement in Sprint 11
-}
-
-void MainWindow::OnRedo() {
-    // TODO: Implement in Sprint 11
-}
+void MainWindow::OnUndo() {}
+void MainWindow::OnRedo() {}
 
 void MainWindow::OnPreferences() {
     QMessageBox::information(this, tr("Not Implemented"),
@@ -407,13 +392,8 @@ void MainWindow::OnPreferences() {
 }
 
 // View menu slots
-void MainWindow::OnToggleGrid() {
-    // TODO: Implement grid toggle
-}
-
-void MainWindow::OnResetCamera() {
-    // TODO: Implement camera reset
-}
+void MainWindow::OnToggleGrid() {}
+void MainWindow::OnResetCamera() {}
 
 // Help menu slots
 void MainWindow::OnDocumentation() {
@@ -439,6 +419,10 @@ void MainWindow::OnKeyboardShortcuts() {
         "  R - Rotate\n"
         "  S - Scale\n"
         "  X/Y/Z - Constrain to axis\n\n"
+        "Point Reference:\n"
+        "  Left Click - Place/Select point\n"
+        "  Delete - Remove selected point\n"
+        "  Esc - Deselect point\n\n"
         "View:\n"
         "  Home - Reset Camera\n"
         "  1 - Front view\n"
@@ -489,12 +473,218 @@ void MainWindow::OnClearAllPoints() {
 
     if (result == QMessageBox::Yes) {
         project_->GetPointReferenceData().correspondences.clear();
-        sidebarWidget_->SetNextStageEnabled(project_->CanProceedToNextStage());
-        viewportContainer_->GetPrimaryViewport()->update();
-        if (viewportContainer_->IsDualMode()) {
-            viewportContainer_->GetSecondaryViewport()->update();
-        }
+        viewportContainer_->SetSelectedPointIndex(-1);
+        RefreshPointUI();
         statusLabel_->setText("All points cleared");
+    }
+}
+
+// Point reference actions
+void MainWindow::OnPointPlaced(PointSide side, Vector3 position, int vertexIndex) {
+    if (!project_) return;
+
+    auto& correspondences = project_->GetPointReferenceData().correspondences;
+
+    // Determine the next point ID
+    int nextID = 1;
+    for (const auto& corr : correspondences) {
+        if (corr.pointID >= nextID) {
+            nextID = corr.pointID + 1;
+        }
+    }
+
+    int modifiedIndex = -1;
+
+    if (side == PointSide::Target) {
+        // Look for a correspondence that's missing a target point
+        for (int i = 0; i < static_cast<int>(correspondences.size()); ++i) {
+            if (correspondences[i].targetMeshVertexIndex < 0 && correspondences[i].morphMeshVertexIndex >= 0) {
+                correspondences[i].targetMeshPosition = position;
+                correspondences[i].targetMeshVertexIndex = vertexIndex;
+                modifiedIndex = i;
+                break;
+            }
+        }
+
+        if (modifiedIndex < 0) {
+            PointCorrespondence newCorr;
+            newCorr.pointID = nextID;
+            newCorr.targetMeshPosition = position;
+            newCorr.targetMeshVertexIndex = vertexIndex;
+            correspondences.push_back(newCorr);
+            modifiedIndex = static_cast<int>(correspondences.size()) - 1;
+        }
+    } else {
+        // Look for a correspondence that's missing a morph point
+        for (int i = 0; i < static_cast<int>(correspondences.size()); ++i) {
+            if (correspondences[i].morphMeshVertexIndex < 0 && correspondences[i].targetMeshVertexIndex >= 0) {
+                correspondences[i].morphMeshPosition = position;
+                correspondences[i].morphMeshVertexIndex = vertexIndex;
+                modifiedIndex = i;
+                break;
+            }
+        }
+
+        if (modifiedIndex < 0) {
+            PointCorrespondence newCorr;
+            newCorr.pointID = nextID;
+            newCorr.morphMeshPosition = position;
+            newCorr.morphMeshVertexIndex = vertexIndex;
+            correspondences.push_back(newCorr);
+            modifiedIndex = static_cast<int>(correspondences.size()) - 1;
+        }
+    }
+
+    // Handle symmetry
+    if (project_->GetPointReferenceData().symmetryEnabled) {
+        PlaceSymmetricPoint(side, position, vertexIndex, modifiedIndex);
+    }
+
+    RefreshPointUI();
+    statusLabel_->setText(QString("Point %1 placed on %2 mesh")
+        .arg(correspondences[modifiedIndex].pointID)
+        .arg(side == PointSide::Target ? "target" : "morph"));
+}
+
+void MainWindow::PlaceSymmetricPoint(PointSide side, const Vector3& position, int /*vertexIndex*/, int parentIndex) {
+    if (!project_) return;
+
+    auto& pointRef = project_->GetPointReferenceData();
+    Axis symAxis = pointRef.symmetryAxis;
+
+    // Mirror the position across the symmetry axis
+    Vector3 mirroredPos = position;
+    switch (symAxis) {
+        case Axis::X: mirroredPos.x = -mirroredPos.x; break;
+        case Axis::Y: mirroredPos.y = -mirroredPos.y; break;
+        case Axis::Z: mirroredPos.z = -mirroredPos.z; break;
+    }
+
+    // Find nearest vertex on the mesh for the mirrored position
+    const Mesh* mesh = nullptr;
+    const Transform* transform = nullptr;
+
+    if (side == PointSide::Target && project_->GetTargetMesh().mesh) {
+        mesh = project_->GetTargetMesh().mesh.get();
+        transform = &project_->GetTargetMesh().transform;
+    } else if (side == PointSide::Morph && project_->GetMorphMesh().mesh) {
+        mesh = project_->GetMorphMesh().mesh.get();
+        transform = &project_->GetMorphMesh().transform;
+    }
+
+    if (!mesh || !transform) return;
+
+    // Use RayCaster to find nearest vertex
+    int mirroredVertexIdx = RayCaster::FindNearestVertex(mirroredPos, *mesh, *transform);
+    if (mirroredVertexIdx < 0) return;
+
+    auto& correspondences = pointRef.correspondences;
+    auto& parent = correspondences[parentIndex];
+
+    // If the parent already has a symmetric pair, fill that pair's missing side data
+    if (parent.isSymmetric && parent.symmetricPairID >= 0) {
+        for (auto& corr : correspondences) {
+            if (corr.pointID == parent.symmetricPairID) {
+                if (side == PointSide::Target) {
+                    corr.targetMeshPosition = mirroredPos;
+                    corr.targetMeshVertexIndex = mirroredVertexIdx;
+                } else {
+                    corr.morphMeshPosition = mirroredPos;
+                    corr.morphMeshVertexIndex = mirroredVertexIdx;
+                }
+                return;
+            }
+        }
+    }
+
+    // No existing symmetric pair - create a new correspondence
+    int nextID = 1;
+    for (const auto& corr : correspondences) {
+        if (corr.pointID >= nextID) nextID = corr.pointID + 1;
+    }
+
+    PointCorrespondence symCorr;
+    symCorr.pointID = nextID;
+    symCorr.isSymmetric = true;
+    symCorr.symmetricPairID = parent.pointID;
+
+    if (side == PointSide::Target) {
+        symCorr.targetMeshPosition = mirroredPos;
+        symCorr.targetMeshVertexIndex = mirroredVertexIdx;
+    } else {
+        symCorr.morphMeshPosition = mirroredPos;
+        symCorr.morphMeshVertexIndex = mirroredVertexIdx;
+    }
+
+    correspondences.push_back(symCorr);
+
+    // Mark the parent as symmetric too
+    // Re-fetch parent reference since push_back may have invalidated it
+    correspondences[parentIndex].isSymmetric = true;
+    correspondences[parentIndex].symmetricPairID = symCorr.pointID;
+}
+
+void MainWindow::OnPointSelected(int correspondenceIndex) {
+    viewportContainer_->SetSelectedPointIndex(correspondenceIndex);
+    sidebarWidget_->SetSelectedPointIndex(correspondenceIndex);
+}
+
+void MainWindow::OnPointDeleteRequested() {
+    if (!project_) return;
+
+    auto& correspondences = project_->GetPointReferenceData().correspondences;
+    int selectedIdx = viewportContainer_->GetPrimaryViewport()->GetSelectedPointIndex();
+
+    if (selectedIdx < 0 || selectedIdx >= static_cast<int>(correspondences.size())) return;
+
+    // If this point has a symmetric pair, remove that too
+    const auto& corr = correspondences[selectedIdx];
+    if (corr.isSymmetric && corr.symmetricPairID >= 0) {
+        int pairID = corr.symmetricPairID;
+        // Find and remove the pair
+        for (auto it = correspondences.begin(); it != correspondences.end(); ++it) {
+            if (it->pointID == pairID) {
+                correspondences.erase(it);
+                break;
+            }
+        }
+        // Recalculate selectedIdx since the vector may have shifted
+        if (selectedIdx >= static_cast<int>(correspondences.size())) {
+            selectedIdx = static_cast<int>(correspondences.size()) - 1;
+        }
+    }
+
+    // Remove the selected point (recalculate position in case pair was removed before it)
+    if (selectedIdx >= 0 && selectedIdx < static_cast<int>(correspondences.size())) {
+        correspondences.erase(correspondences.begin() + selectedIdx);
+    }
+
+    // Renumber remaining points sequentially
+    for (size_t i = 0; i < correspondences.size(); ++i) {
+        correspondences[i].pointID = static_cast<int>(i) + 1;
+    }
+
+    // Clear selection
+    viewportContainer_->SetSelectedPointIndex(-1);
+    sidebarWidget_->SetSelectedPointIndex(-1);
+
+    RefreshPointUI();
+    statusLabel_->setText("Point deleted");
+}
+
+void MainWindow::OnPointSelectedFromList(int correspondenceIndex) {
+    viewportContainer_->SetSelectedPointIndex(correspondenceIndex);
+}
+
+void MainWindow::OnPointSizeChanged(float size) {
+    viewportContainer_->SetPointSize(size);
+}
+
+void MainWindow::RefreshPointUI() {
+    sidebarWidget_->UpdatePointList();
+    viewportContainer_->GetPrimaryViewport()->update();
+    if (viewportContainer_->IsDualMode()) {
+        viewportContainer_->GetSecondaryViewport()->update();
     }
 }
 
@@ -534,7 +724,6 @@ void MainWindow::OnNextStage() {
             nextStage = WorkflowStage::TouchUp;
             break;
         case WorkflowStage::TouchUp:
-            // Already at final stage
             return;
     }
 

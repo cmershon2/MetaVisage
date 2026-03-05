@@ -29,10 +29,21 @@ public:
     ViewportWidget* GetSecondaryViewport();  // Only visible in dual mode (right)
     Camera* GetActiveCamera();               // Returns active viewport's camera
 
+    // Point selection synchronization
+    void SetSelectedPointIndex(int index);
+
+    // Point size synchronization
+    void SetPointSize(float size);
+
 signals:
     // Forwarded from active viewport
     void TransformModeChanged(TransformMode mode, AxisConstraint axis);
     void TargetTransformChanged();
+
+    // Point signals forwarded from viewports
+    void PointPlaced(PointSide side, Vector3 position, int vertexIndex);
+    void PointSelected(int correspondenceIndex);
+    void PointDeleteRequested();
 
 private slots:
     void OnLeftCameraChanged();

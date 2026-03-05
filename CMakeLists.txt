@@ -61,6 +61,8 @@ set(SOURCES
     src/rendering/Renderer.cpp
     src/rendering/MeshRenderer.cpp
     src/rendering/ShaderManager.cpp
+    src/rendering/PointRenderer.cpp
+    src/utils/RayCaster.cpp
 )
 
 # Header files
@@ -77,6 +79,8 @@ set(HEADERS
     include/rendering/Renderer.h
     include/rendering/MeshRenderer.h
     include/rendering/ShaderManager.h
+    include/rendering/PointRenderer.h
+    include/utils/RayCaster.h
 )
 
 # Create executable

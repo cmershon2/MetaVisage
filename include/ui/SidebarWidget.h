@@ -7,6 +7,9 @@
 #include <QPushButton>
 #include <QDoubleSpinBox>
 #include <QScrollArea>
+#include <QSlider>
+#include <QCheckBox>
+#include <QComboBox>
 #include "core/Types.h"
 
 namespace MetaVisage {
@@ -24,6 +27,11 @@ public:
     void SetNextStageEnabled(bool enabled) { nextStageButton_->setEnabled(enabled); }
     void SetProject(Project* project) { project_ = project; }
 
+    // Point reference updates
+    void UpdatePointCounts();
+    void UpdatePointList();
+    void SetSelectedPointIndex(int index);
+
 public slots:
     // Update display when transform mode changes
     void OnTransformModeChanged(TransformMode mode, AxisConstraint axis);
@@ -33,12 +41,21 @@ public slots:
 private slots:
     // Handle spinbox value changes from user input
     void OnSpinBoxValueChanged();
+    // Handle point size slider change
+    void OnPointSizeChanged(int value);
+    // Handle symmetry toggle
+    void OnSymmetryToggled(bool enabled);
+    // Handle symmetry axis change
+    void OnSymmetryAxisChanged(int index);
 
 signals:
     void NextStageRequested();
     void ResetTransformRequested();
     void TransformValuesChanged();
     void ClearAllPointsRequested();
+    void PointSelectedFromList(int correspondenceIndex);
+    void PointSizeChanged(float size);
+    void SymmetryChanged(bool enabled, Axis axis);
 
 private:
     void CreateAlignmentControls();
@@ -47,6 +64,7 @@ private:
     void CreateTouchUpControls();
     void ClearControls();
     void UpdateTransformDisplay();
+    void RebuildPointListContent();
 
     Project* project_;
 
@@ -73,10 +91,17 @@ private:
     QLabel* morphPointCountLabel_;
     QLabel* matchStatusLabel_;
     QScrollArea* pointListScroll_;
+    QWidget* pointListContent_;
     QPushButton* clearAllPointsButton_;
+    QSlider* pointSizeSlider_;
+    QCheckBox* symmetryCheckBox_;
+    QComboBox* symmetryAxisCombo_;
 
     // Flag to prevent feedback loops when updating spinboxes programmatically
     bool updatingTransformDisplay_;
+
+    // Currently selected point in list
+    int selectedPointIndex_;
 };
 
 } // namespace MetaVisage

@@ -445,6 +445,47 @@ inline Matrix4x4 Quaternion::ToMatrix() const {
     return result;
 }
 
+// Ray for ray casting
+struct Ray {
+    Vector3 origin;
+    Vector3 direction;
+
+    Ray() {}
+    Ray(const Vector3& o, const Vector3& d) : origin(o), direction(d) {}
+
+    Vector3 PointAt(float t) const {
+        return origin + direction * t;
+    }
+};
+
+// Ray cast hit result
+struct RaycastHit {
+    bool hit;
+    Vector3 position;
+    int vertexIndex;       // Nearest vertex to hit point
+    int triangleIndex;     // Which triangle was hit
+    float distance;        // Distance along ray
+
+    RaycastHit() : hit(false), vertexIndex(-1), triangleIndex(-1), distance(0.0f) {}
+};
+
+// Which side of a correspondence pair
+enum class PointSide {
+    Target,
+    Morph
+};
+
+// Point selection state
+struct PointSelection {
+    int correspondenceIndex;  // -1 for no selection
+    PointSide side;
+
+    PointSelection() : correspondenceIndex(-1), side(PointSide::Target) {}
+
+    bool HasSelection() const { return correspondenceIndex >= 0; }
+    void Clear() { correspondenceIndex = -1; }
+};
+
 struct BoundingBox {
     Vector3 min;
     Vector3 max;

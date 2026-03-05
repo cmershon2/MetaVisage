@@ -13,7 +13,9 @@ Renderer::Renderer()
       renderFilter_(RenderFilter::All),
       gridVAO_(0),
       gridVBO_(0),
-      gridVertexCount_(0) {
+      gridVertexCount_(0),
+      pointSize_(12.0f),
+      selectedPointIndex_(-1) {
 }
 
 Renderer::~Renderer() {
@@ -33,6 +35,11 @@ bool Renderer::Initialize() {
     // Load shaders
     shaderManager_->LoadShader("grid", "assets/shaders/grid.vert", "assets/shaders/grid.frag");
     shaderManager_->LoadShader("basic", "assets/shaders/basic.vert", "assets/shaders/basic.frag");
+    shaderManager_->LoadShader("point", "assets/shaders/point.vert", "assets/shaders/point.frag");
+
+    // Initialize point renderer
+    pointRenderer_ = std::make_unique<PointRenderer>();
+    pointRenderer_->Initialize();
 
     // Create grid geometry - sized for typical 3D models (1-10 unit scale)
     // Grid extends 10 units in each direction with lines every 1 unit
@@ -151,6 +158,11 @@ void Renderer::Render(const Camera& camera, int width, int height, Project* proj
                 RenderMesh(*targetMeshRef.mesh, targetMeshRef.transform, targetColor, viewProjection);
             }
         }
+
+        // Render correspondence points (only in PointReference stage)
+        if (project->GetCurrentStage() == WorkflowStage::PointReference) {
+            RenderPoints(camera, width, height, project);
+        }
     }
 }
 
@@ -181,6 +193,67 @@ void Renderer::RenderMesh(const Mesh& mesh, const Transform& transform,
     if (renderer->HasMesh()) {
         unsigned int program = shaderManager_->GetShader("basic");
         renderer->Render(program, viewProjection, transform, shadingMode_, color);
+    }
+}
+
+void Renderer::RenderPoints(const Camera& camera, int width, int height, Project* project) {
+    if (!pointRenderer_ || !project) return;
+
+    const auto& correspondences = project->GetPointReferenceData().correspondences;
+    if (correspondences.empty()) return;
+
+    float aspectRatio = width / (float)height;
+    Matrix4x4 view = camera.GetViewMatrix();
+    Matrix4x4 projection = camera.GetProjectionMatrix(aspectRatio);
+    Matrix4x4 viewProjection = projection * view;
+
+    // Build point marker data based on render filter
+    std::vector<PointMarkerData> markers;
+
+    // Colors
+    Vector3 greenColor(0.18f, 0.8f, 0.44f);   // #2ECC71 - unselected
+    Vector3 orangeColor(0.9f, 0.49f, 0.13f);  // #E67E22 - selected
+    Vector3 yellowColor(1.0f, 0.84f, 0.0f);   // Yellow - newly placed (last point)
+
+    for (size_t i = 0; i < correspondences.size(); ++i) {
+        const auto& corr = correspondences[i];
+        int corrIdx = static_cast<int>(i);
+        bool isSelected = (corrIdx == selectedPointIndex_);
+        bool isLastPoint = (i == correspondences.size() - 1);
+
+        // Show target points in left viewport (TargetOnly filter)
+        if (renderFilter_ != RenderFilter::MorphOnly && corr.targetMeshVertexIndex >= 0) {
+            PointMarkerData marker;
+            marker.position = corr.targetMeshPosition;
+            if (isSelected) {
+                marker.color = orangeColor;
+            } else if (isLastPoint) {
+                marker.color = yellowColor;
+            } else {
+                marker.color = greenColor;
+            }
+            markers.push_back(marker);
+        }
+
+        // Show morph points in right viewport (MorphOnly filter)
+        if (renderFilter_ != RenderFilter::TargetOnly && corr.morphMeshVertexIndex >= 0) {
+            PointMarkerData marker;
+            marker.position = corr.morphMeshPosition;
+            if (isSelected) {
+                marker.color = orangeColor;
+            } else if (isLastPoint) {
+                marker.color = yellowColor;
+            } else {
+                marker.color = greenColor;
+            }
+            markers.push_back(marker);
+        }
+    }
+
+    if (!markers.empty()) {
+        pointRenderer_->UpdatePoints(markers);
+        unsigned int program = shaderManager_->GetShader("point");
+        pointRenderer_->Render(program, viewProjection, pointSize_);
     }
 }
 

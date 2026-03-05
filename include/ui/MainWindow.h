@@ -55,6 +55,13 @@ private slots:
     void OnResetTransform();
     void OnClearAllPoints();
 
+    // Point reference actions
+    void OnPointPlaced(PointSide side, Vector3 position, int vertexIndex);
+    void OnPointSelected(int correspondenceIndex);
+    void OnPointDeleteRequested();
+    void OnPointSelectedFromList(int correspondenceIndex);
+    void OnPointSizeChanged(float size);
+
 private:
     void CreateMenus();
     void CreateToolBar();
@@ -63,6 +70,10 @@ private:
     void UpdateWindowTitle();
     void UpdateStatusBar();
     void ConnectViewportSignals();
+    void RefreshPointUI();
+
+    // Symmetry helpers
+    void PlaceSymmetricPoint(PointSide side, const Vector3& position, int vertexIndex, int parentIndex);
 
     // UI Components
     QMenuBar* menuBar_;

@@ -1,6 +1,7 @@
 #include "ui/ViewportWidget.h"
 #include "rendering/Renderer.h"
 #include "core/Project.h"
+#include "utils/RayCaster.h"
 #include <QDebug>
 #include <QPainter>
 #include <cmath>
@@ -20,7 +21,8 @@ ViewportWidget::ViewportWidget(QWidget *parent)
       isTransforming_(false),
       renderFilter_(RenderFilter::All),
       isActive_(false),
-      viewportLabel_("") {
+      viewportLabel_(""),
+      selectedPointIndex_(-1) {
 
     setFocusPolicy(Qt::StrongFocus);
     setMouseTracking(true);
@@ -55,6 +57,21 @@ void ViewportWidget::SetActive(bool active) {
     }
 }
 
+void ViewportWidget::SetSelectedPointIndex(int index) {
+    selectedPointIndex_ = index;
+    if (renderer_) {
+        renderer_->SetSelectedPointIndex(index);
+    }
+    update();
+}
+
+void ViewportWidget::SetPointSize(float size) {
+    if (renderer_) {
+        renderer_->SetPointSize(size);
+    }
+    update();
+}
+
 void ViewportWidget::initializeGL() {
     initializeOpenGLFunctions();
 
@@ -83,11 +100,12 @@ void ViewportWidget::paintGL() {
         renderer_->Render(*camera_, width(), height(), project_);
     }
 
+    // Draw overlays with QPainter
+    QPainter painter(this);
+    painter.setRenderHint(QPainter::Antialiasing);
+
     // Draw viewport label overlay if set
     if (!viewportLabel_.isEmpty()) {
-        QPainter painter(this);
-        painter.setRenderHint(QPainter::Antialiasing);
-
         QFont font = painter.font();
         font.setPointSize(10);
         font.setBold(true);
@@ -104,8 +122,71 @@ void ViewportWidget::paintGL() {
 
         painter.setPen(QColor(255, 255, 255, 200));
         painter.drawText(textRect, Qt::AlignCenter, viewportLabel_);
+    }
 
-        painter.end();
+    // Draw point labels in PointReference stage
+    if (project_ && project_->GetCurrentStage() == WorkflowStage::PointReference) {
+        DrawPointLabels(painter);
+    }
+
+    painter.end();
+}
+
+void ViewportWidget::DrawPointLabels(QPainter& painter) {
+    if (!project_) return;
+
+    const auto& correspondences = project_->GetPointReferenceData().correspondences;
+    if (correspondences.empty()) return;
+
+    QFont labelFont = painter.font();
+    labelFont.setPointSize(8);
+    labelFont.setBold(true);
+    painter.setFont(labelFont);
+
+    for (size_t i = 0; i < correspondences.size(); ++i) {
+        const auto& corr = correspondences[i];
+        int corrIdx = static_cast<int>(i);
+        bool isSelected = (corrIdx == selectedPointIndex_);
+        QString label = QString::number(corr.pointID);
+
+        Vector3 worldPos;
+        bool shouldDraw = false;
+
+        // Determine which point to draw based on render filter
+        if (renderFilter_ != RenderFilter::MorphOnly && corr.targetMeshVertexIndex >= 0) {
+            worldPos = corr.targetMeshPosition;
+            shouldDraw = true;
+        } else if (renderFilter_ != RenderFilter::TargetOnly && corr.morphMeshVertexIndex >= 0) {
+            worldPos = corr.morphMeshPosition;
+            shouldDraw = true;
+        }
+
+        if (!shouldDraw) continue;
+
+        // Project to screen
+        Vector3 screenPos = RayCaster::WorldToScreen(worldPos, width(), height(), *camera_);
+
+        // Skip if behind camera
+        if (screenPos.z < 0.0f || screenPos.z > 1.0f) continue;
+
+        // Draw label above the point
+        int sx = static_cast<int>(screenPos.x);
+        int sy = static_cast<int>(screenPos.y) - 12;
+
+        QFontMetrics fm(labelFont);
+        QRect textRect = fm.boundingRect(label);
+        textRect.adjust(-3, -2, 3, 2);
+        textRect.moveCenter(QPoint(sx, sy));
+
+        // Background
+        QColor bgColor = isSelected ? QColor(230, 126, 34, 200) : QColor(0, 0, 0, 160);
+        painter.setPen(Qt::NoPen);
+        painter.setBrush(bgColor);
+        painter.drawRoundedRect(textRect, 3, 3);
+
+        // Text
+        painter.setPen(QColor(255, 255, 255, 230));
+        painter.drawText(textRect, Qt::AlignCenter, label);
     }
 }
 
@@ -119,12 +200,20 @@ void ViewportWidget::mousePressEvent(QMouseEvent *event) {
 
     lastMousePos_ = event->pos();
 
-    // Left click starts transform if in a transform mode
-    if (event->button() == Qt::LeftButton && transformMode_ != TransformMode::None) {
-        if (project_ && project_->GetTargetMesh().isLoaded &&
-            project_->GetCurrentStage() == WorkflowStage::Alignment) {
-            isTransforming_ = true;
-            transformStartPos_ = event->pos();
+    bool inPointReferenceStage = project_ && project_->GetCurrentStage() == WorkflowStage::PointReference;
+
+    // Left click behavior depends on stage
+    if (event->button() == Qt::LeftButton) {
+        if (inPointReferenceStage) {
+            // In Point Reference stage: place or select points
+            HandlePointClick(event);
+        } else if (transformMode_ != TransformMode::None) {
+            // In Alignment stage with transform mode: start transform
+            if (project_ && project_->GetTargetMesh().isLoaded &&
+                project_->GetCurrentStage() == WorkflowStage::Alignment) {
+                isTransforming_ = true;
+                transformStartPos_ = event->pos();
+            }
         }
     }
 
@@ -135,6 +224,110 @@ void ViewportWidget::mousePressEvent(QMouseEvent *event) {
             isOrbiting_ = true;
         }
     }
+}
+
+void ViewportWidget::HandlePointClick(QMouseEvent *event) {
+    if (!project_) return;
+
+    float screenX = static_cast<float>(event->pos().x());
+    float screenY = static_cast<float>(event->pos().y());
+
+    // First, try to select an existing point near the click
+    if (TrySelectExistingPoint(screenX, screenY)) {
+        return;
+    }
+
+    // If no existing point near click, try to place a new point
+    Ray ray = RayCaster::ScreenToRay(screenX, screenY, width(), height(), *camera_);
+
+    PointSide side = GetViewportPointSide();
+    RaycastHit hit;
+
+    if (side == PointSide::Target && project_->GetTargetMesh().isLoaded && project_->GetTargetMesh().mesh) {
+        hit = RayCaster::RayIntersectMesh(ray, *project_->GetTargetMesh().mesh,
+                                           project_->GetTargetMesh().transform);
+    } else if (side == PointSide::Morph && project_->GetMorphMesh().isLoaded && project_->GetMorphMesh().mesh) {
+        hit = RayCaster::RayIntersectMesh(ray, *project_->GetMorphMesh().mesh,
+                                           project_->GetMorphMesh().transform);
+    }
+
+    if (hit.hit) {
+        emit PointPlaced(side, hit.position, hit.vertexIndex);
+    } else {
+        // Click on empty space: deselect
+        selectedPointIndex_ = -1;
+        if (renderer_) {
+            renderer_->SetSelectedPointIndex(-1);
+        }
+        emit PointSelected(-1);
+        update();
+    }
+}
+
+bool ViewportWidget::TrySelectExistingPoint(float screenX, float screenY) {
+    if (!project_) return false;
+
+    const auto& correspondences = project_->GetPointReferenceData().correspondences;
+    if (correspondences.empty()) return false;
+
+    const float selectRadius = 15.0f; // pixels
+    float closestDist = selectRadius;
+    int closestIdx = -1;
+
+    PointSide side = GetViewportPointSide();
+
+    for (size_t i = 0; i < correspondences.size(); ++i) {
+        const auto& corr = correspondences[i];
+
+        Vector3 worldPos;
+        bool hasPoint = false;
+
+        if (side == PointSide::Target && corr.targetMeshVertexIndex >= 0) {
+            worldPos = corr.targetMeshPosition;
+            hasPoint = true;
+        } else if (side == PointSide::Morph && corr.morphMeshVertexIndex >= 0) {
+            worldPos = corr.morphMeshPosition;
+            hasPoint = true;
+        }
+
+        if (!hasPoint) continue;
+
+        Vector3 screenPos = RayCaster::WorldToScreen(worldPos, width(), height(), *camera_);
+
+        // Skip if behind camera
+        if (screenPos.z < 0.0f || screenPos.z > 1.0f) continue;
+
+        float dx = screenPos.x - screenX;
+        float dy = screenPos.y - screenY;
+        float dist = std::sqrt(dx * dx + dy * dy);
+
+        if (dist < closestDist) {
+            closestDist = dist;
+            closestIdx = static_cast<int>(i);
+        }
+    }
+
+    if (closestIdx >= 0) {
+        selectedPointIndex_ = closestIdx;
+        if (renderer_) {
+            renderer_->SetSelectedPointIndex(closestIdx);
+        }
+        emit PointSelected(closestIdx);
+        update();
+        return true;
+    }
+
+    return false;
+}
+
+PointSide ViewportWidget::GetViewportPointSide() const {
+    if (renderFilter_ == RenderFilter::TargetOnly) {
+        return PointSide::Target;
+    } else if (renderFilter_ == RenderFilter::MorphOnly) {
+        return PointSide::Morph;
+    }
+    // Default: if in single viewport mode showing all, treat as target
+    return PointSide::Target;
 }
 
 void ViewportWidget::mouseMoveEvent(QMouseEvent *event) {
@@ -179,6 +372,7 @@ void ViewportWidget::wheelEvent(QWheelEvent *event) {
 void ViewportWidget::keyPressEvent(QKeyEvent *event) {
     // Check if we're in the Alignment stage for transform tools
     bool inAlignmentStage = project_ && project_->GetCurrentStage() == WorkflowStage::Alignment;
+    bool inPointReferenceStage = project_ && project_->GetCurrentStage() == WorkflowStage::PointReference;
     bool hasTargetMesh = project_ && project_->GetTargetMesh().isLoaded;
 
     switch (event->key()) {
@@ -223,10 +417,22 @@ void ViewportWidget::keyPressEvent(QKeyEvent *event) {
             }
             break;
 
-        // Escape cancels current transform
+        // Escape cancels current transform or deselects point
         case Qt::Key_Escape:
             if (transformMode_ != TransformMode::None) {
                 CancelTransform();
+            } else if (inPointReferenceStage && selectedPointIndex_ >= 0) {
+                selectedPointIndex_ = -1;
+                if (renderer_) renderer_->SetSelectedPointIndex(-1);
+                emit PointSelected(-1);
+                update();
+            }
+            break;
+
+        // Delete key removes selected point
+        case Qt::Key_Delete:
+            if (inPointReferenceStage && selectedPointIndex_ >= 0) {
+                emit PointDeleteRequested();
             }
             break;
 

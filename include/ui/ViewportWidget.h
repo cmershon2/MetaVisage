@@ -45,6 +45,13 @@ public:
     // Viewport label (shown in corner, e.g. "Target Mesh" or "Morph Mesh")
     void SetViewportLabel(const QString& label) { viewportLabel_ = label; }
 
+    // Point selection
+    void SetSelectedPointIndex(int index);
+    int GetSelectedPointIndex() const { return selectedPointIndex_; }
+
+    // Point rendering settings
+    void SetPointSize(float size);
+
 signals:
     // Signal emitted when transform mode changes
     void TransformModeChanged(TransformMode mode, AxisConstraint axis);
@@ -52,6 +59,12 @@ signals:
     void TargetTransformChanged();
     // Signal emitted when camera state changes (for synchronization)
     void CameraChanged();
+    // Signal emitted when a point is placed on the mesh
+    void PointPlaced(PointSide side, Vector3 position, int vertexIndex);
+    // Signal emitted when a point is selected
+    void PointSelected(int correspondenceIndex);
+    // Signal emitted when delete key is pressed to remove selected point
+    void PointDeleteRequested();
 
 protected:
     // OpenGL functions
@@ -69,6 +82,12 @@ protected:
 private:
     // Apply transform based on mouse delta
     void ApplyTransform(const QPoint& delta);
+
+    // Point reference helpers
+    void HandlePointClick(QMouseEvent *event);
+    bool TrySelectExistingPoint(float screenX, float screenY);
+    PointSide GetViewportPointSide() const;
+    void DrawPointLabels(QPainter& painter);
 
     std::unique_ptr<Camera> camera_;
     std::unique_ptr<Renderer> renderer_;
@@ -91,6 +110,9 @@ private:
     // Active viewport state
     bool isActive_;
     QString viewportLabel_;
+
+    // Point reference state
+    int selectedPointIndex_;
 };
 
 } // namespace MetaVisage
