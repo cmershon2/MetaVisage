@@ -34,8 +34,13 @@ SidebarWidget::SidebarWidget(QWidget *parent)
       morphPointCountLabel_(nullptr),
       matchStatusLabel_(nullptr),
       pointListScroll_(nullptr),
+      pointListContent_(nullptr),
       clearAllPointsButton_(nullptr),
-      updatingTransformDisplay_(false) {
+      pointSizeSlider_(nullptr),
+      symmetryCheckBox_(nullptr),
+      symmetryAxisCombo_(nullptr),
+      updatingTransformDisplay_(false),
+      selectedPointIndex_(-1) {
 
     setStyleSheet("QWidget { background-color: #2C3E50; color: white; }");
 
@@ -194,7 +199,6 @@ void SidebarWidget::CreateAlignmentControls() {
         "    background-color: #2980B9;"
         "}";
 
-    // Helper lambda to create position spinbox
     auto createPosSpinBox = [&]() -> QDoubleSpinBox* {
         QDoubleSpinBox* spinBox = new QDoubleSpinBox();
         spinBox->setRange(-1000.0, 1000.0);
@@ -206,20 +210,18 @@ void SidebarWidget::CreateAlignmentControls() {
         return spinBox;
     };
 
-    // Helper lambda to create rotation spinbox (degrees)
     auto createRotSpinBox = [&]() -> QDoubleSpinBox* {
         QDoubleSpinBox* spinBox = new QDoubleSpinBox();
         spinBox->setRange(-360.0, 360.0);
         spinBox->setDecimals(1);
         spinBox->setSingleStep(1.0);
         spinBox->setValue(0.0);
-        spinBox->setSuffix(QString::fromUtf8("\u00B0"));  // Degree symbol
+        spinBox->setSuffix(QString::fromUtf8("\u00B0"));
         spinBox->setStyleSheet(spinBoxStyle);
         spinBox->setMinimumWidth(55);
         return spinBox;
     };
 
-    // Helper lambda to create scale spinbox
     auto createScaleSpinBox = [&]() -> QDoubleSpinBox* {
         QDoubleSpinBox* spinBox = new QDoubleSpinBox();
         spinBox->setRange(0.001, 100.0);
@@ -258,63 +260,54 @@ void SidebarWidget::CreateAlignmentControls() {
     transformLayout->addWidget(posZLabel, row, 5);
     posZSpinBox_ = createPosSpinBox();
     transformLayout->addWidget(posZSpinBox_, row, 6);
-
     row++;
 
     // Rotation row
     QLabel* rotLabel = new QLabel("Rot:");
     rotLabel->setStyleSheet("QLabel { font-weight: bold; }");
     transformLayout->addWidget(rotLabel, row, 0);
-
     QLabel* rotXLabel = new QLabel("X");
     rotXLabel->setStyleSheet("QLabel { color: #E74C3C; }");
     rotXLabel->setAlignment(Qt::AlignRight | Qt::AlignVCenter);
     transformLayout->addWidget(rotXLabel, row, 1);
     rotXSpinBox_ = createRotSpinBox();
     transformLayout->addWidget(rotXSpinBox_, row, 2);
-
     QLabel* rotYLabel = new QLabel("Y");
     rotYLabel->setStyleSheet("QLabel { color: #2ECC71; }");
     rotYLabel->setAlignment(Qt::AlignRight | Qt::AlignVCenter);
     transformLayout->addWidget(rotYLabel, row, 3);
     rotYSpinBox_ = createRotSpinBox();
     transformLayout->addWidget(rotYSpinBox_, row, 4);
-
     QLabel* rotZLabel = new QLabel("Z");
     rotZLabel->setStyleSheet("QLabel { color: #3498DB; }");
     rotZLabel->setAlignment(Qt::AlignRight | Qt::AlignVCenter);
     transformLayout->addWidget(rotZLabel, row, 5);
     rotZSpinBox_ = createRotSpinBox();
     transformLayout->addWidget(rotZSpinBox_, row, 6);
-
     row++;
 
     // Scale row
     QLabel* scaleLabel = new QLabel("Scale:");
     scaleLabel->setStyleSheet("QLabel { font-weight: bold; }");
     transformLayout->addWidget(scaleLabel, row, 0);
-
     QLabel* scaleXLabel = new QLabel("X");
     scaleXLabel->setStyleSheet("QLabel { color: #E74C3C; }");
     scaleXLabel->setAlignment(Qt::AlignRight | Qt::AlignVCenter);
     transformLayout->addWidget(scaleXLabel, row, 1);
     scaleXSpinBox_ = createScaleSpinBox();
     transformLayout->addWidget(scaleXSpinBox_, row, 2);
-
     QLabel* scaleYLabel = new QLabel("Y");
     scaleYLabel->setStyleSheet("QLabel { color: #2ECC71; }");
     scaleYLabel->setAlignment(Qt::AlignRight | Qt::AlignVCenter);
     transformLayout->addWidget(scaleYLabel, row, 3);
     scaleYSpinBox_ = createScaleSpinBox();
     transformLayout->addWidget(scaleYSpinBox_, row, 4);
-
     QLabel* scaleZLabel = new QLabel("Z");
     scaleZLabel->setStyleSheet("QLabel { color: #3498DB; }");
     scaleZLabel->setAlignment(Qt::AlignRight | Qt::AlignVCenter);
     transformLayout->addWidget(scaleZLabel, row, 5);
     scaleZSpinBox_ = createScaleSpinBox();
     transformLayout->addWidget(scaleZSpinBox_, row, 6);
-
     row++;
 
     // Connect spinbox value changes
@@ -356,10 +349,8 @@ void SidebarWidget::CreateAlignmentControls() {
     transformLayout->addWidget(resetTransformButton_, row, 0, 1, 7);
 
     controlsLayout->addWidget(transformGroup);
-
     controlsLayout->addStretch();
 
-    // Update initial display
     UpdateTransformDisplay();
 }
 
@@ -368,7 +359,6 @@ void SidebarWidget::CreatePointReferenceControls() {
     controlsLayout->setContentsMargins(0, 0, 0, 0);
     controlsLayout->setSpacing(16);
 
-    // Instructions
     QLabel* info = new QLabel(
         "Click on mesh surfaces to place correspondence points.\n\n"
         "Place matching points on the target mesh (left) and morph mesh (right). "
@@ -387,18 +377,14 @@ void SidebarWidget::CreatePointReferenceControls() {
     QVBoxLayout* countLayout = new QVBoxLayout(countGroup);
 
     targetPointCountLabel_ = new QLabel("Target Points: 0");
-    targetPointCountLabel_->setObjectName("targetPointCount");
-    targetPointCountLabel_->setStyleSheet("QLabel { color: #F39C12; font-size: 10pt; }"); // Orange for target
+    targetPointCountLabel_->setStyleSheet("QLabel { color: #F39C12; font-size: 10pt; }");
     countLayout->addWidget(targetPointCountLabel_);
 
     morphPointCountLabel_ = new QLabel("Morph Points: 0");
-    morphPointCountLabel_->setObjectName("morphPointCount");
-    morphPointCountLabel_->setStyleSheet("QLabel { color: #3498DB; font-size: 10pt; }"); // Blue for morph
+    morphPointCountLabel_->setStyleSheet("QLabel { color: #3498DB; font-size: 10pt; }");
     countLayout->addWidget(morphPointCountLabel_);
 
-    // Match status indicator
     matchStatusLabel_ = new QLabel("No points placed");
-    matchStatusLabel_->setObjectName("matchStatus");
     matchStatusLabel_->setStyleSheet("QLabel { color: #95A5A6; font-weight: bold; font-size: 10pt; }");
     matchStatusLabel_->setAlignment(Qt::AlignCenter);
     countLayout->addWidget(matchStatusLabel_);
@@ -413,11 +399,10 @@ void SidebarWidget::CreatePointReferenceControls() {
     );
     QVBoxLayout* listLayout = new QVBoxLayout(listGroup);
 
-    // Scrollable point list
     pointListScroll_ = new QScrollArea();
     pointListScroll_->setWidgetResizable(true);
-    pointListScroll_->setMinimumHeight(150);
-    pointListScroll_->setMaximumHeight(300);
+    pointListScroll_->setMinimumHeight(120);
+    pointListScroll_->setMaximumHeight(250);
     pointListScroll_->setStyleSheet(
         "QScrollArea { background-color: #34495E; border: 1px solid #555; border-radius: 3px; }"
         "QScrollBar:vertical { background-color: #2C3E50; width: 10px; }"
@@ -425,20 +410,43 @@ void SidebarWidget::CreatePointReferenceControls() {
         "QScrollBar::add-line:vertical, QScrollBar::sub-line:vertical { height: 0px; }"
     );
 
-    QWidget* pointListContent = new QWidget();
-    QVBoxLayout* pointListLayout = new QVBoxLayout(pointListContent);
-    pointListLayout->setContentsMargins(8, 8, 8, 8);
-
-    QLabel* noPointsLabel = new QLabel("No points placed yet.\n\nPoint placement will be\navailable in Sprint 5.");
+    pointListContent_ = new QWidget();
+    QVBoxLayout* pointListLayout = new QVBoxLayout(pointListContent_);
+    pointListLayout->setContentsMargins(4, 4, 4, 4);
+    QLabel* noPointsLabel = new QLabel("No points placed yet.\nClick on mesh to add points.");
     noPointsLabel->setAlignment(Qt::AlignCenter);
     noPointsLabel->setStyleSheet("QLabel { color: #7F8C8D; font-style: italic; }");
     pointListLayout->addWidget(noPointsLabel);
     pointListLayout->addStretch();
-
-    pointListScroll_->setWidget(pointListContent);
+    pointListScroll_->setWidget(pointListContent_);
     listLayout->addWidget(pointListScroll_);
 
     controlsLayout->addWidget(listGroup);
+
+    // Point Size Group
+    QGroupBox* sizeGroup = new QGroupBox("Point Size");
+    sizeGroup->setStyleSheet(
+        "QGroupBox { border: 1px solid #555; border-radius: 4px; margin-top: 8px; padding-top: 8px; }"
+        "QGroupBox::title { subcontrol-origin: margin; left: 10px; padding: 0 5px; }"
+    );
+    QHBoxLayout* sizeLayout = new QHBoxLayout(sizeGroup);
+
+    pointSizeSlider_ = new QSlider(Qt::Horizontal);
+    pointSizeSlider_->setRange(4, 30);
+    pointSizeSlider_->setValue(12);
+    pointSizeSlider_->setStyleSheet(
+        "QSlider::groove:horizontal { background: #34495E; height: 6px; border-radius: 3px; }"
+        "QSlider::handle:horizontal { background: #3498DB; width: 14px; margin: -4px 0; border-radius: 7px; }"
+    );
+    connect(pointSizeSlider_, &QSlider::valueChanged, this, &SidebarWidget::OnPointSizeChanged);
+    sizeLayout->addWidget(pointSizeSlider_);
+
+    QLabel* sizeValueLabel = new QLabel("12");
+    sizeValueLabel->setObjectName("pointSizeValue");
+    sizeValueLabel->setMinimumWidth(25);
+    sizeLayout->addWidget(sizeValueLabel);
+
+    controlsLayout->addWidget(sizeGroup);
 
     // Actions Group
     QGroupBox* actionsGroup = new QGroupBox("Actions");
@@ -465,9 +473,14 @@ void SidebarWidget::CreatePointReferenceControls() {
     connect(clearAllPointsButton_, &QPushButton::clicked, this, &SidebarWidget::ClearAllPointsRequested);
     actionsLayout->addWidget(clearAllPointsButton_);
 
+    QLabel* deleteInfo = new QLabel("Delete - Remove selected point\nEsc - Deselect point");
+    deleteInfo->setWordWrap(true);
+    deleteInfo->setStyleSheet("QLabel { color: #95A5A6; font-size: 8pt; }");
+    actionsLayout->addWidget(deleteInfo);
+
     controlsLayout->addWidget(actionsGroup);
 
-    // Symmetry Group (scaffolding for Sprint 5)
+    // Symmetry Group
     QGroupBox* symmetryGroup = new QGroupBox("Symmetry");
     symmetryGroup->setStyleSheet(
         "QGroupBox { border: 1px solid #555; border-radius: 4px; margin-top: 8px; padding-top: 8px; }"
@@ -475,12 +488,33 @@ void SidebarWidget::CreatePointReferenceControls() {
     );
     QVBoxLayout* symmetryLayout = new QVBoxLayout(symmetryGroup);
 
-    QCheckBox* symmetryCheck = new QCheckBox("Enable Symmetry Mode");
-    symmetryCheck->setEnabled(false);
-    symmetryCheck->setStyleSheet("QCheckBox { color: #7F8C8D; }");
-    symmetryLayout->addWidget(symmetryCheck);
+    symmetryCheckBox_ = new QCheckBox("Enable Symmetry Mode");
+    symmetryCheckBox_->setStyleSheet("QCheckBox { color: white; }");
+    connect(symmetryCheckBox_, &QCheckBox::toggled, this, &SidebarWidget::OnSymmetryToggled);
+    symmetryLayout->addWidget(symmetryCheckBox_);
 
-    QLabel* symmetryNote = new QLabel("Symmetry mode will be available in Sprint 5");
+    QHBoxLayout* axisLayout = new QHBoxLayout();
+    QLabel* axisLabel = new QLabel("Axis:");
+    axisLabel->setStyleSheet("QLabel { color: #BDC3C7; }");
+    axisLayout->addWidget(axisLabel);
+
+    symmetryAxisCombo_ = new QComboBox();
+    symmetryAxisCombo_->addItem("X", static_cast<int>(Axis::X));
+    symmetryAxisCombo_->addItem("Y", static_cast<int>(Axis::Y));
+    symmetryAxisCombo_->addItem("Z", static_cast<int>(Axis::Z));
+    symmetryAxisCombo_->setCurrentIndex(0);
+    symmetryAxisCombo_->setEnabled(false);
+    symmetryAxisCombo_->setStyleSheet(
+        "QComboBox { background-color: #34495E; color: white; border: 1px solid #555; padding: 3px; }"
+        "QComboBox:disabled { color: #7F8C8D; }"
+    );
+    connect(symmetryAxisCombo_, QOverload<int>::of(&QComboBox::currentIndexChanged),
+            this, &SidebarWidget::OnSymmetryAxisChanged);
+    axisLayout->addWidget(symmetryAxisCombo_);
+    axisLayout->addStretch();
+    symmetryLayout->addLayout(axisLayout);
+
+    QLabel* symmetryNote = new QLabel("Mirror points across the selected axis plane");
     symmetryNote->setStyleSheet("QLabel { color: #7F8C8D; font-size: 8pt; font-style: italic; }");
     symmetryNote->setWordWrap(true);
     symmetryLayout->addWidget(symmetryNote);
@@ -489,50 +523,36 @@ void SidebarWidget::CreatePointReferenceControls() {
 
     controlsLayout->addStretch();
 
-    // Disable next stage by default (needs matching point counts)
     nextStageButton_->setEnabled(false);
 }
 
 void SidebarWidget::CreateMorphControls() {
     QVBoxLayout* controlsLayout = new QVBoxLayout(controlsWidget_);
     controlsLayout->setContentsMargins(0, 0, 0, 0);
-
     QLabel* info = new QLabel("Adjust parameters and process the morph.");
     info->setWordWrap(true);
     controlsLayout->addWidget(info);
-
-    // TODO: Add morph controls in Sprint 6-7
 }
 
 void SidebarWidget::CreateTouchUpControls() {
     QVBoxLayout* controlsLayout = new QVBoxLayout(controlsWidget_);
     controlsLayout->setContentsMargins(0, 0, 0, 0);
-
     QLabel* info = new QLabel("Refine the mesh with sculpting tools.");
     info->setWordWrap(true);
     controlsLayout->addWidget(info);
-
-    // TODO: Add sculpting controls in Sprint 8-9
 }
 
 void SidebarWidget::ClearControls() {
-    // Reset pointers before clearing (they will be deleted with their widgets)
     transformModeLabel_ = nullptr;
-    posXSpinBox_ = nullptr;
-    posYSpinBox_ = nullptr;
-    posZSpinBox_ = nullptr;
-    rotXSpinBox_ = nullptr;
-    rotYSpinBox_ = nullptr;
-    rotZSpinBox_ = nullptr;
-    scaleXSpinBox_ = nullptr;
-    scaleYSpinBox_ = nullptr;
-    scaleZSpinBox_ = nullptr;
+    posXSpinBox_ = nullptr; posYSpinBox_ = nullptr; posZSpinBox_ = nullptr;
+    rotXSpinBox_ = nullptr; rotYSpinBox_ = nullptr; rotZSpinBox_ = nullptr;
+    scaleXSpinBox_ = nullptr; scaleYSpinBox_ = nullptr; scaleZSpinBox_ = nullptr;
     resetTransformButton_ = nullptr;
-    targetPointCountLabel_ = nullptr;
-    morphPointCountLabel_ = nullptr;
-    matchStatusLabel_ = nullptr;
-    pointListScroll_ = nullptr;
-    clearAllPointsButton_ = nullptr;
+    targetPointCountLabel_ = nullptr; morphPointCountLabel_ = nullptr;
+    matchStatusLabel_ = nullptr; pointListScroll_ = nullptr; pointListContent_ = nullptr;
+    clearAllPointsButton_ = nullptr; pointSizeSlider_ = nullptr;
+    symmetryCheckBox_ = nullptr; symmetryAxisCombo_ = nullptr;
+    selectedPointIndex_ = -1;
 
     if (controlsWidget_->layout()) {
         QLayoutItem* item;
@@ -544,46 +564,142 @@ void SidebarWidget::ClearControls() {
     }
 }
 
+void SidebarWidget::UpdatePointCounts() {
+    if (!project_ || !targetPointCountLabel_ || !morphPointCountLabel_ || !matchStatusLabel_) return;
+
+    const auto& correspondences = project_->GetPointReferenceData().correspondences;
+    int targetCount = 0, morphCount = 0;
+    for (const auto& corr : correspondences) {
+        if (corr.targetMeshVertexIndex >= 0) targetCount++;
+        if (corr.morphMeshVertexIndex >= 0) morphCount++;
+    }
+
+    targetPointCountLabel_->setText(QString("Target Points: %1").arg(targetCount));
+    morphPointCountLabel_->setText(QString("Morph Points: %1").arg(morphCount));
+
+    if (targetCount == 0 && morphCount == 0) {
+        matchStatusLabel_->setText("No points placed");
+        matchStatusLabel_->setStyleSheet("QLabel { color: #95A5A6; font-weight: bold; font-size: 10pt; }");
+    } else if (targetCount == morphCount) {
+        matchStatusLabel_->setText("Points matched!");
+        matchStatusLabel_->setStyleSheet("QLabel { color: #2ECC71; font-weight: bold; font-size: 10pt; }");
+    } else {
+        matchStatusLabel_->setText(QString("Mismatch: %1 vs %2").arg(targetCount).arg(morphCount));
+        matchStatusLabel_->setStyleSheet("QLabel { color: #F39C12; font-weight: bold; font-size: 10pt; }");
+    }
+
+    nextStageButton_->setEnabled(project_->CanProceedToNextStage());
+}
+
+void SidebarWidget::UpdatePointList() {
+    RebuildPointListContent();
+    UpdatePointCounts();
+}
+
+void SidebarWidget::RebuildPointListContent() {
+    if (!pointListScroll_ || !project_) return;
+
+    QWidget* newContent = new QWidget();
+    QVBoxLayout* layout = new QVBoxLayout(newContent);
+    layout->setContentsMargins(4, 4, 4, 4);
+    layout->setSpacing(2);
+
+    const auto& correspondences = project_->GetPointReferenceData().correspondences;
+
+    if (correspondences.empty()) {
+        QLabel* noPointsLabel = new QLabel("No points placed yet.\nClick on mesh to add points.");
+        noPointsLabel->setAlignment(Qt::AlignCenter);
+        noPointsLabel->setStyleSheet("QLabel { color: #7F8C8D; font-style: italic; }");
+        layout->addWidget(noPointsLabel);
+    } else {
+        for (size_t i = 0; i < correspondences.size(); ++i) {
+            const auto& corr = correspondences[i];
+            int corrIdx = static_cast<int>(i);
+            bool isSelected = (corrIdx == selectedPointIndex_);
+
+            bool hasTarget = corr.targetMeshVertexIndex >= 0;
+            bool hasMorph = corr.morphMeshVertexIndex >= 0;
+
+            QString status;
+            if (hasTarget && hasMorph) status = "Paired";
+            else if (hasTarget) status = "Target only";
+            else status = "Morph only";
+
+            QPushButton* pointBtn = new QPushButton();
+            pointBtn->setText(QString("Point %1 - %2").arg(corr.pointID).arg(status));
+
+            QString bgColor = isSelected ? "#E67E22" : "#34495E";
+            QString hoverColor = isSelected ? "#D35400" : "#4A6785";
+            pointBtn->setStyleSheet(
+                QString("QPushButton { background-color: %1; color: white; border: none; "
+                        "padding: 4px 8px; text-align: left; border-radius: 3px; font-size: 9pt; }"
+                        "QPushButton:hover { background-color: %2; }").arg(bgColor, hoverColor)
+            );
+
+            connect(pointBtn, &QPushButton::clicked, this, [this, corrIdx]() {
+                selectedPointIndex_ = corrIdx;
+                emit PointSelectedFromList(corrIdx);
+                RebuildPointListContent();
+            });
+
+            layout->addWidget(pointBtn);
+        }
+    }
+
+    layout->addStretch();
+    pointListContent_ = newContent;
+    pointListScroll_->setWidget(newContent);
+}
+
+void SidebarWidget::SetSelectedPointIndex(int index) {
+    selectedPointIndex_ = index;
+    RebuildPointListContent();
+}
+
+void SidebarWidget::OnPointSizeChanged(int value) {
+    QLabel* sizeValueLabel = findChild<QLabel*>("pointSizeValue");
+    if (sizeValueLabel) sizeValueLabel->setText(QString::number(value));
+    emit PointSizeChanged(static_cast<float>(value));
+}
+
+void SidebarWidget::OnSymmetryToggled(bool enabled) {
+    if (symmetryAxisCombo_) symmetryAxisCombo_->setEnabled(enabled);
+    if (project_) project_->GetPointReferenceData().symmetryEnabled = enabled;
+
+    Axis axis = Axis::X;
+    if (symmetryAxisCombo_) axis = static_cast<Axis>(symmetryAxisCombo_->currentData().toInt());
+    emit SymmetryChanged(enabled, axis);
+}
+
+void SidebarWidget::OnSymmetryAxisChanged(int index) {
+    Q_UNUSED(index);
+    if (!symmetryAxisCombo_ || !project_) return;
+    Axis axis = static_cast<Axis>(symmetryAxisCombo_->currentData().toInt());
+    project_->GetPointReferenceData().symmetryAxis = axis;
+    bool enabled = symmetryCheckBox_ ? symmetryCheckBox_->isChecked() : false;
+    emit SymmetryChanged(enabled, axis);
+}
+
 void SidebarWidget::OnTransformModeChanged(TransformMode mode, AxisConstraint axis) {
     if (!transformModeLabel_) return;
 
     QString modeStr;
     switch (mode) {
-        case TransformMode::Move:
-            modeStr = "Move";
-            break;
-        case TransformMode::Rotate:
-            modeStr = "Rotate";
-            break;
-        case TransformMode::Scale:
-            modeStr = "Scale";
-            break;
-        case TransformMode::None:
-        default:
-            modeStr = "None";
-            break;
+        case TransformMode::Move: modeStr = "Move"; break;
+        case TransformMode::Rotate: modeStr = "Rotate"; break;
+        case TransformMode::Scale: modeStr = "Scale"; break;
+        default: modeStr = "None"; break;
     }
 
     QString axisStr;
     switch (axis) {
-        case AxisConstraint::X:
-            axisStr = " [X only]";
-            break;
-        case AxisConstraint::Y:
-            axisStr = " [Y only]";
-            break;
-        case AxisConstraint::Z:
-            axisStr = " [Z only]";
-            break;
-        case AxisConstraint::None:
-        default:
-            axisStr = "";
-            break;
+        case AxisConstraint::X: axisStr = " [X only]"; break;
+        case AxisConstraint::Y: axisStr = " [Y only]"; break;
+        case AxisConstraint::Z: axisStr = " [Z only]"; break;
+        default: axisStr = ""; break;
     }
 
     transformModeLabel_->setText("Mode: " + modeStr + axisStr);
-
-    // Highlight active mode with different colors
     if (mode == TransformMode::None) {
         transformModeLabel_->setStyleSheet("QLabel { color: #95A5A6; font-weight: bold; font-size: 10pt; }");
     } else {
@@ -598,11 +714,8 @@ void SidebarWidget::OnTargetTransformChanged() {
 void SidebarWidget::UpdateTransformDisplay() {
     if (!project_ || !posXSpinBox_ || !posYSpinBox_ || !posZSpinBox_ ||
         !rotXSpinBox_ || !rotYSpinBox_ || !rotZSpinBox_ ||
-        !scaleXSpinBox_ || !scaleYSpinBox_ || !scaleZSpinBox_) {
-        return;
-    }
+        !scaleXSpinBox_ || !scaleYSpinBox_ || !scaleZSpinBox_) return;
 
-    // Set flag to prevent feedback loop when updating spinboxes programmatically
     updatingTransformDisplay_ = true;
 
     const Transform& transform = project_->GetTargetMesh().transform;
@@ -610,63 +723,36 @@ void SidebarWidget::UpdateTransformDisplay() {
     Vector3 euler = transform.GetRotation().ToEulerAngles();
     Vector3 scale = transform.GetScale();
 
-    posXSpinBox_->setValue(pos.x);
-    posYSpinBox_->setValue(pos.y);
-    posZSpinBox_->setValue(pos.z);
-
-    rotXSpinBox_->setValue(euler.x);
-    rotYSpinBox_->setValue(euler.y);
-    rotZSpinBox_->setValue(euler.z);
-
-    scaleXSpinBox_->setValue(scale.x);
-    scaleYSpinBox_->setValue(scale.y);
-    scaleZSpinBox_->setValue(scale.z);
+    posXSpinBox_->setValue(pos.x); posYSpinBox_->setValue(pos.y); posZSpinBox_->setValue(pos.z);
+    rotXSpinBox_->setValue(euler.x); rotYSpinBox_->setValue(euler.y); rotZSpinBox_->setValue(euler.z);
+    scaleXSpinBox_->setValue(scale.x); scaleYSpinBox_->setValue(scale.y); scaleZSpinBox_->setValue(scale.z);
 
     updatingTransformDisplay_ = false;
 }
 
 void SidebarWidget::OnSpinBoxValueChanged() {
-    // Ignore changes while we're programmatically updating the display
-    if (updatingTransformDisplay_) {
-        return;
-    }
-
-    if (!project_ || !project_->GetTargetMesh().isLoaded) {
-        return;
-    }
-
+    if (updatingTransformDisplay_) return;
+    if (!project_ || !project_->GetTargetMesh().isLoaded) return;
     if (!posXSpinBox_ || !posYSpinBox_ || !posZSpinBox_ ||
         !rotXSpinBox_ || !rotYSpinBox_ || !rotZSpinBox_ ||
-        !scaleXSpinBox_ || !scaleYSpinBox_ || !scaleZSpinBox_) {
-        return;
-    }
+        !scaleXSpinBox_ || !scaleYSpinBox_ || !scaleZSpinBox_) return;
 
-    // Get current spinbox values
-    Vector3 newPos(
-        static_cast<float>(posXSpinBox_->value()),
-        static_cast<float>(posYSpinBox_->value()),
-        static_cast<float>(posZSpinBox_->value())
-    );
-
+    Vector3 newPos(static_cast<float>(posXSpinBox_->value()),
+                   static_cast<float>(posYSpinBox_->value()),
+                   static_cast<float>(posZSpinBox_->value()));
     Quaternion newRot = Quaternion::FromEulerAngles(
         static_cast<float>(rotXSpinBox_->value()),
         static_cast<float>(rotYSpinBox_->value()),
-        static_cast<float>(rotZSpinBox_->value())
-    );
+        static_cast<float>(rotZSpinBox_->value()));
+    Vector3 newScale(static_cast<float>(scaleXSpinBox_->value()),
+                     static_cast<float>(scaleYSpinBox_->value()),
+                     static_cast<float>(scaleZSpinBox_->value()));
 
-    Vector3 newScale(
-        static_cast<float>(scaleXSpinBox_->value()),
-        static_cast<float>(scaleYSpinBox_->value()),
-        static_cast<float>(scaleZSpinBox_->value())
-    );
-
-    // Apply to the target mesh transform
     Transform& transform = project_->GetTargetMesh().transform;
     transform.SetPosition(newPos);
     transform.SetRotation(newRot);
     transform.SetScale(newScale);
 
-    // Signal that transform values changed so viewport can update
     emit TransformValuesChanged();
 }
 

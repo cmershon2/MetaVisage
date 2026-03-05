@@ -4,9 +4,11 @@
 #include <QOpenGLFunctions_4_3_Core>
 #include <memory>
 #include <map>
+#include <vector>
 #include "core/Camera.h"
 #include "core/Mesh.h"
 #include "core/Transform.h"
+#include "rendering/PointRenderer.h"
 
 namespace MetaVisage {
 
@@ -31,13 +33,20 @@ public:
     void SetRenderFilter(RenderFilter filter) { renderFilter_ = filter; }
     RenderFilter GetRenderFilter() const { return renderFilter_; }
 
+    // Point rendering
+    void SetPointSize(float size) { pointSize_ = size; }
+    float GetPointSize() const { return pointSize_; }
+    void SetSelectedPointIndex(int index) { selectedPointIndex_ = index; }
+
 private:
     void RenderGrid(const Matrix4x4& viewProjection);
     void RenderMesh(const Mesh& mesh, const Transform& transform,
                    const Vector3& color, const Matrix4x4& viewProjection);
+    void RenderPoints(const Camera& camera, int width, int height, Project* project);
 
     std::unique_ptr<ShaderManager> shaderManager_;
     std::map<const Mesh*, std::unique_ptr<MeshRenderer>> meshRenderers_;
+    std::unique_ptr<PointRenderer> pointRenderer_;
 
     bool showGrid_;
     ShadingMode shadingMode_;
@@ -45,6 +54,10 @@ private:
     unsigned int gridVAO_;
     unsigned int gridVBO_;
     int gridVertexCount_;
+
+    // Point rendering state
+    float pointSize_;
+    int selectedPointIndex_;
 };
 
 } // namespace MetaVisage

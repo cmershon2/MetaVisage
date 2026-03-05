@@ -50,9 +50,19 @@ ViewportContainer::ViewportContainer(QWidget *parent)
     connect(leftViewport_, &ViewportWidget::TargetTransformChanged,
             this, &ViewportContainer::TargetTransformChanged);
 
-    // Track which viewport the user clicks on for active viewport
-    // We use the CameraChanged signal as a proxy for "user interacted with this viewport"
-    // The mousePressEvent in ViewportWidget calls setFocus() which we can also use
+    // Forward point signals from both viewports
+    connect(leftViewport_, &ViewportWidget::PointPlaced,
+            this, &ViewportContainer::PointPlaced);
+    connect(rightViewport_, &ViewportWidget::PointPlaced,
+            this, &ViewportContainer::PointPlaced);
+    connect(leftViewport_, &ViewportWidget::PointSelected,
+            this, &ViewportContainer::PointSelected);
+    connect(rightViewport_, &ViewportWidget::PointSelected,
+            this, &ViewportContainer::PointSelected);
+    connect(leftViewport_, &ViewportWidget::PointDeleteRequested,
+            this, &ViewportContainer::PointDeleteRequested);
+    connect(rightViewport_, &ViewportWidget::PointDeleteRequested,
+            this, &ViewportContainer::PointDeleteRequested);
 
     // Set left viewport as active by default
     SetActiveViewport(leftViewport_);
@@ -109,6 +119,16 @@ ViewportWidget* ViewportContainer::GetSecondaryViewport() {
 
 Camera* ViewportContainer::GetActiveCamera() {
     return leftViewport_->GetCamera();
+}
+
+void ViewportContainer::SetSelectedPointIndex(int index) {
+    leftViewport_->SetSelectedPointIndex(index);
+    rightViewport_->SetSelectedPointIndex(index);
+}
+
+void ViewportContainer::SetPointSize(float size) {
+    leftViewport_->SetPointSize(size);
+    rightViewport_->SetPointSize(size);
 }
 
 void ViewportContainer::OnLeftCameraChanged() {
