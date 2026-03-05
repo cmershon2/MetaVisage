@@ -2,6 +2,7 @@
 #include "rendering/Renderer.h"
 #include "core/Project.h"
 #include <QDebug>
+#include <QPainter>
 #include <cmath>
 #include <algorithm>
 
@@ -16,13 +17,42 @@ ViewportWidget::ViewportWidget(QWidget *parent)
       isPanning_(false),
       transformMode_(TransformMode::None),
       axisConstraint_(AxisConstraint::None),
-      isTransforming_(false) {
+      isTransforming_(false),
+      renderFilter_(RenderFilter::All),
+      isActive_(false),
+      viewportLabel_("") {
 
     setFocusPolicy(Qt::StrongFocus);
     setMouseTracking(true);
+
+    // Default border style (inactive)
+    setStyleSheet("border: 2px solid #555;");
 }
 
 ViewportWidget::~ViewportWidget() {
+}
+
+void ViewportWidget::SetRenderFilter(RenderFilter filter) {
+    renderFilter_ = filter;
+    if (renderer_) {
+        renderer_->SetRenderFilter(filter);
+    }
+    update();
+}
+
+void ViewportWidget::SyncCameraFrom(const Camera& other) {
+    camera_->CopyStateFrom(other);
+    update();
+    // Note: intentionally does NOT emit CameraChanged to prevent sync loops
+}
+
+void ViewportWidget::SetActive(bool active) {
+    isActive_ = active;
+    if (active) {
+        setStyleSheet("border: 2px solid #3498DB;");
+    } else {
+        setStyleSheet("border: 2px solid #555;");
+    }
 }
 
 void ViewportWidget::initializeGL() {
@@ -45,11 +75,37 @@ void ViewportWidget::initializeGL() {
     if (!renderer_->Initialize()) {
         qWarning() << "Failed to initialize renderer!";
     }
+    renderer_->SetRenderFilter(renderFilter_);
 }
 
 void ViewportWidget::paintGL() {
     if (renderer_) {
         renderer_->Render(*camera_, width(), height(), project_);
+    }
+
+    // Draw viewport label overlay if set
+    if (!viewportLabel_.isEmpty()) {
+        QPainter painter(this);
+        painter.setRenderHint(QPainter::Antialiasing);
+
+        QFont font = painter.font();
+        font.setPointSize(10);
+        font.setBold(true);
+        painter.setFont(font);
+
+        QFontMetrics fm(font);
+        QRect textRect = fm.boundingRect(viewportLabel_);
+        textRect.adjust(-8, -4, 8, 4);
+        textRect.moveTopLeft(QPoint(8, 8));
+
+        painter.setPen(Qt::NoPen);
+        painter.setBrush(QColor(0, 0, 0, 128));
+        painter.drawRoundedRect(textRect, 4, 4);
+
+        painter.setPen(QColor(255, 255, 255, 200));
+        painter.drawText(textRect, Qt::AlignCenter, viewportLabel_);
+
+        painter.end();
     }
 }
 
@@ -91,9 +147,11 @@ void ViewportWidget::mouseMoveEvent(QMouseEvent *event) {
     } else if (isOrbiting_) {
         camera_->Orbit(delta.x(), delta.y());
         update();
+        emit CameraChanged();
     } else if (isPanning_) {
         camera_->Pan(delta.x(), delta.y());
         update();
+        emit CameraChanged();
     }
 }
 
@@ -115,6 +173,7 @@ void ViewportWidget::wheelEvent(QWheelEvent *event) {
     float delta = event->angleDelta().y() / 120.0f;
     camera_->Zoom(delta);
     update();
+    emit CameraChanged();
 }
 
 void ViewportWidget::keyPressEvent(QKeyEvent *event) {
@@ -122,36 +181,23 @@ void ViewportWidget::keyPressEvent(QKeyEvent *event) {
     bool inAlignmentStage = project_ && project_->GetCurrentStage() == WorkflowStage::Alignment;
     bool hasTargetMesh = project_ && project_->GetTargetMesh().isLoaded;
 
-    qDebug() << "Key pressed:" << event->key()
-             << "inAlignmentStage:" << inAlignmentStage
-             << "hasTargetMesh:" << hasTargetMesh;
-
     switch (event->key()) {
         // Transform tool keys (only in Alignment stage with target mesh loaded)
         case Qt::Key_G:
             if (inAlignmentStage && hasTargetMesh) {
-                qDebug() << "Activating Move mode";
                 SetTransformMode(TransformMode::Move);
-            } else {
-                qDebug() << "Cannot activate Move - stage or mesh check failed";
             }
             break;
 
         case Qt::Key_R:
             if (inAlignmentStage && hasTargetMesh) {
-                qDebug() << "Activating Rotate mode";
                 SetTransformMode(TransformMode::Rotate);
-            } else {
-                qDebug() << "Cannot activate Rotate - stage or mesh check failed";
             }
             break;
 
         case Qt::Key_S:
             if (inAlignmentStage && hasTargetMesh) {
-                qDebug() << "Activating Scale mode";
                 SetTransformMode(TransformMode::Scale);
-            } else {
-                qDebug() << "Cannot activate Scale - stage or mesh check failed";
             }
             break;
 
@@ -188,6 +234,7 @@ void ViewportWidget::keyPressEvent(QKeyEvent *event) {
         case Qt::Key_Home:
             camera_->Reset();
             update();
+            emit CameraChanged();
             break;
 
         case Qt::Key_1:
@@ -196,6 +243,7 @@ void ViewportWidget::keyPressEvent(QKeyEvent *event) {
                 camera_->SetPosition(Vector3(0.0f, 0.0f, 5.0f));
                 camera_->SetTarget(Vector3(0.0f, 0.0f, 0.0f));
                 update();
+                emit CameraChanged();
             }
             break;
 
@@ -205,6 +253,7 @@ void ViewportWidget::keyPressEvent(QKeyEvent *event) {
                 camera_->SetPosition(Vector3(5.0f, 0.0f, 0.0f));
                 camera_->SetTarget(Vector3(0.0f, 0.0f, 0.0f));
                 update();
+                emit CameraChanged();
             }
             break;
 
@@ -214,6 +263,7 @@ void ViewportWidget::keyPressEvent(QKeyEvent *event) {
                 camera_->SetPosition(Vector3(0.0f, 5.0f, 0.0f));
                 camera_->SetTarget(Vector3(0.0f, 0.0f, 0.0f));
                 update();
+                emit CameraChanged();
             }
             break;
 
@@ -225,6 +275,7 @@ void ViewportWidget::keyPressEvent(QKeyEvent *event) {
                     camera_->SetProjectionMode(ProjectionMode::Perspective);
                 }
                 update();
+                emit CameraChanged();
             }
             break;
 
@@ -232,6 +283,7 @@ void ViewportWidget::keyPressEvent(QKeyEvent *event) {
             // Focus on selection - for now just reset camera
             camera_->Reset();
             update();
+            emit CameraChanged();
             break;
 
         default:

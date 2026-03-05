@@ -19,6 +19,17 @@ Camera::Camera()
 Camera::~Camera() {
 }
 
+void Camera::CopyStateFrom(const Camera& other) {
+    position_ = other.position_;
+    target_ = other.target_;
+    up_ = other.up_;
+    fov_ = other.fov_;
+    projectionMode_ = other.projectionMode_;
+    distance_ = other.distance_;
+    yaw_ = other.yaw_;
+    pitch_ = other.pitch_;
+}
+
 void Camera::Orbit(float deltaX, float deltaY) {
     const float sensitivity = 0.5f;
     yaw_ -= deltaX * sensitivity;

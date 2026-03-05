@@ -1,5 +1,6 @@
 #include "ui/MainWindow.h"
 #include "ui/ViewportWidget.h"
+#include "ui/ViewportContainer.h"
 #include "ui/SidebarWidget.h"
 #include <QHBoxLayout>
 #include <QWidget>
@@ -19,7 +20,7 @@ MainWindow::MainWindow(QWidget *parent)
       statusLabel_(nullptr),
       toolLabel_(nullptr),
       statsLabel_(nullptr),
-      viewportWidget_(nullptr),
+      viewportContainer_(nullptr),
       sidebarWidget_(nullptr),
       project_(std::make_unique<Project>()) {
 
@@ -112,30 +113,31 @@ void MainWindow::CreateMenus() {
     connect(resetCameraAction, &QAction::triggered, this, &MainWindow::OnResetCamera);
 
     // Tools Menu
-    // Note: G, R, S shortcuts are handled by ViewportWidget::keyPressEvent directly
-    // to avoid conflicts with menu shortcuts. The menu shows the shortcuts for reference.
     QMenu* toolsMenu = menuBar_->addMenu(tr("&Tools"));
     QAction* moveAction = toolsMenu->addAction(tr("Move (G)"));
     connect(moveAction, &QAction::triggered, this, [this]() {
-        if (viewportWidget_) {
-            viewportWidget_->setFocus();
-            viewportWidget_->SetTransformMode(TransformMode::Move);
+        ViewportWidget* vp = viewportContainer_->GetPrimaryViewport();
+        if (vp) {
+            vp->setFocus();
+            vp->SetTransformMode(TransformMode::Move);
         }
     });
 
     QAction* rotateAction = toolsMenu->addAction(tr("Rotate (R)"));
     connect(rotateAction, &QAction::triggered, this, [this]() {
-        if (viewportWidget_) {
-            viewportWidget_->setFocus();
-            viewportWidget_->SetTransformMode(TransformMode::Rotate);
+        ViewportWidget* vp = viewportContainer_->GetPrimaryViewport();
+        if (vp) {
+            vp->setFocus();
+            vp->SetTransformMode(TransformMode::Rotate);
         }
     });
 
     QAction* scaleAction = toolsMenu->addAction(tr("Scale (S)"));
     connect(scaleAction, &QAction::triggered, this, [this]() {
-        if (viewportWidget_) {
-            viewportWidget_->setFocus();
-            viewportWidget_->SetTransformMode(TransformMode::Scale);
+        ViewportWidget* vp = viewportContainer_->GetPrimaryViewport();
+        if (vp) {
+            vp->setFocus();
+            vp->SetTransformMode(TransformMode::Scale);
         }
     });
 
@@ -161,7 +163,6 @@ void MainWindow::CreateMenus() {
 void MainWindow::CreateToolBar() {
     toolBar_ = addToolBar(tr("Main Toolbar"));
     toolBar_->setMovable(false);
-    // TODO: Add toolbar buttons in Sprint 3
 }
 
 void MainWindow::CreateStatusBar() {
@@ -182,10 +183,10 @@ void MainWindow::CreateCentralWidget() {
     layout->setContentsMargins(0, 0, 0, 0);
     layout->setSpacing(0);
 
-    // Create viewport (75% width)
-    viewportWidget_ = new ViewportWidget(centralWidget);
-    viewportWidget_->SetProject(project_.get());
-    layout->addWidget(viewportWidget_, 3);
+    // Create viewport container (75% width) - manages single/dual viewport modes
+    viewportContainer_ = new ViewportContainer(centralWidget);
+    viewportContainer_->SetProject(project_.get());
+    layout->addWidget(viewportContainer_, 3);
 
     // Create sidebar (25% width)
     sidebarWidget_ = new SidebarWidget(centralWidget);
@@ -194,23 +195,30 @@ void MainWindow::CreateCentralWidget() {
     sidebarWidget_->SetProject(project_.get());
     layout->addWidget(sidebarWidget_, 1);
 
-    // Connect sidebar next stage button to MainWindow slot
+    ConnectViewportSignals();
+
+    setCentralWidget(centralWidget);
+}
+
+void MainWindow::ConnectViewportSignals() {
+    // Connect sidebar next stage button
     connect(sidebarWidget_, &SidebarWidget::NextStageRequested, this, &MainWindow::OnNextStage);
 
-    // Connect sidebar reset transform button to MainWindow slot
+    // Connect sidebar reset transform button
     connect(sidebarWidget_, &SidebarWidget::ResetTransformRequested, this, &MainWindow::OnResetTransform);
 
-    // Connect viewport transform signals to sidebar slots
-    connect(viewportWidget_, &ViewportWidget::TransformModeChanged,
+    // Connect sidebar clear all points button
+    connect(sidebarWidget_, &SidebarWidget::ClearAllPointsRequested, this, &MainWindow::OnClearAllPoints);
+
+    // Connect viewport container transform signals to sidebar
+    connect(viewportContainer_, &ViewportContainer::TransformModeChanged,
             sidebarWidget_, &SidebarWidget::OnTransformModeChanged);
-    connect(viewportWidget_, &ViewportWidget::TargetTransformChanged,
+    connect(viewportContainer_, &ViewportContainer::TargetTransformChanged,
             sidebarWidget_, &SidebarWidget::OnTargetTransformChanged);
 
     // Connect sidebar spinbox changes to viewport update
     connect(sidebarWidget_, &SidebarWidget::TransformValuesChanged,
-            viewportWidget_, QOverload<>::of(&ViewportWidget::update));
-
-    setCentralWidget(centralWidget);
+            viewportContainer_->GetPrimaryViewport(), QOverload<>::of(&ViewportWidget::update));
 }
 
 void MainWindow::UpdateWindowTitle() {
@@ -242,8 +250,11 @@ void MainWindow::UpdateStatusBar() {
 
 // File menu slots
 void MainWindow::OnNewProject() {
-    // TODO: Implement new project dialog
     project_ = std::make_unique<Project>();
+    viewportContainer_->SetProject(project_.get());
+    sidebarWidget_->SetProject(project_.get());
+    viewportContainer_->SetDualMode(false);
+    sidebarWidget_->SetStage(WorkflowStage::Alignment);
     UpdateWindowTitle();
     UpdateStatusBar();
 }
@@ -257,7 +268,6 @@ void MainWindow::OnOpenProject() {
     );
 
     if (!filepath.isEmpty()) {
-        // TODO: Load project
         QMessageBox::information(this, tr("Not Implemented"),
             tr("Project loading will be implemented in Sprint 10"));
     }
@@ -280,7 +290,6 @@ void MainWindow::OnSaveProjectAs() {
     );
 
     if (!filepath.isEmpty()) {
-        // TODO: Save project
         QMessageBox::information(this, tr("Not Implemented"),
             tr("Project saving will be implemented in Sprint 10"));
     }
@@ -302,21 +311,10 @@ void MainWindow::OnImportMorphMesh() {
             morphMesh.filepath = filepath;
             morphMesh.isLoaded = true;
             // Apply -90 degree rotation around X-axis to correct MetaHuman orientation
-            // MetaHuman meshes are exported with face pointing up (+Y), rotate to face forward (-Z)
             Transform initialTransform;
             Quaternion xRotation = Quaternion::FromAxisAngle(Vector3(1.0f, 0.0f, 0.0f), -90.0f);
             initialTransform.SetRotation(xRotation);
             morphMesh.transform = initialTransform;
-
-            // Debug: Log mesh bounds
-            const BoundingBox& bounds = morphMesh.mesh->GetBounds();
-            Vector3 size = bounds.Size();
-            Vector3 center = bounds.Center();
-            qDebug() << "Morph Mesh Bounds:";
-            qDebug() << "  Min:" << bounds.min.x << bounds.min.y << bounds.min.z;
-            qDebug() << "  Max:" << bounds.max.x << bounds.max.y << bounds.max.z;
-            qDebug() << "  Size:" << size.x << size.y << size.z;
-            qDebug() << "  Center:" << center.x << center.y << center.z;
 
             statusLabel_->setText("Morph mesh loaded: " + morphMesh.mesh->GetName());
 
@@ -324,23 +322,18 @@ void MainWindow::OnImportMorphMesh() {
             QLabel* morphStatus = sidebarWidget_->findChild<QLabel*>("morphStatus");
             if (morphStatus) {
                 morphStatus->setText("Morph Mesh: " + morphMesh.mesh->GetName());
-                morphStatus->setStyleSheet("QLabel { color: #2ECC71; }"); // Green
+                morphStatus->setStyleSheet("QLabel { color: #2ECC71; }");
             }
 
             // Enable next stage button if both meshes are loaded
             sidebarWidget_->SetNextStageEnabled(project_->CanProceedToNextStage());
 
             // Auto-focus camera on the loaded mesh
-            viewportWidget_->GetCamera()->FocusOnBounds(bounds);
-
-            // Debug: Log camera state after focus
-            Camera* cam = viewportWidget_->GetCamera();
-            qDebug() << "Camera after focus:";
-            qDebug() << "  Position:" << cam->GetPosition().x << cam->GetPosition().y << cam->GetPosition().z;
-            qDebug() << "  Target:" << cam->GetTarget().x << cam->GetTarget().y << cam->GetTarget().z;
+            const BoundingBox& bounds = morphMesh.mesh->GetBounds();
+            viewportContainer_->GetPrimaryViewport()->GetCamera()->FocusOnBounds(bounds);
 
             // Update viewport
-            viewportWidget_->update();
+            viewportContainer_->GetPrimaryViewport()->update();
         } else {
             QMessageBox::critical(this, tr("Error"),
                 tr("Failed to load morph mesh: %1").arg(filepath));
@@ -365,39 +358,24 @@ void MainWindow::OnImportTargetMesh() {
             targetMesh.isLoaded = true;
             targetMesh.transform = Transform(); // Identity transform
 
-            // Debug: Log mesh bounds
-            const BoundingBox& bounds = targetMesh.mesh->GetBounds();
-            Vector3 size = bounds.Size();
-            Vector3 center = bounds.Center();
-            qDebug() << "Target Mesh Bounds:";
-            qDebug() << "  Min:" << bounds.min.x << bounds.min.y << bounds.min.z;
-            qDebug() << "  Max:" << bounds.max.x << bounds.max.y << bounds.max.z;
-            qDebug() << "  Size:" << size.x << size.y << size.z;
-            qDebug() << "  Center:" << center.x << center.y << center.z;
-
             statusLabel_->setText("Target mesh loaded: " + targetMesh.mesh->GetName());
 
             // Update sidebar mesh status
             QLabel* targetStatus = sidebarWidget_->findChild<QLabel*>("targetStatus");
             if (targetStatus) {
                 targetStatus->setText("Target Mesh: " + targetMesh.mesh->GetName());
-                targetStatus->setStyleSheet("QLabel { color: #2ECC71; }"); // Green
+                targetStatus->setStyleSheet("QLabel { color: #2ECC71; }");
             }
 
             // Enable next stage button if both meshes are loaded
             sidebarWidget_->SetNextStageEnabled(project_->CanProceedToNextStage());
 
             // Auto-focus camera on the loaded mesh
-            viewportWidget_->GetCamera()->FocusOnBounds(bounds);
-
-            // Debug: Log camera state after focus
-            Camera* cam = viewportWidget_->GetCamera();
-            qDebug() << "Camera after focus:";
-            qDebug() << "  Position:" << cam->GetPosition().x << cam->GetPosition().y << cam->GetPosition().z;
-            qDebug() << "  Target:" << cam->GetTarget().x << cam->GetTarget().y << cam->GetTarget().z;
+            const BoundingBox& bounds = targetMesh.mesh->GetBounds();
+            viewportContainer_->GetPrimaryViewport()->GetCamera()->FocusOnBounds(bounds);
 
             // Update viewport
-            viewportWidget_->update();
+            viewportContainer_->GetPrimaryViewport()->update();
         } else {
             QMessageBox::critical(this, tr("Error"),
                 tr("Failed to load target mesh: %1").arg(filepath));
@@ -430,11 +408,11 @@ void MainWindow::OnPreferences() {
 
 // View menu slots
 void MainWindow::OnToggleGrid() {
-    // TODO: Implement in Sprint 2
+    // TODO: Implement grid toggle
 }
 
 void MainWindow::OnResetCamera() {
-    // TODO: Implement in Sprint 2
+    // TODO: Implement camera reset
 }
 
 // Help menu slots
@@ -478,8 +456,7 @@ void MainWindow::OnKeyboardShortcuts() {
 void MainWindow::OnReportIssue() {
     QMessageBox::information(this, tr("Report Issue"),
         tr("Please report issues at:\n"
-           "https://github.com/YourUsername/MetaVisage/issues\n\n"
-           "(GitHub repository will be created in Sprint 12)"));
+           "https://github.com/cmershon2/MetaVisage/issues"));
 }
 
 void MainWindow::OnAbout() {
@@ -495,10 +472,29 @@ void MainWindow::OnAbout() {
 void MainWindow::OnResetTransform() {
     if (project_ && project_->GetTargetMesh().isLoaded) {
         project_->GetTargetMesh().transform.Reset();
-        viewportWidget_->CancelTransform();  // Also cancel any active transform mode
-        viewportWidget_->update();
-        sidebarWidget_->OnTargetTransformChanged();  // Update sidebar display
+        ViewportWidget* vp = viewportContainer_->GetPrimaryViewport();
+        vp->CancelTransform();
+        vp->update();
+        sidebarWidget_->OnTargetTransformChanged();
         statusLabel_->setText("Target transform reset");
+    }
+}
+
+void MainWindow::OnClearAllPoints() {
+    if (!project_) return;
+
+    int result = QMessageBox::question(this, tr("Clear All Points"),
+        tr("Are you sure you want to clear all correspondence points?"),
+        QMessageBox::Yes | QMessageBox::No, QMessageBox::No);
+
+    if (result == QMessageBox::Yes) {
+        project_->GetPointReferenceData().correspondences.clear();
+        sidebarWidget_->SetNextStageEnabled(project_->CanProceedToNextStage());
+        viewportContainer_->GetPrimaryViewport()->update();
+        if (viewportContainer_->IsDualMode()) {
+            viewportContainer_->GetSecondaryViewport()->update();
+        }
+        statusLabel_->setText("All points cleared");
     }
 }
 
@@ -525,7 +521,7 @@ void MainWindow::OnNextStage() {
 
     // Advance to next stage
     WorkflowStage currentStage = project_->GetCurrentStage();
-    WorkflowStage nextStage;
+    WorkflowStage nextStage = currentStage;
 
     switch (currentStage) {
         case WorkflowStage::Alignment:
@@ -546,8 +542,14 @@ void MainWindow::OnNextStage() {
     sidebarWidget_->SetStage(nextStage);
     UpdateStatusBar();
 
-    // Update viewport layout if needed
-    viewportWidget_->update();
+    // Update viewport layout based on stage
+    if (nextStage == WorkflowStage::PointReference) {
+        viewportContainer_->SetDualMode(true);
+    } else {
+        viewportContainer_->SetDualMode(false);
+    }
+
+    viewportContainer_->GetPrimaryViewport()->update();
 }
 
 } // namespace MetaVisage

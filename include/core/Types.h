@@ -533,6 +533,13 @@ enum class AxisConstraint {
     Z           // Constrain to Z axis only
 };
 
+// Render filter for dual viewport mode
+enum class RenderFilter {
+    All,        // Render both morph and target meshes
+    MorphOnly,  // Render only the morph mesh
+    TargetOnly  // Render only the target mesh
+};
+
 } // namespace MetaVisage
 
 #endif // TYPES_H

@@ -7,6 +7,8 @@
 #include <QButtonGroup>
 #include <QComboBox>
 #include <QGridLayout>
+#include <QScrollArea>
+#include <QCheckBox>
 
 namespace MetaVisage {
 
@@ -28,6 +30,11 @@ SidebarWidget::SidebarWidget(QWidget *parent)
       scaleYSpinBox_(nullptr),
       scaleZSpinBox_(nullptr),
       resetTransformButton_(nullptr),
+      targetPointCountLabel_(nullptr),
+      morphPointCountLabel_(nullptr),
+      matchStatusLabel_(nullptr),
+      pointListScroll_(nullptr),
+      clearAllPointsButton_(nullptr),
       updatingTransformDisplay_(false) {
 
     setStyleSheet("QWidget { background-color: #2C3E50; color: white; }");
@@ -226,7 +233,7 @@ void SidebarWidget::CreateAlignmentControls() {
 
     int row = 0;
 
-    // Position row - all 3 axes in one row
+    // Position row
     QLabel* posLabel = new QLabel("Pos:");
     posLabel->setStyleSheet("QLabel { font-weight: bold; }");
     transformLayout->addWidget(posLabel, row, 0);
@@ -254,7 +261,7 @@ void SidebarWidget::CreateAlignmentControls() {
 
     row++;
 
-    // Rotation row - all 3 axes in one row (Euler angles in degrees)
+    // Rotation row
     QLabel* rotLabel = new QLabel("Rot:");
     rotLabel->setStyleSheet("QLabel { font-weight: bold; }");
     transformLayout->addWidget(rotLabel, row, 0);
@@ -282,7 +289,7 @@ void SidebarWidget::CreateAlignmentControls() {
 
     row++;
 
-    // Scale row - all 3 axes in one row
+    // Scale row
     QLabel* scaleLabel = new QLabel("Scale:");
     scaleLabel->setStyleSheet("QLabel { font-weight: bold; }");
     transformLayout->addWidget(scaleLabel, row, 0);
@@ -310,7 +317,7 @@ void SidebarWidget::CreateAlignmentControls() {
 
     row++;
 
-    // Connect spinbox value changes to update the transform
+    // Connect spinbox value changes
     connect(posXSpinBox_, QOverload<double>::of(&QDoubleSpinBox::valueChanged),
             this, [this](double) { OnSpinBoxValueChanged(); });
     connect(posYSpinBox_, QOverload<double>::of(&QDoubleSpinBox::valueChanged),
@@ -359,12 +366,131 @@ void SidebarWidget::CreateAlignmentControls() {
 void SidebarWidget::CreatePointReferenceControls() {
     QVBoxLayout* controlsLayout = new QVBoxLayout(controlsWidget_);
     controlsLayout->setContentsMargins(0, 0, 0, 0);
+    controlsLayout->setSpacing(16);
 
-    QLabel* info = new QLabel("Place correspondence points on both meshes.");
+    // Instructions
+    QLabel* info = new QLabel(
+        "Click on mesh surfaces to place correspondence points.\n\n"
+        "Place matching points on the target mesh (left) and morph mesh (right). "
+        "Points are auto-numbered sequentially."
+    );
     info->setWordWrap(true);
+    info->setStyleSheet("QLabel { color: #BDC3C7; }");
     controlsLayout->addWidget(info);
 
-    // TODO: Add point reference controls in Sprint 4-5
+    // Point Count Group
+    QGroupBox* countGroup = new QGroupBox("Point Counts");
+    countGroup->setStyleSheet(
+        "QGroupBox { border: 1px solid #555; border-radius: 4px; margin-top: 8px; padding-top: 8px; }"
+        "QGroupBox::title { subcontrol-origin: margin; left: 10px; padding: 0 5px; }"
+    );
+    QVBoxLayout* countLayout = new QVBoxLayout(countGroup);
+
+    targetPointCountLabel_ = new QLabel("Target Points: 0");
+    targetPointCountLabel_->setObjectName("targetPointCount");
+    targetPointCountLabel_->setStyleSheet("QLabel { color: #F39C12; font-size: 10pt; }"); // Orange for target
+    countLayout->addWidget(targetPointCountLabel_);
+
+    morphPointCountLabel_ = new QLabel("Morph Points: 0");
+    morphPointCountLabel_->setObjectName("morphPointCount");
+    morphPointCountLabel_->setStyleSheet("QLabel { color: #3498DB; font-size: 10pt; }"); // Blue for morph
+    countLayout->addWidget(morphPointCountLabel_);
+
+    // Match status indicator
+    matchStatusLabel_ = new QLabel("No points placed");
+    matchStatusLabel_->setObjectName("matchStatus");
+    matchStatusLabel_->setStyleSheet("QLabel { color: #95A5A6; font-weight: bold; font-size: 10pt; }");
+    matchStatusLabel_->setAlignment(Qt::AlignCenter);
+    countLayout->addWidget(matchStatusLabel_);
+
+    controlsLayout->addWidget(countGroup);
+
+    // Point List Group
+    QGroupBox* listGroup = new QGroupBox("Correspondence Points");
+    listGroup->setStyleSheet(
+        "QGroupBox { border: 1px solid #555; border-radius: 4px; margin-top: 8px; padding-top: 8px; }"
+        "QGroupBox::title { subcontrol-origin: margin; left: 10px; padding: 0 5px; }"
+    );
+    QVBoxLayout* listLayout = new QVBoxLayout(listGroup);
+
+    // Scrollable point list
+    pointListScroll_ = new QScrollArea();
+    pointListScroll_->setWidgetResizable(true);
+    pointListScroll_->setMinimumHeight(150);
+    pointListScroll_->setMaximumHeight(300);
+    pointListScroll_->setStyleSheet(
+        "QScrollArea { background-color: #34495E; border: 1px solid #555; border-radius: 3px; }"
+        "QScrollBar:vertical { background-color: #2C3E50; width: 10px; }"
+        "QScrollBar::handle:vertical { background-color: #555; border-radius: 5px; min-height: 20px; }"
+        "QScrollBar::add-line:vertical, QScrollBar::sub-line:vertical { height: 0px; }"
+    );
+
+    QWidget* pointListContent = new QWidget();
+    QVBoxLayout* pointListLayout = new QVBoxLayout(pointListContent);
+    pointListLayout->setContentsMargins(8, 8, 8, 8);
+
+    QLabel* noPointsLabel = new QLabel("No points placed yet.\n\nPoint placement will be\navailable in Sprint 5.");
+    noPointsLabel->setAlignment(Qt::AlignCenter);
+    noPointsLabel->setStyleSheet("QLabel { color: #7F8C8D; font-style: italic; }");
+    pointListLayout->addWidget(noPointsLabel);
+    pointListLayout->addStretch();
+
+    pointListScroll_->setWidget(pointListContent);
+    listLayout->addWidget(pointListScroll_);
+
+    controlsLayout->addWidget(listGroup);
+
+    // Actions Group
+    QGroupBox* actionsGroup = new QGroupBox("Actions");
+    actionsGroup->setStyleSheet(
+        "QGroupBox { border: 1px solid #555; border-radius: 4px; margin-top: 8px; padding-top: 8px; }"
+        "QGroupBox::title { subcontrol-origin: margin; left: 10px; padding: 0 5px; }"
+    );
+    QVBoxLayout* actionsLayout = new QVBoxLayout(actionsGroup);
+
+    clearAllPointsButton_ = new QPushButton("Clear All Points");
+    clearAllPointsButton_->setStyleSheet(
+        "QPushButton {"
+        "    background-color: #E74C3C;"
+        "    color: white;"
+        "    border: none;"
+        "    padding: 6px 12px;"
+        "    font-size: 10pt;"
+        "    border-radius: 4px;"
+        "}"
+        "QPushButton:hover {"
+        "    background-color: #C0392B;"
+        "}"
+    );
+    connect(clearAllPointsButton_, &QPushButton::clicked, this, &SidebarWidget::ClearAllPointsRequested);
+    actionsLayout->addWidget(clearAllPointsButton_);
+
+    controlsLayout->addWidget(actionsGroup);
+
+    // Symmetry Group (scaffolding for Sprint 5)
+    QGroupBox* symmetryGroup = new QGroupBox("Symmetry");
+    symmetryGroup->setStyleSheet(
+        "QGroupBox { border: 1px solid #555; border-radius: 4px; margin-top: 8px; padding-top: 8px; }"
+        "QGroupBox::title { subcontrol-origin: margin; left: 10px; padding: 0 5px; }"
+    );
+    QVBoxLayout* symmetryLayout = new QVBoxLayout(symmetryGroup);
+
+    QCheckBox* symmetryCheck = new QCheckBox("Enable Symmetry Mode");
+    symmetryCheck->setEnabled(false);
+    symmetryCheck->setStyleSheet("QCheckBox { color: #7F8C8D; }");
+    symmetryLayout->addWidget(symmetryCheck);
+
+    QLabel* symmetryNote = new QLabel("Symmetry mode will be available in Sprint 5");
+    symmetryNote->setStyleSheet("QLabel { color: #7F8C8D; font-size: 8pt; font-style: italic; }");
+    symmetryNote->setWordWrap(true);
+    symmetryLayout->addWidget(symmetryNote);
+
+    controlsLayout->addWidget(symmetryGroup);
+
+    controlsLayout->addStretch();
+
+    // Disable next stage by default (needs matching point counts)
+    nextStageButton_->setEnabled(false);
 }
 
 void SidebarWidget::CreateMorphControls() {
@@ -402,6 +528,11 @@ void SidebarWidget::ClearControls() {
     scaleYSpinBox_ = nullptr;
     scaleZSpinBox_ = nullptr;
     resetTransformButton_ = nullptr;
+    targetPointCountLabel_ = nullptr;
+    morphPointCountLabel_ = nullptr;
+    matchStatusLabel_ = nullptr;
+    pointListScroll_ = nullptr;
+    clearAllPointsButton_ = nullptr;
 
     if (controlsWidget_->layout()) {
         QLayoutItem* item;
