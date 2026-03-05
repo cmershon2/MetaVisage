@@ -3,6 +3,7 @@
 #include "ui/ViewportContainer.h"
 #include "ui/SidebarWidget.h"
 #include "utils/RayCaster.h"
+#include "deformation/MeshDeformer.h"
 #include <QHBoxLayout>
 #include <QWidget>
 #include <QMenu>
@@ -10,8 +11,69 @@
 #include <QFileDialog>
 #include <QMessageBox>
 #include <QKeySequence>
+#include <QThread>
 
 namespace MetaVisage {
+
+// Worker object that runs MeshDeformer on a background thread
+class MorphWorker : public QObject {
+    Q_OBJECT
+public:
+    MorphWorker(std::shared_ptr<Mesh> sourceMesh,
+                std::shared_ptr<Mesh> targetMesh,
+                const Transform& morphTransform,
+                const Transform& targetTransform,
+                const std::vector<PointCorrespondence>& correspondences,
+                DeformationAlgorithm kernel, float stiffness, float smoothness)
+        : sourceMesh_(sourceMesh), targetMesh_(targetMesh),
+          morphTransform_(morphTransform), targetTransform_(targetTransform),
+          correspondences_(correspondences),
+          kernel_(kernel), stiffness_(stiffness), smoothness_(smoothness) {}
+
+    MeshDeformer& GetDeformer() { return deformer_; }
+
+public slots:
+    void process() {
+        deformer_.SetSourceMesh(sourceMesh_);
+        deformer_.SetTargetMesh(targetMesh_);
+        deformer_.SetMorphTransform(morphTransform_);
+        deformer_.SetTargetTransform(targetTransform_);
+        deformer_.SetCorrespondences(correspondences_);
+        deformer_.SetKernelType(kernel_);
+        deformer_.SetStiffness(stiffness_);
+        deformer_.SetSmoothness(smoothness_);
+        deformer_.SetProgressCallback([this](float progress, const std::string& message) {
+            emit progressUpdated(progress, QString::fromStdString(message));
+        });
+
+        DeformationResult result = deformer_.Deform();
+
+        emit finished(result.success,
+                      QString::fromStdString(result.errorMessage),
+                      result.deformedMesh,
+                      deformer_.GetDisplacementMagnitudes(),
+                      result.maxDisplacement,
+                      result.avgDisplacement);
+    }
+
+signals:
+    void progressUpdated(float progress, const QString& message);
+    void finished(bool success, const QString& errorMessage,
+                  std::shared_ptr<Mesh> deformedMesh,
+                  const std::vector<float>& displacements,
+                  float maxDisplacement, float avgDisplacement);
+
+private:
+    MeshDeformer deformer_;
+    std::shared_ptr<Mesh> sourceMesh_;
+    std::shared_ptr<Mesh> targetMesh_;
+    Transform morphTransform_;
+    Transform targetTransform_;
+    std::vector<PointCorrespondence> correspondences_;
+    DeformationAlgorithm kernel_;
+    float stiffness_;
+    float smoothness_;
+};
 
 MainWindow::MainWindow(QWidget *parent)
     : QMainWindow(parent),
@@ -23,7 +85,9 @@ MainWindow::MainWindow(QWidget *parent)
       statsLabel_(nullptr),
       viewportContainer_(nullptr),
       sidebarWidget_(nullptr),
-      project_(std::make_unique<Project>()) {
+      project_(std::make_unique<Project>()),
+      morphThread_(nullptr),
+      morphWorker_(nullptr) {
 
     setWindowTitle("MetaVisage - MetaHuman Mesh Morphing Tool");
     setMinimumSize(1280, 720);
@@ -236,6 +300,18 @@ void MainWindow::ConnectViewportSignals() {
     // Connect sidebar point size slider
     connect(sidebarWidget_, &SidebarWidget::PointSizeChanged,
             this, &MainWindow::OnPointSizeChanged);
+
+    // Connect morph stage signals
+    connect(sidebarWidget_, &SidebarWidget::ProcessMorphRequested,
+            this, &MainWindow::OnProcessMorph);
+    connect(sidebarWidget_, &SidebarWidget::CancelMorphRequested,
+            this, &MainWindow::OnCancelMorph);
+    connect(sidebarWidget_, &SidebarWidget::AcceptMorphRequested,
+            this, &MainWindow::OnAcceptMorph);
+    connect(sidebarWidget_, &SidebarWidget::MorphParameterChanged,
+            this, &MainWindow::OnMorphParameterChanged);
+    connect(sidebarWidget_, &SidebarWidget::MorphPreviewModeChanged,
+            this, &MainWindow::OnMorphPreviewModeChanged);
 }
 
 void MainWindow::UpdateWindowTitle() {
@@ -688,6 +764,146 @@ void MainWindow::RefreshPointUI() {
     }
 }
 
+// Morph processing slots
+void MainWindow::OnProcessMorph() {
+    if (!project_ || morphThread_) return;
+
+    MorphData& morphData = project_->GetMorphData();
+    const MeshReference& morphMeshRef = project_->GetMorphMesh();
+
+    if (!morphMeshRef.isLoaded || !morphMeshRef.mesh) {
+        QMessageBox::warning(this, tr("Error"), tr("Morph mesh is not loaded."));
+        return;
+    }
+
+    // Store original morph mesh if not already stored
+    if (!morphData.originalMorphMesh) {
+        morphData.originalMorphMesh = morphMeshRef.mesh;
+    }
+
+    // Invalidate any previously cached deformed mesh in renderer
+    if (morphData.deformedMorphMesh) {
+        viewportContainer_->GetPrimaryViewport()->InvalidateMesh(morphData.deformedMorphMesh.get());
+    }
+
+    // Reset processing state
+    morphData.isProcessed = false;
+    morphData.isAccepted = false;
+
+    // Get target mesh reference
+    const MeshReference& targetMeshRef = project_->GetTargetMesh();
+    if (!targetMeshRef.isLoaded || !targetMeshRef.mesh) {
+        QMessageBox::warning(this, tr("Error"), tr("Target mesh is not loaded."));
+        return;
+    }
+
+    // Create worker and thread, passing transforms for coordinate space conversion
+    morphThread_ = new QThread(this);
+    morphWorker_ = new MorphWorker(
+        morphData.originalMorphMesh,
+        targetMeshRef.mesh,
+        morphMeshRef.transform,
+        targetMeshRef.transform,
+        project_->GetPointReferenceData().correspondences,
+        morphData.algorithm,
+        morphData.stiffness,
+        morphData.smoothness
+    );
+    morphWorker_->moveToThread(morphThread_);
+
+    // Connect signals
+    connect(morphThread_, &QThread::started, morphWorker_, &MorphWorker::process);
+    connect(morphWorker_, &MorphWorker::progressUpdated, this, &MainWindow::OnMorphProgress);
+    connect(morphWorker_, &MorphWorker::finished, this, &MainWindow::OnMorphComplete);
+    connect(morphWorker_, &MorphWorker::finished, morphThread_, &QThread::quit);
+    connect(morphThread_, &QThread::finished, morphWorker_, &QObject::deleteLater);
+    connect(morphThread_, &QThread::finished, morphThread_, &QObject::deleteLater);
+    connect(morphThread_, &QThread::finished, this, [this]() {
+        morphThread_ = nullptr;
+        morphWorker_ = nullptr;
+    });
+
+    // Update UI state
+    sidebarWidget_->SetMorphProcessing(true);
+    statusLabel_->setText("Processing morph...");
+
+    // Start processing
+    morphThread_->start();
+}
+
+void MainWindow::OnCancelMorph() {
+    if (morphWorker_) {
+        morphWorker_->GetDeformer().Cancel();
+        statusLabel_->setText("Cancelling morph...");
+    }
+}
+
+void MainWindow::OnAcceptMorph() {
+    if (!project_) return;
+
+    MorphData& morphData = project_->GetMorphData();
+    morphData.isAccepted = true;
+    sidebarWidget_->SetNextStageEnabled(project_->CanProceedToNextStage());
+    statusLabel_->setText("Morph result accepted");
+}
+
+void MainWindow::OnMorphProgress(float progress, const QString& message) {
+    sidebarWidget_->OnMorphProgress(progress, message);
+}
+
+void MainWindow::OnMorphComplete(bool success, const QString& errorMessage,
+                                  std::shared_ptr<Mesh> deformedMesh,
+                                  const std::vector<float>& displacements,
+                                  float maxDisplacement, float avgDisplacement) {
+    MorphData& morphData = project_->GetMorphData();
+
+    if (success && deformedMesh) {
+        morphData.deformedMorphMesh = deformedMesh;
+        morphData.displacementMagnitudes = displacements;
+        morphData.maxDisplacement = maxDisplacement;
+        morphData.avgDisplacement = avgDisplacement;
+        morphData.isProcessed = true;
+        morphData.isAccepted = false;
+
+        // Upload heat map colors for the deformed mesh
+        viewportContainer_->GetPrimaryViewport()->UploadHeatMapColors(
+            deformedMesh.get(), displacements, maxDisplacement);
+
+        sidebarWidget_->OnMorphComplete(true,
+            QString("Done! Max displacement: %1, Avg: %2")
+                .arg(maxDisplacement, 0, 'f', 4)
+                .arg(avgDisplacement, 0, 'f', 4));
+        statusLabel_->setText("Morph processing complete");
+    } else {
+        sidebarWidget_->OnMorphComplete(false,
+            errorMessage.isEmpty() ? "Processing cancelled" : errorMessage);
+        statusLabel_->setText("Morph processing failed");
+    }
+
+    viewportContainer_->GetPrimaryViewport()->update();
+}
+
+void MainWindow::OnMorphPreviewModeChanged(MorphPreviewMode mode) {
+    if (!project_) return;
+    project_->GetMorphData().previewMode = mode;
+    viewportContainer_->GetPrimaryViewport()->SetMorphPreviewMode(mode);
+    viewportContainer_->GetPrimaryViewport()->update();
+}
+
+void MainWindow::OnMorphParameterChanged() {
+    if (!project_) return;
+
+    MorphData& morphData = project_->GetMorphData();
+
+    // Parameters already updated by sidebar directly on project
+    // Mark as needing re-processing
+    if (morphData.isProcessed) {
+        morphData.isProcessed = false;
+        morphData.isAccepted = false;
+        sidebarWidget_->SetNextStageEnabled(false);
+    }
+}
+
 void MainWindow::OnNextStage() {
     if (!project_->CanProceedToNextStage()) {
         QString message;
@@ -738,7 +954,18 @@ void MainWindow::OnNextStage() {
         viewportContainer_->SetDualMode(false);
     }
 
+    // When entering Morph stage, store original morph mesh copy
+    if (nextStage == WorkflowStage::Morph) {
+        MorphData& morphData = project_->GetMorphData();
+        if (!morphData.originalMorphMesh) {
+            morphData.originalMorphMesh = project_->GetMorphMesh().mesh;
+        }
+    }
+
     viewportContainer_->GetPrimaryViewport()->update();
 }
 
 } // namespace MetaVisage
+
+// MOC include for Q_OBJECT class defined in this .cpp file
+#include "MainWindow.moc"

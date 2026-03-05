@@ -581,6 +581,14 @@ enum class RenderFilter {
     TargetOnly  // Render only the target mesh
 };
 
+// Morph stage preview modes
+enum class MorphPreviewMode {
+    Deformed,   // Show deformed morph mesh (default after processing)
+    Original,   // Show original undeformed morph mesh
+    Overlay,    // Deformed mesh + semi-transparent target
+    HeatMap     // Color vertices by displacement magnitude
+};
+
 } // namespace MetaVisage
 
 #endif // TYPES_H

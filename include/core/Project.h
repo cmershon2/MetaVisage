@@ -61,10 +61,17 @@ struct MorphData {
     std::shared_ptr<Mesh> originalMorphMesh;
     std::shared_ptr<Mesh> deformedMorphMesh;
     bool isProcessed;
+    bool isAccepted;
+    MorphPreviewMode previewMode;
+    std::vector<float> displacementMagnitudes;
+    float maxDisplacement;
+    float avgDisplacement;
 
     MorphData() : algorithm(DeformationAlgorithm::RBF_TPS),
                   stiffness(0.5f), smoothness(0.5f),
-                  isProcessed(false) {}
+                  isProcessed(false), isAccepted(false),
+                  previewMode(MorphPreviewMode::Deformed),
+                  maxDisplacement(0.0f), avgDisplacement(0.0f) {}
 };
 
 class Project {

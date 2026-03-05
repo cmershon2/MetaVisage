@@ -3,6 +3,7 @@
 
 #include "core/Types.h"
 #include "core/Mesh.h"
+#include "core/Transform.h"
 #include "core/Project.h"
 #include "deformation/RBFInterpolator.h"
 #include <memory>
@@ -32,6 +33,13 @@ public:
 
     // Set the source mesh to deform (morph mesh)
     void SetSourceMesh(std::shared_ptr<Mesh> mesh);
+
+    // Set the target mesh (for vertex position lookups)
+    void SetTargetMesh(std::shared_ptr<Mesh> mesh);
+
+    // Set transforms for coordinate space conversion
+    void SetMorphTransform(const Transform& transform);
+    void SetTargetTransform(const Transform& transform);
 
     // Set point correspondences from the project
     void SetCorrespondences(const std::vector<PointCorrespondence>& correspondences);
@@ -68,8 +76,14 @@ private:
     void ExtractControlPoints(std::vector<Vector3>& sourcePoints,
                               std::vector<Vector3>& targetPoints) const;
 
-    // Source mesh and correspondences
+    // Helper to transform a point by a 4x4 matrix
+    static Vector3 TransformPoint(const Vector3& point, const Matrix4x4& matrix);
+
+    // Source mesh, target mesh, and correspondences
     std::shared_ptr<Mesh> sourceMesh_;
+    std::shared_ptr<Mesh> targetMesh_;
+    Transform morphTransform_;
+    Transform targetTransform_;
     std::vector<PointCorrespondence> correspondences_;
 
     // Parameters

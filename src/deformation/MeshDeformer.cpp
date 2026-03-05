@@ -20,8 +20,29 @@ void MeshDeformer::SetSourceMesh(std::shared_ptr<Mesh> mesh) {
     sourceMesh_ = mesh;
 }
 
+void MeshDeformer::SetTargetMesh(std::shared_ptr<Mesh> mesh) {
+    targetMesh_ = mesh;
+}
+
+void MeshDeformer::SetMorphTransform(const Transform& transform) {
+    morphTransform_ = transform;
+}
+
+void MeshDeformer::SetTargetTransform(const Transform& transform) {
+    targetTransform_ = transform;
+}
+
 void MeshDeformer::SetCorrespondences(const std::vector<PointCorrespondence>& correspondences) {
     correspondences_ = correspondences;
+}
+
+Vector3 MeshDeformer::TransformPoint(const Vector3& point, const Matrix4x4& matrix) {
+    float x = matrix.m[0] * point.x + matrix.m[4] * point.y + matrix.m[8]  * point.z + matrix.m[12];
+    float y = matrix.m[1] * point.x + matrix.m[5] * point.y + matrix.m[9]  * point.z + matrix.m[13];
+    float z = matrix.m[2] * point.x + matrix.m[6] * point.y + matrix.m[10] * point.z + matrix.m[14];
+    float w = matrix.m[3] * point.x + matrix.m[7] * point.y + matrix.m[11] * point.z + matrix.m[15];
+    if (std::abs(w) > 1e-6f) { x /= w; y /= w; z /= w; }
+    return Vector3(x, y, z);
 }
 
 void MeshDeformer::SetKernelType(DeformationAlgorithm kernel) {
@@ -84,11 +105,52 @@ void MeshDeformer::ExtractControlPoints(std::vector<Vector3>& sourcePoints,
     sourcePoints.reserve(correspondences_.size());
     targetPoints.reserve(correspondences_.size());
 
+    // We need all control points in the morph mesh's LOCAL space, because
+    // the deformation operates on local-space vertices.
+    //
+    // Source points: morph vertex positions are already in morph local space.
+    // Target points: target vertex positions need to be transformed:
+    //   target local -> world (via targetTransform) -> morph local (via inverse morphTransform)
+
+    const auto& morphVertices = sourceMesh_ ? sourceMesh_->GetVertices() : std::vector<Vector3>();
+    const auto& targetVertices = targetMesh_ ? targetMesh_->GetVertices() : std::vector<Vector3>();
+
+    Matrix4x4 targetToWorld = targetTransform_.GetMatrix();
+    Matrix4x4 worldToMorphLocal = morphTransform_.GetMatrix().Inverse();
+    // Combined: target local -> morph local
+    Matrix4x4 targetToMorphLocal = worldToMorphLocal * targetToWorld;
+
     for (const auto& corr : correspondences_) {
-        if (corr.morphMeshVertexIndex >= 0 && corr.targetMeshVertexIndex >= 0) {
-            sourcePoints.push_back(corr.morphMeshPosition);
-            targetPoints.push_back(corr.targetMeshPosition);
+        if (corr.morphMeshVertexIndex < 0 || corr.targetMeshVertexIndex < 0) continue;
+
+        // Source: use actual morph mesh vertex position (local space)
+        if (corr.morphMeshVertexIndex < static_cast<int>(morphVertices.size())) {
+            sourcePoints.push_back(morphVertices[corr.morphMeshVertexIndex]);
+        } else {
+            // Fallback: transform the stored world-space position back to morph local
+            sourcePoints.push_back(TransformPoint(corr.morphMeshPosition, worldToMorphLocal));
         }
+
+        // Target: transform target vertex from target local space to morph local space
+        if (corr.targetMeshVertexIndex < static_cast<int>(targetVertices.size())) {
+            Vector3 targetLocalPos = targetVertices[corr.targetMeshVertexIndex];
+            targetPoints.push_back(TransformPoint(targetLocalPos, targetToMorphLocal));
+        } else {
+            // Fallback: transform the stored world-space position to morph local
+            targetPoints.push_back(TransformPoint(corr.targetMeshPosition, worldToMorphLocal));
+        }
+    }
+
+    qDebug() << "ExtractControlPoints: Extracted" << sourcePoints.size() << "control point pairs";
+    if (!sourcePoints.empty()) {
+        qDebug() << "  First source point (morph local):"
+                 << sourcePoints[0].x << sourcePoints[0].y << sourcePoints[0].z;
+        qDebug() << "  First target point (in morph local):"
+                 << targetPoints[0].x << targetPoints[0].y << targetPoints[0].z;
+        qDebug() << "  First morph vertex (local):"
+                 << (morphVertices.empty() ? Vector3() : morphVertices[0]).x
+                 << (morphVertices.empty() ? Vector3() : morphVertices[0]).y
+                 << (morphVertices.empty() ? Vector3() : morphVertices[0]).z;
     }
 }
 
