@@ -41,6 +41,15 @@ else()
     message(WARNING "Assimp not found - mesh loading will be disabled. Install with: vcpkg install assimp:x64-mingw-dynamic")
 endif()
 
+# Find Eigen3 (required for Sprint 6 deformation)
+find_package(Eigen3 CONFIG REQUIRED)
+
+if(Eigen3_FOUND)
+    message(STATUS "Eigen3 found - deformation algorithms enabled")
+else()
+    message(FATAL_ERROR "Eigen3 not found. Install with: vcpkg install eigen3:x64-windows")
+endif()
+
 # Include directories
 include_directories(
     ${CMAKE_CURRENT_SOURCE_DIR}/include
@@ -63,6 +72,8 @@ set(SOURCES
     src/rendering/ShaderManager.cpp
     src/rendering/PointRenderer.cpp
     src/utils/RayCaster.cpp
+    src/deformation/RBFInterpolator.cpp
+    src/deformation/MeshDeformer.cpp
 )
 
 # Header files
@@ -81,6 +92,8 @@ set(HEADERS
     include/rendering/ShaderManager.h
     include/rendering/PointRenderer.h
     include/utils/RayCaster.h
+    include/deformation/RBFInterpolator.h
+    include/deformation/MeshDeformer.h
 )
 
 # Create executable
@@ -94,6 +107,7 @@ target_link_libraries(${PROJECT_NAME}
     Qt6::OpenGL
     Qt6::OpenGLWidgets
     OpenGL::GL
+    Eigen3::Eigen
 )
 
 # Link Assimp if found
