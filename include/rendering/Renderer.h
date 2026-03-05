@@ -28,6 +28,9 @@ public:
     void SetShadingMode(ShadingMode mode) { shadingMode_ = mode; }
     ShadingMode GetShadingMode() const { return shadingMode_; }
 
+    void SetRenderFilter(RenderFilter filter) { renderFilter_ = filter; }
+    RenderFilter GetRenderFilter() const { return renderFilter_; }
+
 private:
     void RenderGrid(const Matrix4x4& viewProjection);
     void RenderMesh(const Mesh& mesh, const Transform& transform,
@@ -38,6 +41,7 @@ private:
 
     bool showGrid_;
     ShadingMode shadingMode_;
+    RenderFilter renderFilter_;
     unsigned int gridVAO_;
     unsigned int gridVBO_;
     int gridVertexCount_;

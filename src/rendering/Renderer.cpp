@@ -10,6 +10,7 @@ Renderer::Renderer()
     : shaderManager_(nullptr),
       showGrid_(true),
       shadingMode_(ShadingMode::Solid),
+      renderFilter_(RenderFilter::All),
       gridVAO_(0),
       gridVBO_(0),
       gridVertexCount_(0) {
@@ -134,17 +135,21 @@ void Renderer::Render(const Camera& camera, int width, int height, Project* proj
 
     if (project) {
         // Render morph mesh (blue color, locked in place)
-        const MeshReference& morphMeshRef = project->GetMorphMesh();
-        if (morphMeshRef.isLoaded && morphMeshRef.mesh) {
-            Vector3 morphColor(0.3f, 0.5f, 0.9f); // Blue
-            RenderMesh(*morphMeshRef.mesh, morphMeshRef.transform, morphColor, viewProjection);
+        if (renderFilter_ != RenderFilter::TargetOnly) {
+            const MeshReference& morphMeshRef = project->GetMorphMesh();
+            if (morphMeshRef.isLoaded && morphMeshRef.mesh) {
+                Vector3 morphColor(0.3f, 0.5f, 0.9f); // Blue
+                RenderMesh(*morphMeshRef.mesh, morphMeshRef.transform, morphColor, viewProjection);
+            }
         }
 
         // Render target mesh (orange color, transformable)
-        const MeshReference& targetMeshRef = project->GetTargetMesh();
-        if (targetMeshRef.isLoaded && targetMeshRef.mesh) {
-            Vector3 targetColor(0.9f, 0.6f, 0.2f); // Orange
-            RenderMesh(*targetMeshRef.mesh, targetMeshRef.transform, targetColor, viewProjection);
+        if (renderFilter_ != RenderFilter::MorphOnly) {
+            const MeshReference& targetMeshRef = project->GetTargetMesh();
+            if (targetMeshRef.isLoaded && targetMeshRef.mesh) {
+                Vector3 targetColor(0.9f, 0.6f, 0.2f); // Orange
+                RenderMesh(*targetMeshRef.mesh, targetMeshRef.transform, targetColor, viewProjection);
+            }
         }
     }
 }

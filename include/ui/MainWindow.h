@@ -12,6 +12,7 @@
 namespace MetaVisage {
 
 class ViewportWidget;
+class ViewportContainer;
 class SidebarWidget;
 
 class MainWindow : public QMainWindow {
@@ -52,6 +53,7 @@ private slots:
     // Sidebar actions
     void OnNextStage();
     void OnResetTransform();
+    void OnClearAllPoints();
 
 private:
     void CreateMenus();
@@ -60,6 +62,7 @@ private:
     void CreateCentralWidget();
     void UpdateWindowTitle();
     void UpdateStatusBar();
+    void ConnectViewportSignals();
 
     // UI Components
     QMenuBar* menuBar_;
@@ -69,7 +72,7 @@ private:
     QLabel* toolLabel_;
     QLabel* statsLabel_;
 
-    ViewportWidget* viewportWidget_;
+    ViewportContainer* viewportContainer_;
     SidebarWidget* sidebarWidget_;
 
     // Project data

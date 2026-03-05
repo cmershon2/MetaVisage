@@ -31,11 +31,27 @@ public:
     void SetTransformMode(TransformMode mode);
     void CancelTransform();
 
+    // Render filter for dual viewport mode
+    void SetRenderFilter(RenderFilter filter);
+    RenderFilter GetRenderFilter() const { return renderFilter_; }
+
+    // Camera synchronization - copies state without emitting CameraChanged
+    void SyncCameraFrom(const Camera& other);
+
+    // Active viewport indicator
+    void SetActive(bool active);
+    bool IsActive() const { return isActive_; }
+
+    // Viewport label (shown in corner, e.g. "Target Mesh" or "Morph Mesh")
+    void SetViewportLabel(const QString& label) { viewportLabel_ = label; }
+
 signals:
     // Signal emitted when transform mode changes
     void TransformModeChanged(TransformMode mode, AxisConstraint axis);
     // Signal emitted when target mesh transform is modified
     void TargetTransformChanged();
+    // Signal emitted when camera state changes (for synchronization)
+    void CameraChanged();
 
 protected:
     // OpenGL functions
@@ -68,6 +84,13 @@ private:
     TransformMode transformMode_;
     AxisConstraint axisConstraint_;
     bool isTransforming_;  // True when actively dragging to transform
+
+    // Render filter
+    RenderFilter renderFilter_;
+
+    // Active viewport state
+    bool isActive_;
+    QString viewportLabel_;
 };
 
 } // namespace MetaVisage

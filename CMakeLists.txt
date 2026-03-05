@@ -52,6 +52,7 @@ set(SOURCES
     src/main.cpp
     src/ui/MainWindow.cpp
     src/ui/ViewportWidget.cpp
+    src/ui/ViewportContainer.cpp
     src/ui/SidebarWidget.cpp
     src/core/Mesh.cpp
     src/core/Transform.cpp
@@ -66,6 +67,7 @@ set(SOURCES
 set(HEADERS
     include/ui/MainWindow.h
     include/ui/ViewportWidget.h
+    include/ui/ViewportContainer.h
     include/ui/SidebarWidget.h
     include/core/Mesh.h
     include/core/Transform.h

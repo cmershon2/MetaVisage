@@ -6,6 +6,7 @@
 #include <QLabel>
 #include <QPushButton>
 #include <QDoubleSpinBox>
+#include <QScrollArea>
 #include "core/Types.h"
 
 namespace MetaVisage {
@@ -36,7 +37,8 @@ private slots:
 signals:
     void NextStageRequested();
     void ResetTransformRequested();
-    void TransformValuesChanged();  // Emitted when user manually edits spinbox values
+    void TransformValuesChanged();
+    void ClearAllPointsRequested();
 
 private:
     void CreateAlignmentControls();
@@ -65,6 +67,13 @@ private:
     QDoubleSpinBox* scaleYSpinBox_;
     QDoubleSpinBox* scaleZSpinBox_;
     QPushButton* resetTransformButton_;
+
+    // Point reference UI elements (only valid during PointReference stage)
+    QLabel* targetPointCountLabel_;
+    QLabel* morphPointCountLabel_;
+    QLabel* matchStatusLabel_;
+    QScrollArea* pointListScroll_;
+    QPushButton* clearAllPointsButton_;
 
     // Flag to prevent feedback loops when updating spinboxes programmatically
     bool updatingTransformDisplay_;

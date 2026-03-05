@@ -26,6 +26,17 @@ public:
     void SetFOV(float fov) { fov_ = fov; }
     void SetProjectionMode(ProjectionMode mode) { projectionMode_ = mode; }
 
+    // Internal state accessors (for camera synchronization)
+    float GetYaw() const { return yaw_; }
+    float GetPitch() const { return pitch_; }
+    float GetDistance() const { return distance_; }
+    void SetYaw(float yaw) { yaw_ = yaw; UpdatePositionFromAngles(); }
+    void SetPitch(float pitch) { pitch_ = pitch; UpdatePositionFromAngles(); }
+    void SetDistance(float distance) { distance_ = distance; UpdatePositionFromAngles(); }
+
+    // Copy all camera state from another camera (for viewport synchronization)
+    void CopyStateFrom(const Camera& other);
+
     // Camera operations
     void Orbit(float deltaX, float deltaY);
     void Pan(float deltaX, float deltaY);
