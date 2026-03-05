@@ -21,12 +21,16 @@ public:
     explicit MainWindow(QWidget *parent = nullptr);
     ~MainWindow();
 
+    Project* GetProject() { return project_.get(); }
+
 private slots:
     // File menu actions
     void OnNewProject();
     void OnOpenProject();
     void OnSaveProject();
     void OnSaveProjectAs();
+    void OnImportMorphMesh();
+    void OnImportTargetMesh();
     void OnExportMesh();
     void OnExit();
 
@@ -44,6 +48,10 @@ private slots:
     void OnKeyboardShortcuts();
     void OnReportIssue();
     void OnAbout();
+
+    // Sidebar actions
+    void OnNextStage();
+    void OnResetTransform();
 
 private:
     void CreateMenus();

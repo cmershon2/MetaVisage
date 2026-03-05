@@ -12,9 +12,13 @@ Transform::~Transform() {
 }
 
 Matrix4x4 Transform::GetMatrix() const {
-    // TODO: Implement proper matrix composition
-    // For now, return identity matrix
-    return Matrix4x4::Identity();
+    // Model matrix = Translation * Rotation * Scale (TRS order for column-major)
+    Matrix4x4 translationMatrix = Matrix4x4::Translation(position_);
+    Matrix4x4 rotationMatrix = rotation_.ToMatrix();
+    Matrix4x4 scaleMatrix = Matrix4x4::Scale(scale_);
+
+    // Column-major: apply scale first, then rotation, then translation
+    return translationMatrix * rotationMatrix * scaleMatrix;
 }
 
 void Transform::Reset() {
@@ -28,8 +32,9 @@ void Transform::Translate(const Vector3& delta) {
 }
 
 void Transform::Rotate(const Quaternion& delta) {
-    // TODO: Implement quaternion multiplication
-    rotation_ = delta;
+    // Quaternion multiplication: new rotation = delta * current rotation
+    // This applies the delta rotation to the existing rotation
+    rotation_ = (delta * rotation_).Normalized();
 }
 
 void Transform::Scale(const Vector3& delta) {

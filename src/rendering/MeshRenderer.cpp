@@ -124,7 +124,8 @@ void MeshRenderer::Render(unsigned int shaderProgram, const Matrix4x4& viewProje
     glUniformMatrix4fv(modelLoc, 1, GL_FALSE, model.Data());
     glUniformMatrix4fv(vpLoc, 1, GL_FALSE, viewProjection.Data());
 
-    Matrix4x4 normalMatrix = model.Transpose();
+    // Normal matrix is the transpose of the inverse of the model matrix
+    Matrix4x4 normalMatrix = model.Inverse().Transpose();
     glUniformMatrix4fv(normalMatrixLoc, 1, GL_FALSE, normalMatrix.Data());
 
     glUniform3f(colorLoc, color.x, color.y, color.z);

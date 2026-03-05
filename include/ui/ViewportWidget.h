@@ -8,10 +8,12 @@
 #include <QKeyEvent>
 #include <memory>
 #include "core/Camera.h"
+#include "core/Types.h"
 
 namespace MetaVisage {
 
 class Renderer;
+class Project;
 
 class ViewportWidget : public QOpenGLWidget, protected QOpenGLFunctions_4_3_Core {
     Q_OBJECT
@@ -19,6 +21,21 @@ class ViewportWidget : public QOpenGLWidget, protected QOpenGLFunctions_4_3_Core
 public:
     explicit ViewportWidget(QWidget *parent = nullptr);
     ~ViewportWidget();
+
+    void SetProject(Project* project) { project_ = project; }
+    Camera* GetCamera() { return camera_.get(); }
+
+    // Transform mode accessors
+    TransformMode GetTransformMode() const { return transformMode_; }
+    AxisConstraint GetAxisConstraint() const { return axisConstraint_; }
+    void SetTransformMode(TransformMode mode);
+    void CancelTransform();
+
+signals:
+    // Signal emitted when transform mode changes
+    void TransformModeChanged(TransformMode mode, AxisConstraint axis);
+    // Signal emitted when target mesh transform is modified
+    void TargetTransformChanged();
 
 protected:
     // OpenGL functions
@@ -34,13 +51,23 @@ protected:
     void keyPressEvent(QKeyEvent *event) override;
 
 private:
+    // Apply transform based on mouse delta
+    void ApplyTransform(const QPoint& delta);
+
     std::unique_ptr<Camera> camera_;
     std::unique_ptr<Renderer> renderer_;
+    Project* project_;
 
     // Mouse state
     QPoint lastMousePos_;
+    QPoint transformStartPos_;  // Mouse position when transform started
     bool isOrbiting_;
     bool isPanning_;
+
+    // Transform tool state
+    TransformMode transformMode_;
+    AxisConstraint axisConstraint_;
+    bool isTransforming_;  // True when actively dragging to transform
 };
 
 } // namespace MetaVisage

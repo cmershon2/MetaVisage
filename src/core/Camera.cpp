@@ -9,7 +9,7 @@ Camera::Camera()
       up_(0.0f, 1.0f, 0.0f),
       fov_(45.0f),
       nearPlane_(0.1f),
-      farPlane_(1000.0f),
+      farPlane_(100000.0f),  // Large far plane for big meshes
       projectionMode_(ProjectionMode::Perspective),
       distance_(5.0f),
       yaw_(0.0f),
@@ -47,12 +47,18 @@ void Camera::Pan(float deltaX, float deltaY) {
 }
 
 void Camera::Zoom(float delta) {
-    const float sensitivity = 0.1f;
-    distance_ -= delta * sensitivity;
+    // Use percentage-based zoom for consistent feel at any distance
+    const float zoomFactor = 0.15f;  // 15% per scroll notch for faster zooming
 
-    // Clamp distance
-    if (distance_ < 0.1f) distance_ = 0.1f;
-    if (distance_ > 100.0f) distance_ = 100.0f;
+    if (delta > 0) {
+        distance_ *= (1.0f - zoomFactor);  // Zoom in
+    } else if (delta < 0) {
+        distance_ *= (1.0f + zoomFactor);  // Zoom out
+    }
+
+    // Clamp distance - allow very close for small meshes, very far for large
+    if (distance_ < 0.01f) distance_ = 0.01f;
+    if (distance_ > 100000.0f) distance_ = 100000.0f;
 
     UpdatePositionFromAngles();
 }
@@ -68,6 +74,36 @@ void Camera::Reset() {
 
 void Camera::FocusOn(const Vector3& point, float distance) {
     target_ = point;
+    distance_ = distance;
+    UpdatePositionFromAngles();
+}
+
+void Camera::FocusOnBounds(const BoundingBox& bounds) {
+    // Calculate center and size of bounding box
+    Vector3 center = bounds.Center();
+    Vector3 size = bounds.Size();
+
+    // Calculate the maximum dimension
+    float maxDim = std::max(std::max(size.x, size.y), size.z);
+
+    // Calculate distance needed to fit the object in view
+    // Using FOV to determine appropriate distance
+    const float PI = 3.14159265359f;
+    float halfFovRad = (fov_ * 0.5f) * PI / 180.0f;
+    float distance = (maxDim * 0.5f) / std::tan(halfFovRad);
+
+    // Add padding to ensure object fits comfortably in view
+    distance *= 2.0f;
+
+    // Ensure minimum distance based on object size
+    float minDist = maxDim * 0.5f;
+    if (distance < minDist) distance = minDist;
+
+    // Reset to front view (looking down -Z axis at the object)
+    yaw_ = 0.0f;
+    pitch_ = 0.0f;
+
+    target_ = center;
     distance_ = distance;
     UpdatePositionFromAngles();
 }
@@ -91,15 +127,21 @@ Matrix4x4 Camera::GetViewMatrix() const {
 }
 
 Matrix4x4 Camera::GetProjectionMatrix(float aspectRatio) const {
+    // Dynamically adjust near plane based on distance to avoid z-fighting
+    // Near plane should be about 1/1000th of the distance, minimum 0.001 for small meshes
+    float dynamicNear = std::max(0.001f, distance_ * 0.001f);
+    // Far plane should be much larger than distance
+    float dynamicFar = std::max(1000.0f, distance_ * 100.0f);
+
     if (projectionMode_ == ProjectionMode::Perspective) {
-        return Matrix4x4::Perspective(fov_, aspectRatio, nearPlane_, farPlane_);
+        return Matrix4x4::Perspective(fov_, aspectRatio, dynamicNear, dynamicFar);
     } else {
         float orthoSize = distance_;
         float left = -orthoSize * aspectRatio;
         float right = orthoSize * aspectRatio;
         float bottom = -orthoSize;
         float top = orthoSize;
-        return Matrix4x4::Orthographic(left, right, bottom, top, nearPlane_, farPlane_);
+        return Matrix4x4::Orthographic(left, right, bottom, top, dynamicNear, dynamicFar);
     }
 }
 
