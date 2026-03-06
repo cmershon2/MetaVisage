@@ -3,6 +3,7 @@
 #include <cmath>
 #ifdef HAVE_ASSIMP
 #include <assimp/Importer.hpp>
+#include <assimp/Exporter.hpp>
 #include <assimp/scene.h>
 #include <assimp/postprocess.h>
 #endif
@@ -133,8 +134,77 @@ bool Mesh::Load(const QString& filepath) {
 }
 
 bool Mesh::Save(const QString& filepath) {
-    // TODO: Implement mesh saving in Sprint 10
+#ifdef HAVE_ASSIMP
+    Assimp::Exporter exporter;
+
+    aiScene scene;
+    scene.mRootNode = new aiNode();
+    scene.mRootNode->mName = aiString("root");
+
+    scene.mNumMeshes = 1;
+    scene.mMeshes = new aiMesh*[1];
+    scene.mMeshes[0] = new aiMesh();
+    scene.mRootNode->mNumMeshes = 1;
+    scene.mRootNode->mMeshes = new unsigned int[1];
+    scene.mRootNode->mMeshes[0] = 0;
+
+    aiMesh* outMesh = scene.mMeshes[0];
+    outMesh->mName = aiString(name_.toStdString());
+
+    outMesh->mNumVertices = static_cast<unsigned int>(vertices_.size());
+    outMesh->mVertices = new aiVector3D[outMesh->mNumVertices];
+    for (unsigned int i = 0; i < outMesh->mNumVertices; ++i) {
+        outMesh->mVertices[i] = aiVector3D(vertices_[i].x, vertices_[i].y, vertices_[i].z);
+    }
+
+    if (!normals_.empty()) {
+        outMesh->mNormals = new aiVector3D[outMesh->mNumVertices];
+        for (unsigned int i = 0; i < outMesh->mNumVertices && i < static_cast<unsigned int>(normals_.size()); ++i) {
+            outMesh->mNormals[i] = aiVector3D(normals_[i].x, normals_[i].y, normals_[i].z);
+        }
+    }
+
+    if (!uvs_.empty()) {
+        outMesh->mTextureCoords[0] = new aiVector3D[outMesh->mNumVertices];
+        outMesh->mNumUVComponents[0] = 2;
+        for (unsigned int i = 0; i < outMesh->mNumVertices && i < static_cast<unsigned int>(uvs_.size()); ++i) {
+            outMesh->mTextureCoords[0][i] = aiVector3D(uvs_[i].x, uvs_[i].y, 0.0f);
+        }
+    }
+
+    outMesh->mNumFaces = static_cast<unsigned int>(faces_.size());
+    outMesh->mFaces = new aiFace[outMesh->mNumFaces];
+    for (unsigned int i = 0; i < outMesh->mNumFaces; ++i) {
+        aiFace& dstFace = outMesh->mFaces[i];
+        dstFace.mNumIndices = static_cast<unsigned int>(faces_[i].vertexIndices.size());
+        dstFace.mIndices = new unsigned int[dstFace.mNumIndices];
+        for (unsigned int j = 0; j < dstFace.mNumIndices; ++j) {
+            dstFace.mIndices[j] = faces_[i].vertexIndices[j];
+        }
+    }
+
+    scene.mNumMaterials = 1;
+    scene.mMaterials = new aiMaterial*[1];
+    scene.mMaterials[0] = new aiMaterial();
+    outMesh->mMaterialIndex = 0;
+
+    std::string formatId = "fbx";
+    if (filepath.endsWith(".obj", Qt::CaseInsensitive)) formatId = "obj";
+    else if (filepath.endsWith(".gltf", Qt::CaseInsensitive)) formatId = "gltf2";
+
+    aiReturn ret = exporter.Export(&scene, formatId, filepath.toStdString());
+    if (ret != aiReturn_SUCCESS) {
+        qWarning() << "Mesh save failed:" << exporter.GetErrorString();
+        return false;
+    }
+
+    qDebug() << "Mesh saved to:" << filepath;
+    return true;
+#else
+    Q_UNUSED(filepath);
+    qWarning() << "Assimp not available - cannot save mesh";
     return false;
+#endif
 }
 
 void Mesh::SetVertices(const std::vector<Vector3>& vertices) {

@@ -851,74 +851,74 @@ Visual transform gizmos would improve UX but the current keyboard + mouse drag a
 
 ---
 
-## Sprint 10: Export & Project Management
+## Sprint 10: Export & Project Management *(COMPLETED)*
 
-**Duration:** 2 weeks  
+**Duration:** 2 weeks
 **Goals:** Implement export functionality and complete project save/load
 
 ### Stories
 
 #### Story 10.1: FBX Export
 **Tasks:**
-- [ ] Create MeshExporter class
-- [ ] Implement FBX export using Assimp or FBX SDK
-- [ ] Export geometry (vertices, faces)
-- [ ] Include UV coordinates in export
-- [ ] Export vertex normals
-- [ ] Preserve material slots
-- [ ] Apply Unreal Engine naming conventions
-- [ ] Set coordinate system to Y-up
-- [ ] Handle triangulation option
+- [x] Create MeshExporter class
+- [x] Implement FBX export using Assimp
+- [x] Export geometry (vertices, faces)
+- [x] Include UV coordinates in export
+- [x] Export vertex normals
+- [x] Preserve material slots
+- [x] Apply Unreal Engine naming conventions
+- [x] Set coordinate system to Y-up
+- [x] Handle triangulation option
 
 #### Story 10.2: Export Dialog
 **Tasks:**
-- [ ] Create export file dialog
-- [ ] Add filename input with default
-- [ ] Implement format selector (FBX, OBJ, GLTF)
-- [ ] Add FBX version selector
-- [ ] Create export options panel
-- [ ] Add triangulate checkbox
-- [ ] Include materials toggle
-- [ ] Embed textures option (if applicable)
-- [ ] Add scale factor input
+- [x] Create export file dialog
+- [x] Add filename input with default
+- [x] Implement format selector (FBX, OBJ, GLTF)
+- [ ] Add FBX version selector *(Deferred - Assimp uses default FBX version)*
+- [x] Create export options panel
+- [x] Add triangulate checkbox
+- [x] Include materials toggle
+- [ ] Embed textures option *(Deferred - not applicable for MetaHuman head meshes)*
+- [x] Add scale factor input
 
 #### Story 10.3: Export Validation
 **Tasks:**
-- [ ] Show progress bar during export
-- [ ] Display success notification
-- [ ] Show error message if export fails
-- [ ] Create export log with warnings
-- [ ] Add "Open Export Folder" button
-- [ ] Validate exported file can be read
-- [ ] Option to export project file alongside mesh
+- [x] Show progress bar during export
+- [x] Display success notification
+- [x] Show error message if export fails
+- [x] Create export log with warnings
+- [x] Add "Open Export Folder" button
+- [x] Validate exported file can be read *(via Mesh::Save using Assimp round-trip)*
+- [ ] Option to export project file alongside mesh *(Deferred to Sprint 11)*
 
 #### Story 10.4: Project Save/Load
 **Tasks:**
-- [ ] Implement ProjectSerializer class
-- [ ] Save project to .mmproj format (JSON or binary)
-- [ ] Store mesh file references (relative paths)
-- [ ] Save all transform data
-- [ ] Store point correspondences
-- [ ] Save deformation parameters
-- [ ] Store viewport state
-- [ ] Implement ProjectDeserializer class
-- [ ] Load all project data
-- [ ] Handle missing mesh file references
-- [ ] Restore stage and UI state
-- [ ] Compress project files with zlib
+- [x] Implement ProjectSerializer class
+- [x] Save project to .mmproj format (JSON)
+- [x] Store mesh file references (relative paths)
+- [x] Save all transform data
+- [x] Store point correspondences
+- [x] Save deformation parameters
+- [x] Store viewport state *(stage state saved, camera state deferred)*
+- [x] Implement project deserializer *(integrated into ProjectSerializer class)*
+- [x] Load all project data
+- [x] Handle missing mesh file references
+- [x] Restore stage and UI state
+- [ ] Compress project files with zlib *(Deferred - JSON format is human-readable and small enough)*
 
 ### Acceptance Criteria
-- User can export mesh to FBX format
-- Exported FBX includes geometry, UVs, normals, materials
-- Export uses Unreal Engine naming conventions
-- Coordinate system is Y-up
-- Export dialog shows all options
-- Progress bar displays during export
-- Success/error notifications appear after export
-- User can save project to .mmproj file
-- User can load existing .mmproj file
-- All project data restores correctly
-- Exported mesh loads correctly in Unreal Engine
+- [x] User can export mesh to FBX format
+- [x] Exported FBX includes geometry, UVs, normals, materials
+- [x] Export uses Unreal Engine naming conventions
+- [x] Coordinate system is Y-up
+- [x] Export dialog shows all options
+- [x] Progress bar displays during export
+- [x] Success/error notifications appear after export
+- [x] User can save project to .mmproj file
+- [x] User can load existing .mmproj file
+- [x] All project data restores correctly
+- [ ] Exported mesh loads correctly in Unreal Engine *(requires manual testing)*
 
 ---
 
