@@ -77,6 +77,8 @@ set(SOURCES
     src/sculpting/SculptBrush.cpp
     src/sculpting/SmoothBrush.cpp
     src/sculpting/GrabBrush.cpp
+    src/sculpting/PushPullBrush.cpp
+    src/sculpting/InflateBrush.cpp
 )
 
 # Header files
@@ -100,6 +102,8 @@ set(HEADERS
     include/sculpting/SculptBrush.h
     include/sculpting/SmoothBrush.h
     include/sculpting/GrabBrush.h
+    include/sculpting/PushPullBrush.h
+    include/sculpting/InflateBrush.h
     include/sculpting/BrushStroke.h
 )
 

@@ -25,7 +25,8 @@ Renderer::Renderer()
       brushCursorSegments_(0),
       brushCursorDirty_(false),
       brushCursorRadius_(0.0f),
-      brushCursorInnerRadius_(0.0f) {
+      brushCursorInnerRadius_(0.0f),
+      showTargetOverlay_(false) {
 }
 
 Renderer::~Renderer() {
@@ -54,6 +55,7 @@ bool Renderer::Initialize() {
     shaderManager_->LoadShader("point", "assets/shaders/point.vert", "assets/shaders/point.frag");
     shaderManager_->LoadShader("heatmap", "assets/shaders/heatmap.vert", "assets/shaders/heatmap.frag");
     shaderManager_->LoadShader("overlay", "assets/shaders/basic.vert", "assets/shaders/overlay.frag");
+    shaderManager_->LoadShader("matcap", "assets/shaders/matcap.vert", "assets/shaders/matcap.frag");
 
     // Initialize point renderer
     pointRenderer_ = std::make_unique<PointRenderer>();
@@ -244,6 +246,15 @@ void Renderer::RenderTouchUpStage(const Camera& camera, int /*width*/, int /*hei
         RenderMesh(*morphData.deformedMorphMesh, morphMeshRef.transform, morphColor, viewProjection);
     } else {
         RenderMesh(*morphMeshRef.mesh, morphMeshRef.transform, morphColor, viewProjection);
+    }
+
+    // Render target mesh overlay if enabled
+    if (showTargetOverlay_) {
+        const MeshReference& targetMeshRef = project->GetTargetMesh();
+        if (targetMeshRef.isLoaded && targetMeshRef.mesh) {
+            Vector3 targetColor(0.9f, 0.6f, 0.2f);
+            RenderMeshOverlay(*targetMeshRef.mesh, targetMeshRef.transform, targetColor, 0.3f, viewProjection);
+        }
     }
 
     // Render brush cursor on top

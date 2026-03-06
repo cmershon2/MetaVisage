@@ -774,53 +774,80 @@ Visual transform gizmos would improve UX but the current keyboard + mouse drag a
 
 #### Story 9.1: Push/Pull & Inflate Brushes
 **Tasks:**
-- [ ] Create PushPullBrush class
-- [ ] Calculate surface normals at brush location
-- [ ] Move vertices along normal direction
-- [ ] Implement positive (push) and negative (pull) modes
-- [ ] Create InflateBrush class
-- [ ] Expand surface outward (inflate)
-- [ ] Contract surface inward (deflate)
-- [ ] Apply falloff to both brushes
+- [x] Create PushPullBrush class
+- [x] Calculate surface normals at brush location
+- [x] Move vertices along normal direction
+- [x] Implement positive (push) and negative (pull) modes
+- [x] Create InflateBrush class
+- [x] Expand surface outward (inflate)
+- [x] Contract surface inward (deflate)
+- [x] Apply falloff to both brushes
 
 #### Story 9.2: Sculpting Symmetry
 **Tasks:**
-- [ ] Add symmetry toggle to sidebar
-- [ ] Create symmetry axis selector (X/Y/Z)
-- [ ] Mirror brush strokes across symmetry plane
-- [ ] Visualize symmetry plane
-- [ ] Apply symmetry to all brush types
-- [ ] Handle edge vertices at symmetry plane
+- [x] Add symmetry toggle to sidebar
+- [x] Create symmetry axis selector (X/Y/Z)
+- [x] Mirror brush strokes across symmetry plane
+- [x] Visualize symmetry plane
+- [x] Apply symmetry to all brush types
+- [x] Handle edge vertices at symmetry plane
 
 #### Story 9.3: Display Options
 **Tasks:**
-- [ ] Add shading mode selector (Flat/Smooth/Wireframe)
-- [ ] Implement MatCap shading for surface details
-- [ ] Add lighting direction controls
-- [ ] Create key light position adjustment
-- [ ] Add wireframe overlay toggle
-- [ ] Implement reference mesh overlay
-- [ ] Make target mesh semi-transparent when overlaid
+- [x] Add shading mode selector (Flat/Smooth/Wireframe)
+- [x] Implement MatCap shading for surface details
+- [x] Add lighting direction controls
+- [x] Create key light position adjustment
+- [x] Add wireframe overlay toggle
+- [x] Implement reference mesh overlay
+- [x] Make target mesh semi-transparent when overlaid
 
 #### Story 9.4: Finalize Button
 **Tasks:**
-- [ ] Add "Finalize and Export" button
-- [ ] Validate mesh has no degenerate faces
-- [ ] Check for isolated vertices
-- [ ] Prepare mesh data for export
-- [ ] Transition to export flow
+- [x] Add "Finalize and Export" button
+- [x] Validate mesh has no degenerate faces
+- [x] Check for isolated vertices
+- [x] Prepare mesh data for export
+- [x] Transition to export flow
 
 ### Acceptance Criteria
-- Push/Pull brush moves vertices along normals
-- Inflate brush expands surface uniformly
-- Deflate brush contracts surface uniformly
-- Symmetry mode mirrors all brush strokes
-- MatCap shading shows surface detail clearly
-- Lighting controls adjust viewport brightness
-- Reference mesh overlay helps comparison
-- All four brushes work correctly
-- Symmetry applies to all brush types
-- "Finalize and Export" button validates mesh
+- [x] Push/Pull brush moves vertices along normals
+- [x] Inflate brush expands surface uniformly
+- [x] Deflate brush contracts surface uniformly
+- [x] Symmetry mode mirrors all brush strokes
+- [x] MatCap shading shows surface detail clearly
+- [x] Lighting controls adjust viewport brightness
+- [x] Reference mesh overlay helps comparison
+- [x] All four brushes work correctly
+- [x] Symmetry applies to all brush types
+- [x] "Finalize and Export" button validates mesh
+
+### Implementation Notes
+
+**Architecture:**
+- `PushPullBrush` extends `SculptBrush`, displaces vertices along the world-space surface normal at the brush center, converted to local space via inverse model matrix. Positive strength pushes outward, negative pulls inward.
+- `InflateBrush` extends `SculptBrush`, displaces each vertex along its own per-vertex normal for uniform surface expansion/contraction.
+- Sculpting symmetry mirrors brush position and normal across X/Y/Z axis plane, applying the brush twice per stroke (original + mirrored). Both `HandleSculptPress()` and `HandleSculptMove()` apply symmetric strokes with proper normal and delta mirroring.
+- Target mesh overlay renders semi-transparent (30% alpha) using the existing `RenderMeshOverlay()` method during `RenderTouchUpStage()`.
+- Procedural MatCap shader uses view-space normals for hemisphere lighting, rim lighting, and specular highlights to simulate a clay material without requiring external textures.
+- Finalize button validates mesh integrity (degenerate faces with duplicate/out-of-range indices) and transitions to export flow.
+
+**New Files Created:**
+- `include/sculpting/PushPullBrush.h` + `src/sculpting/PushPullBrush.cpp` - Push/Pull brush with center-normal displacement
+- `include/sculpting/InflateBrush.h` + `src/sculpting/InflateBrush.cpp` - Inflate brush with per-vertex normal displacement
+- `assets/shaders/matcap.vert` + `assets/shaders/matcap.frag` - Procedural clay MatCap shader
+
+**Files Modified:**
+- `include/core/Types.h` - Added `PushPull` and `Inflate` to `BrushType` enum
+- `CMakeLists.txt` - Added new source and header files
+- `include/ui/ViewportWidget.h` + `src/ui/ViewportWidget.cpp` - Added new brush instances, sculpting symmetry state, target overlay, symmetric brush application in press/move handlers
+- `include/ui/SidebarWidget.h` + `src/ui/SidebarWidget.cpp` - Added 2x2 grid brush selector, sculpting symmetry toggle+axis, display options with overlay checkbox, "Finalize and Export" button, new signals
+- `include/ui/MainWindow.h` + `src/ui/MainWindow.cpp` - Added signal connections for symmetry/overlay/finalize, `OnFinalizeRequested()` with mesh validation
+- `include/rendering/Renderer.h` + `src/rendering/Renderer.cpp` - Added `showTargetOverlay_` state, target overlay rendering in Touch Up stage, MatCap shader loading
+
+**Build Status:**
+- Application builds successfully with MSVC (Release)
+- All existing Sprint 1-8 features remain functional
 
 ---
 

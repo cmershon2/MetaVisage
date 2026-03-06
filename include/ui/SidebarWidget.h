@@ -88,6 +88,9 @@ signals:
     void BrushRadiusChangedSignal(float radius);
     void BrushStrengthChangedSignal(float strength);
     void BrushFalloffChanged(FalloffType falloff);
+    void SculptSymmetryChanged(bool enabled, Axis axis);
+    void ShowTargetOverlayChanged(bool show);
+    void FinalizeRequested();
 
 private:
     void CreateAlignmentControls();
@@ -148,11 +151,17 @@ private:
     QButtonGroup* brushButtonGroup_;
     QPushButton* smoothBrushButton_;
     QPushButton* grabBrushButton_;
+    QPushButton* pushPullBrushButton_;
+    QPushButton* inflateBrushButton_;
     QSlider* brushRadiusSlider_;
     QLabel* brushRadiusValueLabel_;
     QSlider* brushStrengthSlider_;
     QLabel* brushStrengthValueLabel_;
     QComboBox* falloffTypeCombo_;
+    QCheckBox* sculptSymmetryCheckBox_;
+    QComboBox* sculptSymmetryAxisCombo_;
+    QCheckBox* showOverlayCheckBox_;
+    QPushButton* finalizeButton_;
 
     // Flag to prevent feedback loops when updating spinboxes programmatically
     bool updatingTransformDisplay_;
