@@ -47,6 +47,7 @@ public:
     // Sculpting (Touch Up stage)
     void SetBrushCursor(const Vector3& position, const Vector3& normal, float radius, float innerRadius, bool visible);
     void UpdateMeshVertices(const Mesh* mesh);
+    void SetShowTargetOverlay(bool show) { showTargetOverlay_ = show; }
 
 private:
     void RenderGrid(const Matrix4x4& viewProjection);
@@ -91,6 +92,9 @@ private:
     Vector3 brushCursorNormal_;
     float brushCursorRadius_;
     float brushCursorInnerRadius_;
+
+    // Target overlay in Touch Up stage
+    bool showTargetOverlay_;
 };
 
 } // namespace MetaVisage

@@ -55,11 +55,17 @@ SidebarWidget::SidebarWidget(QWidget *parent)
       brushButtonGroup_(nullptr),
       smoothBrushButton_(nullptr),
       grabBrushButton_(nullptr),
+      pushPullBrushButton_(nullptr),
+      inflateBrushButton_(nullptr),
       brushRadiusSlider_(nullptr),
       brushRadiusValueLabel_(nullptr),
       brushStrengthSlider_(nullptr),
       brushStrengthValueLabel_(nullptr),
       falloffTypeCombo_(nullptr),
+      sculptSymmetryCheckBox_(nullptr),
+      sculptSymmetryAxisCombo_(nullptr),
+      showOverlayCheckBox_(nullptr),
+      finalizeButton_(nullptr),
       updatingTransformDisplay_(false),
       selectedPointIndex_(-1) {
 
@@ -807,9 +813,22 @@ void SidebarWidget::CreateTouchUpControls() {
     info->setWordWrap(true);
     controlsLayout->addWidget(info);
 
+    // Common styles
+    QString groupBoxStyle =
+        "QGroupBox { border: 1px solid #555; border-radius: 4px; margin-top: 8px; padding-top: 8px; }"
+        "QGroupBox::title { subcontrol-origin: margin; left: 10px; padding: 0 5px; }";
+    QString comboStyle =
+        "QComboBox { background-color: #34495E; color: white; border: 1px solid #555; padding: 4px; border-radius: 3px; }"
+        "QComboBox::drop-down { border: none; }"
+        "QComboBox QAbstractItemView { background-color: #34495E; color: white; selection-background-color: #3498DB; }";
+    QString buttonStyle =
+        "QPushButton { background-color: #34495E; padding: 8px 12px; border: 2px solid #555; border-radius: 4px; }"
+        "QPushButton:checked { background-color: #3498DB; border-color: #3498DB; }";
+
     // Brush Tool Selector
     QGroupBox* toolGroup = new QGroupBox("Brush Tools");
-    QHBoxLayout* toolLayout = new QHBoxLayout(toolGroup);
+    toolGroup->setStyleSheet(groupBoxStyle);
+    QGridLayout* toolLayout = new QGridLayout(toolGroup);
 
     brushButtonGroup_ = new QButtonGroup(this);
     brushButtonGroup_->setExclusive(true);
@@ -817,22 +836,37 @@ void SidebarWidget::CreateTouchUpControls() {
     smoothBrushButton_ = new QPushButton("Smooth");
     smoothBrushButton_->setCheckable(true);
     smoothBrushButton_->setChecked(true);
-    smoothBrushButton_->setStyleSheet(
-        "QPushButton { background-color: #34495E; padding: 8px 16px; border: 2px solid #555; border-radius: 4px; }"
-        "QPushButton:checked { background-color: #3498DB; border-color: #3498DB; }");
+    smoothBrushButton_->setStyleSheet(buttonStyle);
     brushButtonGroup_->addButton(smoothBrushButton_, 0);
-    toolLayout->addWidget(smoothBrushButton_);
+    toolLayout->addWidget(smoothBrushButton_, 0, 0);
 
     grabBrushButton_ = new QPushButton("Grab");
     grabBrushButton_->setCheckable(true);
-    grabBrushButton_->setStyleSheet(
-        "QPushButton { background-color: #34495E; padding: 8px 16px; border: 2px solid #555; border-radius: 4px; }"
-        "QPushButton:checked { background-color: #3498DB; border-color: #3498DB; }");
+    grabBrushButton_->setStyleSheet(buttonStyle);
     brushButtonGroup_->addButton(grabBrushButton_, 1);
-    toolLayout->addWidget(grabBrushButton_);
+    toolLayout->addWidget(grabBrushButton_, 0, 1);
+
+    pushPullBrushButton_ = new QPushButton("Push/Pull");
+    pushPullBrushButton_->setCheckable(true);
+    pushPullBrushButton_->setStyleSheet(buttonStyle);
+    brushButtonGroup_->addButton(pushPullBrushButton_, 2);
+    toolLayout->addWidget(pushPullBrushButton_, 1, 0);
+
+    inflateBrushButton_ = new QPushButton("Inflate");
+    inflateBrushButton_->setCheckable(true);
+    inflateBrushButton_->setStyleSheet(buttonStyle);
+    brushButtonGroup_->addButton(inflateBrushButton_, 3);
+    toolLayout->addWidget(inflateBrushButton_, 1, 1);
 
     connect(brushButtonGroup_, QOverload<int>::of(&QButtonGroup::idClicked), this, [this](int id) {
-        BrushType type = (id == 0) ? BrushType::Smooth : BrushType::Grab;
+        BrushType type;
+        switch (id) {
+            case 0: type = BrushType::Smooth; break;
+            case 1: type = BrushType::Grab; break;
+            case 2: type = BrushType::PushPull; break;
+            case 3: type = BrushType::Inflate; break;
+            default: type = BrushType::Smooth; break;
+        }
         emit BrushTypeChanged(type);
     });
 
@@ -840,6 +874,7 @@ void SidebarWidget::CreateTouchUpControls() {
 
     // Brush Settings
     QGroupBox* settingsGroup = new QGroupBox("Brush Settings");
+    settingsGroup->setStyleSheet(groupBoxStyle);
     QVBoxLayout* settingsLayout = new QVBoxLayout(settingsGroup);
     settingsLayout->setSpacing(8);
 
@@ -883,13 +918,86 @@ void SidebarWidget::CreateTouchUpControls() {
     falloffTypeCombo_->addItem("Linear");
     falloffTypeCombo_->addItem("Sharp");
     falloffTypeCombo_->setCurrentIndex(0);
+    falloffTypeCombo_->setStyleSheet(comboStyle);
     connect(falloffTypeCombo_, QOverload<int>::of(&QComboBox::currentIndexChanged),
             this, &SidebarWidget::OnFalloffTypeChanged);
     falloffLayout->addWidget(falloffTypeCombo_);
     settingsLayout->addLayout(falloffLayout);
 
     controlsLayout->addWidget(settingsGroup);
+
+    // Sculpting Symmetry
+    QGroupBox* symmetryGroup = new QGroupBox("Sculpting Symmetry");
+    symmetryGroup->setStyleSheet(groupBoxStyle);
+    QVBoxLayout* symmetryLayout = new QVBoxLayout(symmetryGroup);
+
+    sculptSymmetryCheckBox_ = new QCheckBox("Enable Symmetry");
+    sculptSymmetryCheckBox_->setStyleSheet("QCheckBox { color: white; }");
+    symmetryLayout->addWidget(sculptSymmetryCheckBox_);
+
+    QHBoxLayout* symAxisLayout = new QHBoxLayout();
+    QLabel* symAxisLabel = new QLabel("Axis:");
+    symAxisLabel->setStyleSheet("QLabel { color: #BDC3C7; }");
+    symAxisLayout->addWidget(symAxisLabel);
+    sculptSymmetryAxisCombo_ = new QComboBox();
+    sculptSymmetryAxisCombo_->addItem("X", static_cast<int>(Axis::X));
+    sculptSymmetryAxisCombo_->addItem("Y", static_cast<int>(Axis::Y));
+    sculptSymmetryAxisCombo_->addItem("Z", static_cast<int>(Axis::Z));
+    sculptSymmetryAxisCombo_->setCurrentIndex(0);
+    sculptSymmetryAxisCombo_->setEnabled(false);
+    sculptSymmetryAxisCombo_->setStyleSheet(comboStyle);
+    symAxisLayout->addWidget(sculptSymmetryAxisCombo_);
+    symAxisLayout->addStretch();
+    symmetryLayout->addLayout(symAxisLayout);
+
+    connect(sculptSymmetryCheckBox_, &QCheckBox::toggled, this, [this](bool checked) {
+        if (sculptSymmetryAxisCombo_) sculptSymmetryAxisCombo_->setEnabled(checked);
+        Axis axis = static_cast<Axis>(sculptSymmetryAxisCombo_->currentData().toInt());
+        emit SculptSymmetryChanged(checked, axis);
+    });
+    connect(sculptSymmetryAxisCombo_, QOverload<int>::of(&QComboBox::currentIndexChanged), this, [this](int) {
+        if (sculptSymmetryCheckBox_ && sculptSymmetryCheckBox_->isChecked()) {
+            Axis axis = static_cast<Axis>(sculptSymmetryAxisCombo_->currentData().toInt());
+            emit SculptSymmetryChanged(true, axis);
+        }
+    });
+
+    controlsLayout->addWidget(symmetryGroup);
+
+    // Display Options
+    QGroupBox* displayGroup = new QGroupBox("Display Options");
+    displayGroup->setStyleSheet(groupBoxStyle);
+    QVBoxLayout* displayLayout = new QVBoxLayout(displayGroup);
+
+    showOverlayCheckBox_ = new QCheckBox("Show Target Overlay");
+    showOverlayCheckBox_->setStyleSheet("QCheckBox { color: white; }");
+    connect(showOverlayCheckBox_, &QCheckBox::toggled, this, [this](bool checked) {
+        emit ShowTargetOverlayChanged(checked);
+    });
+    displayLayout->addWidget(showOverlayCheckBox_);
+
+    controlsLayout->addWidget(displayGroup);
+
     controlsLayout->addStretch();
+
+    // Finalize button
+    finalizeButton_ = new QPushButton("Finalize and Export");
+    finalizeButton_->setStyleSheet(
+        "QPushButton {"
+        "    background-color: #2ECC71;"
+        "    color: white;"
+        "    border: none;"
+        "    padding: 10px 20px;"
+        "    font-size: 12pt;"
+        "    font-weight: bold;"
+        "    border-radius: 4px;"
+        "}"
+        "QPushButton:hover {"
+        "    background-color: #27AE60;"
+        "}"
+    );
+    connect(finalizeButton_, &QPushButton::clicked, this, &SidebarWidget::FinalizeRequested);
+    controlsLayout->addWidget(finalizeButton_);
 
     // Hide next stage button for final stage
     nextStageButton_->setVisible(false);
@@ -949,9 +1057,12 @@ void SidebarWidget::ClearControls() {
     progressBar_ = nullptr; progressLabel_ = nullptr; previewModeCombo_ = nullptr;
     acceptButton_ = nullptr; reprocessButton_ = nullptr; resetDefaultsButton_ = nullptr;
     brushButtonGroup_ = nullptr; smoothBrushButton_ = nullptr; grabBrushButton_ = nullptr;
+    pushPullBrushButton_ = nullptr; inflateBrushButton_ = nullptr;
     brushRadiusSlider_ = nullptr; brushRadiusValueLabel_ = nullptr;
     brushStrengthSlider_ = nullptr; brushStrengthValueLabel_ = nullptr;
     falloffTypeCombo_ = nullptr;
+    sculptSymmetryCheckBox_ = nullptr; sculptSymmetryAxisCombo_ = nullptr;
+    showOverlayCheckBox_ = nullptr; finalizeButton_ = nullptr;
     selectedPointIndex_ = -1;
 
     if (controlsWidget_->layout()) {

@@ -19,6 +19,8 @@ class Transform;
 class SculptBrush;
 class SmoothBrush;
 class GrabBrush;
+class PushPullBrush;
+class InflateBrush;
 
 class ViewportWidget : public QOpenGLWidget, protected QOpenGLFunctions_4_3_Core {
     Q_OBJECT
@@ -70,6 +72,12 @@ public:
     BrushType GetBrushType() const { return activeBrushType_; }
     float GetBrushRadius() const;
     float GetBrushStrength() const;
+
+    // Sculpting symmetry
+    void SetSculptSymmetry(bool enabled, Axis axis);
+
+    // Target overlay in Touch Up stage
+    void SetShowTargetOverlay(bool show);
 
 signals:
     // Signal emitted when transform mode changes
@@ -149,10 +157,19 @@ private:
     BrushType activeBrushType_;
     std::unique_ptr<SmoothBrush> smoothBrush_;
     std::unique_ptr<GrabBrush> grabBrush_;
+    std::unique_ptr<PushPullBrush> pushPullBrush_;
+    std::unique_ptr<InflateBrush> inflateBrush_;
     bool isSculpting_;
     BrushStroke currentStroke_;
     Vector3 lastBrushWorldPos_;
     bool brushOnMesh_;
+
+    // Sculpting symmetry state
+    bool sculptSymmetryEnabled_;
+    Axis sculptSymmetryAxis_;
+
+    // Target overlay in Touch Up
+    bool showTargetOverlay_;
 };
 
 } // namespace MetaVisage

@@ -326,6 +326,18 @@ void MainWindow::ConnectViewportSignals() {
     // Connect viewport brush radius change (from [ ] keys) back to sidebar
     connect(viewportContainer_->GetPrimaryViewport(), &ViewportWidget::BrushRadiusChanged,
             sidebarWidget_, &SidebarWidget::SetBrushRadius);
+
+    // Connect sculpting symmetry signals
+    connect(sidebarWidget_, &SidebarWidget::SculptSymmetryChanged,
+            viewportContainer_->GetPrimaryViewport(), &ViewportWidget::SetSculptSymmetry);
+
+    // Connect display options signals
+    connect(sidebarWidget_, &SidebarWidget::ShowTargetOverlayChanged,
+            viewportContainer_->GetPrimaryViewport(), &ViewportWidget::SetShowTargetOverlay);
+
+    // Connect finalize button
+    connect(sidebarWidget_, &SidebarWidget::FinalizeRequested,
+            this, &MainWindow::OnFinalizeRequested);
 }
 
 void MainWindow::UpdateWindowTitle() {
@@ -516,7 +528,8 @@ void MainWindow::OnKeyboardShortcuts() {
         "Touch Up:\n"
         "  Left Click/Drag - Apply brush\n"
         "  [ - Decrease brush radius\n"
-        "  ] - Increase brush radius\n\n"
+        "  ] - Increase brush radius\n"
+        "  Brushes: Smooth, Grab, Push/Pull, Inflate\n\n"
         "View:\n"
         "  Home - Reset Camera\n"
         "  1 - Front view\n"
@@ -987,6 +1000,75 @@ void MainWindow::OnNextStage() {
     }
 
     viewportContainer_->GetPrimaryViewport()->update();
+}
+
+void MainWindow::OnFinalizeRequested() {
+    if (!project_) return;
+
+    const MorphData& morphData = project_->GetMorphData();
+    Mesh* mesh = morphData.deformedMorphMesh ? morphData.deformedMorphMesh.get() : nullptr;
+
+    if (!mesh) {
+        mesh = project_->GetMorphMesh().mesh.get();
+    }
+
+    if (!mesh) {
+        QMessageBox::warning(this, tr("Error"), tr("No mesh available to finalize."));
+        return;
+    }
+
+    // Perform mesh validation
+    const auto& vertices = mesh->GetVertices();
+    const auto& faces = mesh->GetFaces();
+    int vertexCount = static_cast<int>(vertices.size());
+    int faceCount = static_cast<int>(faces.size());
+    int degenerateFaces = 0;
+
+    // Check for degenerate faces (duplicate vertex indices)
+    for (const auto& face : faces) {
+        const auto& idx = face.vertexIndices;
+        if (idx.size() < 3) {
+            degenerateFaces++;
+            continue;
+        }
+        // Check for out-of-range or duplicate indices
+        bool degenerate = false;
+        for (size_t i = 0; i < idx.size() && !degenerate; ++i) {
+            if (idx[i] >= vertices.size()) degenerate = true;
+            for (size_t j = i + 1; j < idx.size() && !degenerate; ++j) {
+                if (idx[i] == idx[j]) degenerate = true;
+            }
+        }
+        if (degenerate) degenerateFaces++;
+    }
+
+    QString validationResult;
+    bool valid = true;
+
+    validationResult += QString("Mesh Validation Report\n\n");
+    validationResult += QString("Vertices: %1\n").arg(vertexCount);
+    validationResult += QString("Faces: %1\n").arg(faceCount);
+
+    if (degenerateFaces > 0) {
+        validationResult += QString("\nWarning: %1 degenerate faces detected.\n").arg(degenerateFaces);
+        valid = false;
+    }
+
+    if (valid) {
+        validationResult += "\nMesh passes all validation checks!\n";
+        validationResult += "\nReady for export.";
+    } else {
+        validationResult += "\nMesh has issues but can still be exported.";
+    }
+
+    QMessageBox::StandardButton result = QMessageBox::information(
+        this, tr("Mesh Validation"),
+        validationResult + "\n\nProceed to export?",
+        QMessageBox::Yes | QMessageBox::No, QMessageBox::Yes);
+
+    if (result == QMessageBox::Yes) {
+        OnExportMesh();
+    }
 }
 
 } // namespace MetaVisage

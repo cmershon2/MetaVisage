@@ -5,6 +5,8 @@
 #include "sculpting/SculptBrush.h"
 #include "sculpting/SmoothBrush.h"
 #include "sculpting/GrabBrush.h"
+#include "sculpting/PushPullBrush.h"
+#include "sculpting/InflateBrush.h"
 #include <QDebug>
 #include <QPainter>
 #include <cmath>
@@ -29,8 +31,13 @@ ViewportWidget::ViewportWidget(QWidget *parent)
       activeBrushType_(BrushType::Smooth),
       smoothBrush_(std::make_unique<SmoothBrush>()),
       grabBrush_(std::make_unique<GrabBrush>()),
+      pushPullBrush_(std::make_unique<PushPullBrush>()),
+      inflateBrush_(std::make_unique<InflateBrush>()),
       isSculpting_(false),
-      brushOnMesh_(false) {
+      brushOnMesh_(false),
+      sculptSymmetryEnabled_(false),
+      sculptSymmetryAxis_(Axis::X),
+      showTargetOverlay_(false) {
 
     setFocusPolicy(Qt::StrongFocus);
     setMouseTracking(true);
@@ -124,6 +131,21 @@ void ViewportWidget::SetBrushStrength(float strength) {
 void ViewportWidget::SetBrushFalloff(FalloffType falloff) {
     if (smoothBrush_) smoothBrush_->SetFalloff(falloff);
     if (grabBrush_) grabBrush_->SetFalloff(falloff);
+    if (pushPullBrush_) pushPullBrush_->SetFalloff(falloff);
+    if (inflateBrush_) inflateBrush_->SetFalloff(falloff);
+}
+
+void ViewportWidget::SetSculptSymmetry(bool enabled, Axis axis) {
+    sculptSymmetryEnabled_ = enabled;
+    sculptSymmetryAxis_ = axis;
+}
+
+void ViewportWidget::SetShowTargetOverlay(bool show) {
+    showTargetOverlay_ = show;
+    if (renderer_) {
+        renderer_->SetShowTargetOverlay(show);
+    }
+    update();
 }
 
 float ViewportWidget::GetBrushRadius() const {
@@ -131,6 +153,10 @@ float ViewportWidget::GetBrushRadius() const {
         return smoothBrush_->GetRadius();
     } else if (activeBrushType_ == BrushType::Grab && grabBrush_) {
         return grabBrush_->GetRadius();
+    } else if (activeBrushType_ == BrushType::PushPull && pushPullBrush_) {
+        return pushPullBrush_->GetRadius();
+    } else if (activeBrushType_ == BrushType::Inflate && inflateBrush_) {
+        return inflateBrush_->GetRadius();
     }
     return 0.5f;
 }
@@ -140,14 +166,20 @@ float ViewportWidget::GetBrushStrength() const {
         return smoothBrush_->GetStrength();
     } else if (activeBrushType_ == BrushType::Grab && grabBrush_) {
         return grabBrush_->GetStrength();
+    } else if (activeBrushType_ == BrushType::PushPull && pushPullBrush_) {
+        return pushPullBrush_->GetStrength();
+    } else if (activeBrushType_ == BrushType::Inflate && inflateBrush_) {
+        return inflateBrush_->GetStrength();
     }
     return 0.5f;
 }
 
 SculptBrush* ViewportWidget::GetActiveBrush() {
     switch (activeBrushType_) {
-        case BrushType::Smooth: return smoothBrush_.get();
-        case BrushType::Grab:   return grabBrush_.get();
+        case BrushType::Smooth:   return smoothBrush_.get();
+        case BrushType::Grab:     return grabBrush_.get();
+        case BrushType::PushPull: return pushPullBrush_.get();
+        case BrushType::Inflate:  return inflateBrush_.get();
         default: return nullptr;
     }
 }
@@ -251,6 +283,37 @@ void ViewportWidget::HandleSculptPress(QMouseEvent *event) {
                 doneCurrent();
                 update();
             }
+
+            // Apply symmetric stroke if symmetry enabled
+            if (sculptSymmetryEnabled_) {
+                Vector3 mirroredPos = hit.position;
+                switch (sculptSymmetryAxis_) {
+                    case Axis::X: mirroredPos.x = -mirroredPos.x; break;
+                    case Axis::Y: mirroredPos.y = -mirroredPos.y; break;
+                    case Axis::Z: mirroredPos.z = -mirroredPos.z; break;
+                }
+                Vector3 mirroredNormal = worldNormal;
+                switch (sculptSymmetryAxis_) {
+                    case Axis::X: mirroredNormal.x = -mirroredNormal.x; break;
+                    case Axis::Y: mirroredNormal.y = -mirroredNormal.y; break;
+                    case Axis::Z: mirroredNormal.z = -mirroredNormal.z; break;
+                }
+                // Record mirrored affected vertices
+                auto mirroredAffected = brush->GetAffectedVertices(*mesh, transform, mirroredPos, brush->GetRadius());
+                for (const auto& mav : mirroredAffected) {
+                    if (mav.index >= 0 && mav.index < static_cast<int>(vertices.size())) {
+                        currentStroke_.RecordVertex(mav.index, vertices[mav.index]);
+                    }
+                }
+                brush->Apply(*mesh, transform, mirroredPos, mirroredNormal, Vector3(), 0.016f);
+                mesh->CalculateNormals();
+                makeCurrent();
+                if (renderer_) {
+                    renderer_->UpdateMeshVertices(mesh);
+                }
+                doneCurrent();
+                update();
+            }
         }
     }
 }
@@ -318,6 +381,45 @@ void ViewportWidget::HandleSculptMove(QMouseEvent *event, const QPoint& delta) {
             }
             doneCurrent();
             update();
+        }
+
+        // Apply symmetric stroke if symmetry enabled
+        if (sculptSymmetryEnabled_) {
+            Vector3 mirroredCenter = brushCenter;
+            switch (sculptSymmetryAxis_) {
+                case Axis::X: mirroredCenter.x = -mirroredCenter.x; break;
+                case Axis::Y: mirroredCenter.y = -mirroredCenter.y; break;
+                case Axis::Z: mirroredCenter.z = -mirroredCenter.z; break;
+            }
+            Vector3 mirroredNormal = worldNormal;
+            switch (sculptSymmetryAxis_) {
+                case Axis::X: mirroredNormal.x = -mirroredNormal.x; break;
+                case Axis::Y: mirroredNormal.y = -mirroredNormal.y; break;
+                case Axis::Z: mirroredNormal.z = -mirroredNormal.z; break;
+            }
+            Vector3 mirroredDelta = mouseDelta;
+            switch (sculptSymmetryAxis_) {
+                case Axis::X: mirroredDelta.x = -mirroredDelta.x; break;
+                case Axis::Y: mirroredDelta.y = -mirroredDelta.y; break;
+                case Axis::Z: mirroredDelta.z = -mirroredDelta.z; break;
+            }
+            // Record mirrored affected vertices for undo
+            auto mirroredAffected = brush->GetAffectedVertices(*mesh, transform, mirroredCenter, brush->GetRadius());
+            const auto& verts = mesh->GetVertices();
+            for (const auto& mav : mirroredAffected) {
+                if (mav.index >= 0 && mav.index < static_cast<int>(verts.size())) {
+                    currentStroke_.RecordVertex(mav.index, verts[mav.index]);
+                }
+            }
+            if (brush->Apply(*mesh, transform, mirroredCenter, mirroredNormal, mirroredDelta, 0.016f)) {
+                mesh->CalculateNormals();
+                makeCurrent();
+                if (renderer_) {
+                    renderer_->UpdateMeshVertices(mesh);
+                }
+                doneCurrent();
+                update();
+            }
         }
 
         lastBrushWorldPos_ = brushCenter;

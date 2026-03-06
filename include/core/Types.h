@@ -593,7 +593,9 @@ enum class MorphPreviewMode {
 enum class BrushType {
     None,
     Smooth,     // Average vertex positions for smoothing
-    Grab        // Move vertices with mouse drag
+    Grab,       // Move vertices with mouse drag
+    PushPull,   // Move vertices along surface normal (push outward / pull inward)
+    Inflate     // Move each vertex along its own normal (inflate/deflate)
 };
 
 // Brush falloff curve types

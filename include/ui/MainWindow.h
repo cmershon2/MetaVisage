@@ -75,6 +75,9 @@ private slots:
     void OnMorphPreviewModeChanged(MorphPreviewMode mode);
     void OnMorphParameterChanged();
 
+    // Touch Up actions
+    void OnFinalizeRequested();
+
 private:
     void CreateMenus();
     void CreateToolBar();
