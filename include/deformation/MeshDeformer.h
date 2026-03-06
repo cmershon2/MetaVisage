@@ -6,6 +6,7 @@
 #include "core/Transform.h"
 #include "core/Project.h"
 #include "deformation/RBFInterpolator.h"
+#include "deformation/NRICPDeformer.h"
 #include <memory>
 #include <atomic>
 #include <functional>
@@ -49,6 +50,9 @@ public:
     void SetStiffness(float stiffness);
     void SetSmoothness(float smoothness);
 
+    // Set NRICP-specific parameters
+    void SetNRICPParams(const NRICPParams& params);
+
     // Set progress callback
     void SetProgressCallback(ProgressCallback callback);
 
@@ -79,6 +83,15 @@ private:
     // Helper to transform a point by a 4x4 matrix
     static Vector3 TransformPoint(const Vector3& point, const Matrix4x4& matrix);
 
+    // NRICP deformation path
+    DeformationResult DeformNRICP();
+
+    // Create a copy of target mesh with vertices in morph local space
+    std::shared_ptr<Mesh> CreateTargetMeshInMorphSpace() const;
+
+    // Find the closest source mesh vertex to a given position
+    static int FindClosestVertex(const std::vector<Vector3>& vertices, const Vector3& point);
+
     // Source mesh, target mesh, and correspondences
     std::shared_ptr<Mesh> sourceMesh_;
     std::shared_ptr<Mesh> targetMesh_;
@@ -90,6 +103,7 @@ private:
     DeformationAlgorithm kernelType_;
     float stiffness_;
     float smoothness_;
+    NRICPParams nricpParams_;
 
     // Progress tracking
     ProgressCallback progressCallback_;

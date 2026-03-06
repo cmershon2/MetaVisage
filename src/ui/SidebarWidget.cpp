@@ -39,11 +39,26 @@ SidebarWidget::SidebarWidget(QWidget *parent)
       pointSizeSlider_(nullptr),
       symmetryCheckBox_(nullptr),
       symmetryAxisCombo_(nullptr),
+      algorithmCombo_(nullptr),
+      rbfParamsWidget_(nullptr),
+      nricpParamsWidget_(nullptr),
       stiffnessSlider_(nullptr),
       smoothnessSlider_(nullptr),
       stiffnessValueLabel_(nullptr),
       smoothnessValueLabel_(nullptr),
       kernelTypeCombo_(nullptr),
+      nricpAlphaInitialSlider_(nullptr),
+      nricpAlphaFinalSlider_(nullptr),
+      nricpStiffnessStepsSlider_(nullptr),
+      nricpIcpIterationsSlider_(nullptr),
+      nricpNormalThresholdSlider_(nullptr),
+      nricpLandmarkWeightSlider_(nullptr),
+      nricpAlphaInitialLabel_(nullptr),
+      nricpAlphaFinalLabel_(nullptr),
+      nricpStiffnessStepsLabel_(nullptr),
+      nricpIcpIterationsLabel_(nullptr),
+      nricpNormalThresholdLabel_(nullptr),
+      nricpLandmarkWeightLabel_(nullptr),
       processButton_(nullptr),
       cancelButton_(nullptr),
       progressBar_(nullptr),
@@ -577,8 +592,8 @@ void SidebarWidget::CreateMorphControls() {
 
     // Info label
     QLabel* info = new QLabel(
-        "Adjust deformation parameters and process the morph. "
-        "After processing, preview the result and accept or re-process."
+        "Select algorithm and adjust parameters. "
+        "NRICP provides best results for face wrapping."
     );
     info->setWordWrap(true);
     info->setStyleSheet("QLabel { color: #BDC3C7; }");
@@ -596,10 +611,97 @@ void SidebarWidget::CreateMorphControls() {
         "QComboBox::drop-down { border: none; }"
         "QComboBox QAbstractItemView { background-color: #34495E; color: white; selection-background-color: #3498DB; }";
 
-    // --- Parameters Group ---
-    QGroupBox* paramsGroup = new QGroupBox("Deformation Parameters");
-    paramsGroup->setStyleSheet(groupBoxStyle);
-    QVBoxLayout* paramsLayout = new QVBoxLayout(paramsGroup);
+    // --- Algorithm Selection ---
+    QGroupBox* algoGroup = new QGroupBox("Algorithm");
+    algoGroup->setStyleSheet(groupBoxStyle);
+    QVBoxLayout* algoLayout = new QVBoxLayout(algoGroup);
+
+    algorithmCombo_ = new QComboBox();
+    algorithmCombo_->setToolTip("Select the deformation algorithm");
+    algorithmCombo_->addItem("NRICP (Recommended)", static_cast<int>(DeformationAlgorithm::NRICP));
+    algorithmCombo_->addItem("RBF - Thin-Plate Spline", static_cast<int>(DeformationAlgorithm::RBF_TPS));
+    algorithmCombo_->addItem("RBF - Gaussian", static_cast<int>(DeformationAlgorithm::RBF_GAUSSIAN));
+    algorithmCombo_->addItem("RBF - Multiquadric", static_cast<int>(DeformationAlgorithm::RBF_MULTIQUADRIC));
+    algorithmCombo_->setCurrentIndex(0);
+    algorithmCombo_->setStyleSheet(comboStyle);
+    connect(algorithmCombo_, QOverload<int>::of(&QComboBox::currentIndexChanged),
+            this, &SidebarWidget::OnAlgorithmChanged);
+    algoLayout->addWidget(algorithmCombo_);
+
+    controlsLayout->addWidget(algoGroup);
+
+    // --- NRICP Parameters Group ---
+    nricpParamsWidget_ = new QWidget();
+    QVBoxLayout* nricpOuterLayout = new QVBoxLayout(nricpParamsWidget_);
+    nricpOuterLayout->setContentsMargins(0, 0, 0, 0);
+
+    QGroupBox* nricpGroup = new QGroupBox("NRICP Parameters");
+    nricpGroup->setStyleSheet(groupBoxStyle);
+    QVBoxLayout* nricpLayout = new QVBoxLayout(nricpGroup);
+
+    auto addNRICPSlider = [&](const QString& label, const QString& tooltip,
+                              QSlider*& slider, QLabel*& valueLabel,
+                              int min, int max, int defaultVal) {
+        QHBoxLayout* row = new QHBoxLayout();
+        QLabel* lbl = new QLabel(label);
+        lbl->setMinimumWidth(95);
+        row->addWidget(lbl);
+        slider = new QSlider(Qt::Horizontal);
+        slider->setToolTip(tooltip);
+        slider->setRange(min, max);
+        slider->setValue(defaultVal);
+        slider->setStyleSheet(sliderStyle);
+        row->addWidget(slider);
+        valueLabel = new QLabel();
+        valueLabel->setMinimumWidth(40);
+        valueLabel->setAlignment(Qt::AlignRight | Qt::AlignVCenter);
+        row->addWidget(valueLabel);
+        nricpLayout->addLayout(row);
+    };
+
+    addNRICPSlider("Stiffness Init:", "Initial stiffness (high=rigid start)",
+                   nricpAlphaInitialSlider_, nricpAlphaInitialLabel_, 1, 500, 100);
+    nricpAlphaInitialLabel_->setText("100");
+
+    addNRICPSlider("Stiffness Final:", "Final stiffness (low=flexible end)",
+                   nricpAlphaFinalSlider_, nricpAlphaFinalLabel_, 1, 100, 1);
+    nricpAlphaFinalLabel_->setText("1");
+
+    addNRICPSlider("Stiffness Steps:", "Number of coarse-to-fine levels",
+                   nricpStiffnessStepsSlider_, nricpStiffnessStepsLabel_, 1, 20, 5);
+    nricpStiffnessStepsLabel_->setText("5");
+
+    addNRICPSlider("ICP Iterations:", "ICP iterations per stiffness level",
+                   nricpIcpIterationsSlider_, nricpIcpIterationsLabel_, 1, 10, 3);
+    nricpIcpIterationsLabel_->setText("3");
+
+    addNRICPSlider("Normal Thresh:", "Max normal angle for correspondence (degrees)",
+                   nricpNormalThresholdSlider_, nricpNormalThresholdLabel_, 10, 180, 60);
+    nricpNormalThresholdLabel_->setText(QString::fromUtf8("60\u00B0"));
+
+    addNRICPSlider("Landmark Wt:", "Weight for user-defined landmark points",
+                   nricpLandmarkWeightSlider_, nricpLandmarkWeightLabel_, 1, 200, 10);
+    nricpLandmarkWeightLabel_->setText("10.0");
+
+    // Connect NRICP slider signals
+    connect(nricpAlphaInitialSlider_, &QSlider::valueChanged, this, &SidebarWidget::OnNRICPAlphaInitialChanged);
+    connect(nricpAlphaFinalSlider_, &QSlider::valueChanged, this, &SidebarWidget::OnNRICPAlphaFinalChanged);
+    connect(nricpStiffnessStepsSlider_, &QSlider::valueChanged, this, &SidebarWidget::OnNRICPStiffnessStepsChanged);
+    connect(nricpIcpIterationsSlider_, &QSlider::valueChanged, this, &SidebarWidget::OnNRICPIcpIterationsChanged);
+    connect(nricpNormalThresholdSlider_, &QSlider::valueChanged, this, &SidebarWidget::OnNRICPNormalThresholdChanged);
+    connect(nricpLandmarkWeightSlider_, &QSlider::valueChanged, this, &SidebarWidget::OnNRICPLandmarkWeightChanged);
+
+    nricpOuterLayout->addWidget(nricpGroup);
+    controlsLayout->addWidget(nricpParamsWidget_);
+
+    // --- RBF Parameters Group (hidden by default) ---
+    rbfParamsWidget_ = new QWidget();
+    QVBoxLayout* rbfOuterLayout = new QVBoxLayout(rbfParamsWidget_);
+    rbfOuterLayout->setContentsMargins(0, 0, 0, 0);
+
+    QGroupBox* rbfGroup = new QGroupBox("RBF Parameters");
+    rbfGroup->setStyleSheet(groupBoxStyle);
+    QVBoxLayout* rbfLayout = new QVBoxLayout(rbfGroup);
 
     // Stiffness slider
     QHBoxLayout* stiffLayout = new QHBoxLayout();
@@ -616,7 +718,7 @@ void SidebarWidget::CreateMorphControls() {
     stiffnessValueLabel_->setMinimumWidth(35);
     stiffnessValueLabel_->setAlignment(Qt::AlignRight | Qt::AlignVCenter);
     stiffLayout->addWidget(stiffnessValueLabel_);
-    paramsLayout->addLayout(stiffLayout);
+    rbfLayout->addLayout(stiffLayout);
 
     // Smoothness slider
     QHBoxLayout* smoothLayout = new QHBoxLayout();
@@ -633,30 +735,31 @@ void SidebarWidget::CreateMorphControls() {
     smoothnessValueLabel_->setMinimumWidth(35);
     smoothnessValueLabel_->setAlignment(Qt::AlignRight | Qt::AlignVCenter);
     smoothLayout->addWidget(smoothnessValueLabel_);
-    paramsLayout->addLayout(smoothLayout);
+    rbfLayout->addLayout(smoothLayout);
 
-    // Kernel type dropdown
+    // RBF Kernel type dropdown
     QHBoxLayout* kernelLayout = new QHBoxLayout();
     QLabel* kernelLabel = new QLabel("Kernel:");
     kernelLabel->setMinimumWidth(75);
     kernelLayout->addWidget(kernelLabel);
     kernelTypeCombo_ = new QComboBox();
-    kernelTypeCombo_->setToolTip("RBF interpolation kernel (TPS recommended for most cases)");
+    kernelTypeCombo_->setToolTip("RBF interpolation kernel");
     kernelTypeCombo_->addItem("Thin-Plate Spline", static_cast<int>(DeformationAlgorithm::RBF_TPS));
     kernelTypeCombo_->addItem("Gaussian", static_cast<int>(DeformationAlgorithm::RBF_GAUSSIAN));
     kernelTypeCombo_->addItem("Multiquadric", static_cast<int>(DeformationAlgorithm::RBF_MULTIQUADRIC));
     kernelTypeCombo_->setCurrentIndex(0);
     kernelTypeCombo_->setStyleSheet(comboStyle);
     kernelLayout->addWidget(kernelTypeCombo_);
-    paramsLayout->addLayout(kernelLayout);
+    rbfLayout->addLayout(kernelLayout);
 
-    // Connect parameter change signals
     connect(stiffnessSlider_, &QSlider::valueChanged, this, &SidebarWidget::OnStiffnessChanged);
     connect(smoothnessSlider_, &QSlider::valueChanged, this, &SidebarWidget::OnSmoothnessChanged);
     connect(kernelTypeCombo_, QOverload<int>::of(&QComboBox::currentIndexChanged),
             this, &SidebarWidget::OnKernelTypeChanged);
 
-    controlsLayout->addWidget(paramsGroup);
+    rbfOuterLayout->addWidget(rbfGroup);
+    rbfParamsWidget_->setVisible(false); // Hidden by default (NRICP is default)
+    controlsLayout->addWidget(rbfParamsWidget_);
 
     // --- Processing Group ---
     QGroupBox* processGroup = new QGroupBox("Processing");
@@ -681,7 +784,7 @@ void SidebarWidget::CreateMorphControls() {
         "    background-color: #555;"
         "}"
     );
-    processButton_->setToolTip("Run RBF deformation to morph the mesh");
+    processButton_->setToolTip("Run deformation to morph the mesh");
     connect(processButton_, &QPushButton::clicked, this, &SidebarWidget::ProcessMorphRequested);
     processLayout->addWidget(processButton_);
 
@@ -814,9 +917,19 @@ void SidebarWidget::CreateMorphControls() {
         "}"
     );
     connect(resetDefaultsButton_, &QPushButton::clicked, this, [this]() {
-        if (stiffnessSlider_) stiffnessSlider_->setValue(50);
-        if (smoothnessSlider_) smoothnessSlider_->setValue(50);
-        if (kernelTypeCombo_) kernelTypeCombo_->setCurrentIndex(0);
+        // Reset based on currently visible algorithm panel
+        if (nricpParamsWidget_ && nricpParamsWidget_->isVisible()) {
+            if (nricpAlphaInitialSlider_) nricpAlphaInitialSlider_->setValue(100);
+            if (nricpAlphaFinalSlider_) nricpAlphaFinalSlider_->setValue(1);
+            if (nricpStiffnessStepsSlider_) nricpStiffnessStepsSlider_->setValue(5);
+            if (nricpIcpIterationsSlider_) nricpIcpIterationsSlider_->setValue(3);
+            if (nricpNormalThresholdSlider_) nricpNormalThresholdSlider_->setValue(60);
+            if (nricpLandmarkWeightSlider_) nricpLandmarkWeightSlider_->setValue(10);
+        } else {
+            if (stiffnessSlider_) stiffnessSlider_->setValue(50);
+            if (smoothnessSlider_) smoothnessSlider_->setValue(50);
+            if (kernelTypeCombo_) kernelTypeCombo_->setCurrentIndex(0);
+        }
     });
     actionsLayout->addWidget(resetDefaultsButton_);
 
@@ -1082,9 +1195,18 @@ void SidebarWidget::ClearControls() {
     matchStatusLabel_ = nullptr; pointListScroll_ = nullptr; pointListContent_ = nullptr;
     clearAllPointsButton_ = nullptr; pointSizeSlider_ = nullptr;
     symmetryCheckBox_ = nullptr; symmetryAxisCombo_ = nullptr;
+    algorithmCombo_ = nullptr;
+    rbfParamsWidget_ = nullptr; nricpParamsWidget_ = nullptr;
     stiffnessSlider_ = nullptr; smoothnessSlider_ = nullptr;
     stiffnessValueLabel_ = nullptr; smoothnessValueLabel_ = nullptr;
-    kernelTypeCombo_ = nullptr; processButton_ = nullptr; cancelButton_ = nullptr;
+    kernelTypeCombo_ = nullptr;
+    nricpAlphaInitialSlider_ = nullptr; nricpAlphaFinalSlider_ = nullptr;
+    nricpStiffnessStepsSlider_ = nullptr; nricpIcpIterationsSlider_ = nullptr;
+    nricpNormalThresholdSlider_ = nullptr; nricpLandmarkWeightSlider_ = nullptr;
+    nricpAlphaInitialLabel_ = nullptr; nricpAlphaFinalLabel_ = nullptr;
+    nricpStiffnessStepsLabel_ = nullptr; nricpIcpIterationsLabel_ = nullptr;
+    nricpNormalThresholdLabel_ = nullptr; nricpLandmarkWeightLabel_ = nullptr;
+    processButton_ = nullptr; cancelButton_ = nullptr;
     progressBar_ = nullptr; progressLabel_ = nullptr; previewModeCombo_ = nullptr;
     acceptButton_ = nullptr; reprocessButton_ = nullptr; resetDefaultsButton_ = nullptr;
     brushButtonGroup_ = nullptr; smoothBrushButton_ = nullptr; grabBrushButton_ = nullptr;
@@ -1343,9 +1465,18 @@ void SidebarWidget::SetMorphProcessing(bool processing) {
         progressBar_->setVisible(processing);
         if (processing) progressBar_->setValue(0);
     }
+    if (algorithmCombo_) algorithmCombo_->setEnabled(!processing);
+    // RBF controls
     if (stiffnessSlider_) stiffnessSlider_->setEnabled(!processing);
     if (smoothnessSlider_) smoothnessSlider_->setEnabled(!processing);
     if (kernelTypeCombo_) kernelTypeCombo_->setEnabled(!processing);
+    // NRICP controls
+    if (nricpAlphaInitialSlider_) nricpAlphaInitialSlider_->setEnabled(!processing);
+    if (nricpAlphaFinalSlider_) nricpAlphaFinalSlider_->setEnabled(!processing);
+    if (nricpStiffnessStepsSlider_) nricpStiffnessStepsSlider_->setEnabled(!processing);
+    if (nricpIcpIterationsSlider_) nricpIcpIterationsSlider_->setEnabled(!processing);
+    if (nricpNormalThresholdSlider_) nricpNormalThresholdSlider_->setEnabled(!processing);
+    if (nricpLandmarkWeightSlider_) nricpLandmarkWeightSlider_->setEnabled(!processing);
     if (resetDefaultsButton_) resetDefaultsButton_->setEnabled(!processing);
     if (acceptButton_) acceptButton_->setEnabled(false);
     if (reprocessButton_) reprocessButton_->setEnabled(false);
@@ -1380,6 +1511,81 @@ void SidebarWidget::OnSpinBoxValueChanged() {
     transform.SetScale(newScale);
 
     emit TransformValuesChanged();
+}
+
+void SidebarWidget::OnAlgorithmChanged(int index) {
+    if (!algorithmCombo_) return;
+
+    DeformationAlgorithm algo = static_cast<DeformationAlgorithm>(algorithmCombo_->itemData(index).toInt());
+    bool isNRICP = (algo == DeformationAlgorithm::NRICP);
+
+    if (nricpParamsWidget_) nricpParamsWidget_->setVisible(isNRICP);
+    if (rbfParamsWidget_) rbfParamsWidget_->setVisible(!isNRICP);
+
+    if (project_) {
+        project_->GetMorphData().algorithm = algo;
+    }
+    emit MorphParameterChanged();
+}
+
+void SidebarWidget::OnNRICPAlphaInitialChanged(int value) {
+    if (nricpAlphaInitialLabel_) {
+        nricpAlphaInitialLabel_->setText(QString::number(value));
+    }
+    if (project_) {
+        project_->GetMorphData().nricpAlphaInitial = static_cast<float>(value);
+    }
+    emit MorphParameterChanged();
+}
+
+void SidebarWidget::OnNRICPAlphaFinalChanged(int value) {
+    if (nricpAlphaFinalLabel_) {
+        nricpAlphaFinalLabel_->setText(QString::number(value));
+    }
+    if (project_) {
+        project_->GetMorphData().nricpAlphaFinal = static_cast<float>(value);
+    }
+    emit MorphParameterChanged();
+}
+
+void SidebarWidget::OnNRICPStiffnessStepsChanged(int value) {
+    if (nricpStiffnessStepsLabel_) {
+        nricpStiffnessStepsLabel_->setText(QString::number(value));
+    }
+    if (project_) {
+        project_->GetMorphData().nricpStiffnessSteps = value;
+    }
+    emit MorphParameterChanged();
+}
+
+void SidebarWidget::OnNRICPIcpIterationsChanged(int value) {
+    if (nricpIcpIterationsLabel_) {
+        nricpIcpIterationsLabel_->setText(QString::number(value));
+    }
+    if (project_) {
+        project_->GetMorphData().nricpIcpIterations = value;
+    }
+    emit MorphParameterChanged();
+}
+
+void SidebarWidget::OnNRICPNormalThresholdChanged(int value) {
+    if (nricpNormalThresholdLabel_) {
+        nricpNormalThresholdLabel_->setText(QString::number(value) + QString::fromUtf8("\u00B0"));
+    }
+    if (project_) {
+        project_->GetMorphData().nricpNormalThreshold = static_cast<float>(value);
+    }
+    emit MorphParameterChanged();
+}
+
+void SidebarWidget::OnNRICPLandmarkWeightChanged(int value) {
+    if (nricpLandmarkWeightLabel_) {
+        nricpLandmarkWeightLabel_->setText(QString::number(static_cast<float>(value), 'f', 1));
+    }
+    if (project_) {
+        project_->GetMorphData().nricpLandmarkWeight = static_cast<float>(value);
+    }
+    emit MorphParameterChanged();
 }
 
 } // namespace MetaVisage

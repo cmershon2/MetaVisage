@@ -120,6 +120,14 @@ SerializationResult ProjectSerializer::Load(Project& project, const QString& fil
         morphData.hasDeformedData = loaded.hasDeformedData;
         morphData.savedDeformedVertices = std::move(loaded.savedDeformedVertices);
         morphData.savedDeformedNormals = std::move(loaded.savedDeformedNormals);
+        // NRICP parameters
+        morphData.nricpStiffnessSteps = loaded.nricpStiffnessSteps;
+        morphData.nricpAlphaInitial = loaded.nricpAlphaInitial;
+        morphData.nricpAlphaFinal = loaded.nricpAlphaFinal;
+        morphData.nricpIcpIterations = loaded.nricpIcpIterations;
+        morphData.nricpNormalThreshold = loaded.nricpNormalThreshold;
+        morphData.nricpLandmarkWeight = loaded.nricpLandmarkWeight;
+        morphData.nricpEpsilon = loaded.nricpEpsilon;
     }
 
     result.success = true;
@@ -206,6 +214,15 @@ QJsonObject ProjectSerializer::SerializeMorphData(const MorphData& data) const {
     obj["previewMode"] = static_cast<int>(data.previewMode);
     obj["isProcessed"] = data.isProcessed;
     obj["isAccepted"] = data.isAccepted;
+
+    // NRICP parameters
+    obj["nricpStiffnessSteps"] = data.nricpStiffnessSteps;
+    obj["nricpAlphaInitial"] = static_cast<double>(data.nricpAlphaInitial);
+    obj["nricpAlphaFinal"] = static_cast<double>(data.nricpAlphaFinal);
+    obj["nricpIcpIterations"] = data.nricpIcpIterations;
+    obj["nricpNormalThreshold"] = static_cast<double>(data.nricpNormalThreshold);
+    obj["nricpLandmarkWeight"] = static_cast<double>(data.nricpLandmarkWeight);
+    obj["nricpEpsilon"] = static_cast<double>(data.nricpEpsilon);
 
     // Save deformed mesh vertex data if it exists
     if (data.deformedMorphMesh && data.isProcessed) {
@@ -330,7 +347,8 @@ PointReferenceData ProjectSerializer::DeserializePointReferenceData(const QJsonO
 
 MorphData ProjectSerializer::DeserializeMorphData(const QJsonObject& obj) const {
     MorphData data;
-    data.algorithm = static_cast<DeformationAlgorithm>(obj["algorithm"].toInt(0));
+    data.algorithm = static_cast<DeformationAlgorithm>(obj["algorithm"].toInt(
+        static_cast<int>(DeformationAlgorithm::NRICP)));
     data.stiffness = static_cast<float>(obj["stiffness"].toDouble(0.5));
     data.smoothness = static_cast<float>(obj["smoothness"].toDouble(0.5));
     data.previewMode = static_cast<MorphPreviewMode>(obj["previewMode"].toInt(0));
@@ -338,6 +356,15 @@ MorphData ProjectSerializer::DeserializeMorphData(const QJsonObject& obj) const 
     data.isAccepted = obj["isAccepted"].toBool(false);
     data.maxDisplacement = static_cast<float>(obj["maxDisplacement"].toDouble(0.0));
     data.avgDisplacement = static_cast<float>(obj["avgDisplacement"].toDouble(0.0));
+
+    // NRICP parameters (backward compatible - defaults match MorphData constructor)
+    data.nricpStiffnessSteps = obj["nricpStiffnessSteps"].toInt(5);
+    data.nricpAlphaInitial = static_cast<float>(obj["nricpAlphaInitial"].toDouble(100.0));
+    data.nricpAlphaFinal = static_cast<float>(obj["nricpAlphaFinal"].toDouble(1.0));
+    data.nricpIcpIterations = obj["nricpIcpIterations"].toInt(3);
+    data.nricpNormalThreshold = static_cast<float>(obj["nricpNormalThreshold"].toDouble(60.0));
+    data.nricpLandmarkWeight = static_cast<float>(obj["nricpLandmarkWeight"].toDouble(10.0));
+    data.nricpEpsilon = static_cast<float>(obj["nricpEpsilon"].toDouble(1e-4));
 
     // Restore deformed mesh vertex data if present
     if (obj.contains("deformedVertices") && obj.contains("deformedNormals")) {

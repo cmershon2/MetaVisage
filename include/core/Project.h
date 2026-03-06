@@ -51,13 +51,24 @@ enum class DeformationAlgorithm {
     RBF_TPS,
     RBF_GAUSSIAN,
     RBF_MULTIQUADRIC,
-    ARAP
+    ARAP,
+    NRICP
 };
 
 struct MorphData {
     DeformationAlgorithm algorithm;
     float stiffness;
     float smoothness;
+
+    // NRICP parameters (only used when algorithm == NRICP)
+    int nricpStiffnessSteps;       // Number of coarse-to-fine levels
+    float nricpAlphaInitial;       // Initial stiffness weight (high = rigid)
+    float nricpAlphaFinal;         // Final stiffness weight (low = flexible)
+    int nricpIcpIterations;        // ICP iterations per stiffness level
+    float nricpNormalThreshold;    // Max normal angle for correspondence (degrees)
+    float nricpLandmarkWeight;     // Weight for user-defined landmarks
+    float nricpEpsilon;            // Convergence threshold
+
     std::shared_ptr<Mesh> originalMorphMesh;
     std::shared_ptr<Mesh> deformedMorphMesh;
     bool isProcessed;
@@ -72,8 +83,12 @@ struct MorphData {
     std::vector<Vector3> savedDeformedVertices;
     std::vector<Vector3> savedDeformedNormals;
 
-    MorphData() : algorithm(DeformationAlgorithm::RBF_TPS),
+    MorphData() : algorithm(DeformationAlgorithm::NRICP),
                   stiffness(0.5f), smoothness(0.5f),
+                  nricpStiffnessSteps(5),
+                  nricpAlphaInitial(100.0f), nricpAlphaFinal(1.0f),
+                  nricpIcpIterations(3), nricpNormalThreshold(60.0f),
+                  nricpLandmarkWeight(10.0f), nricpEpsilon(1e-4f),
                   isProcessed(false), isAccepted(false),
                   previewMode(MorphPreviewMode::Deformed),
                   maxDisplacement(0.0f), avgDisplacement(0.0f),

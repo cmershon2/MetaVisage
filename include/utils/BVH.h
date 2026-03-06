@@ -23,6 +23,18 @@ struct BVHNode {
     bool IsLeaf() const { return !left && !right; }
 };
 
+// Result of a closest-point-on-surface query
+struct BVHClosestPointResult {
+    Vector3 point;        // Closest point on surface
+    Vector3 normal;       // Surface normal at closest point (face normal)
+    float distanceSq;     // Squared distance from query to closest point
+    int triangleIndex;    // Which triangle contains the closest point
+    bool found;
+
+    BVHClosestPointResult() : distanceSq(std::numeric_limits<float>::max()),
+                               triangleIndex(-1), found(false) {}
+};
+
 class BVH {
 public:
     BVH();
@@ -37,7 +49,15 @@ public:
                       float& outT, int& outTriangleIndex,
                       unsigned int& outI0, unsigned int& outI1, unsigned int& outI2) const;
 
+    // Closest point on surface query - returns nearest surface point to query point
+    BVHClosestPointResult FindClosestPoint(const Vector3& queryPoint,
+                                            const std::vector<Vector3>& vertices) const;
+
     bool IsBuilt() const { return root_ != nullptr; }
+
+    // Closest point on a triangle to a query point (Voronoi region method)
+    static Vector3 ClosestPointOnTriangle(const Vector3& p,
+                                           const Vector3& a, const Vector3& b, const Vector3& c);
 
 private:
     static const int MAX_LEAF_TRIANGLES = 4;
@@ -60,6 +80,14 @@ private:
                           float& closestT, int& closestTriIndex,
                           unsigned int& closestI0, unsigned int& closestI1,
                           unsigned int& closestI2) const;
+
+    // Recursive closest-point BVH traversal
+    void FindClosestPointNode(const BVHNode* node, const Vector3& queryPoint,
+                               const std::vector<Vector3>& vertices,
+                               BVHClosestPointResult& best) const;
+
+    // Squared distance from point to AABB (for BVH pruning)
+    static float PointAABBDistanceSq(const Vector3& point, const BoundingBox& box);
 
     static bool RayTriangleIntersect(const Ray& ray,
                                       const Vector3& v0, const Vector3& v1, const Vector3& v2,
