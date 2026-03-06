@@ -1,4 +1,5 @@
 #include "utils/RayCaster.h"
+#include "utils/BVH.h"
 #include <cmath>
 #include <limits>
 
@@ -200,6 +201,49 @@ Vector3 RayCaster::WorldToScreen(const Vector3& worldPos,
     float depth = (clipPos.z + 1.0f) * 0.5f;
 
     return Vector3(screenX, screenY, depth);
+}
+
+RaycastHit RayCaster::RayIntersectMeshBVH(const Ray& ray, const Mesh& mesh,
+                                           const Transform& transform,
+                                           const BVH& bvh) {
+    RaycastHit result;
+    result.hit = false;
+    result.distance = std::numeric_limits<float>::max();
+
+    const auto& vertices = mesh.GetVertices();
+    if (vertices.empty()) return result;
+
+    // Transform ray into mesh's local space
+    Matrix4x4 modelMatrix = transform.GetMatrix();
+    Matrix4x4 invModel = modelMatrix.Inverse();
+
+    Vector3 localOrigin = TransformPoint(ray.origin, invModel);
+    Vector3 localDir = TransformDirection(ray.direction, invModel).Normalized();
+    Ray localRay(localOrigin, localDir);
+
+    float t;
+    int triIndex;
+    unsigned int i0, i1, i2;
+
+    if (bvh.RayIntersect(localRay, vertices, t, triIndex, i0, i1, i2)) {
+        result.hit = true;
+        result.distance = t;
+        result.triangleIndex = triIndex;
+
+        Vector3 localHitPos = localRay.PointAt(t);
+        result.position = TransformPoint(localHitPos, modelMatrix);
+
+        // Find nearest vertex
+        float d0 = (localHitPos - vertices[i0]).Length();
+        float d1 = (localHitPos - vertices[i1]).Length();
+        float d2 = (localHitPos - vertices[i2]).Length();
+
+        if (d0 <= d1 && d0 <= d2) result.vertexIndex = static_cast<int>(i0);
+        else if (d1 <= d0 && d1 <= d2) result.vertexIndex = static_cast<int>(i1);
+        else result.vertexIndex = static_cast<int>(i2);
+    }
+
+    return result;
 }
 
 } // namespace MetaVisage

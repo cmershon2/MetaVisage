@@ -8,6 +8,8 @@
 
 namespace MetaVisage {
 
+class BVH;
+
 class RayCaster {
 public:
     // Create a ray from screen coordinates using camera matrices
@@ -21,6 +23,11 @@ public:
     // Returns the closest hit point
     static RaycastHit RayIntersectMesh(const Ray& ray, const Mesh& mesh,
                                        const Transform& transform);
+
+    // BVH-accelerated ray-mesh intersection (O(log n) instead of O(n))
+    static RaycastHit RayIntersectMeshBVH(const Ray& ray, const Mesh& mesh,
+                                           const Transform& transform,
+                                           const BVH& bvh);
 
     // Find the nearest vertex index to a world-space position on a mesh
     static int FindNearestVertex(const Vector3& worldPos, const Mesh& mesh,

@@ -2,6 +2,8 @@
 #include "rendering/Renderer.h"
 #include "core/Project.h"
 #include "utils/RayCaster.h"
+#include "utils/BVH.h"
+#include "utils/SpatialHash.h"
 #include "sculpting/SculptBrush.h"
 #include "sculpting/SmoothBrush.h"
 #include "sculpting/GrabBrush.h"
@@ -37,7 +39,9 @@ ViewportWidget::ViewportWidget(QWidget *parent)
       brushOnMesh_(false),
       sculptSymmetryEnabled_(false),
       sculptSymmetryAxis_(Axis::X),
-      showTargetOverlay_(false) {
+      showTargetOverlay_(false),
+      frameCount_(0),
+      currentFPS_(0.0f) {
 
     setFocusPolicy(Qt::StrongFocus);
     setMouseTracking(true);
@@ -98,6 +102,14 @@ void ViewportWidget::InvalidateMesh(const Mesh* mesh) {
     if (renderer_) {
         renderer_->InvalidateMesh(mesh);
     }
+}
+
+void ViewportWidget::RefreshMeshGPUData(Mesh* mesh) {
+    if (!mesh || !renderer_) return;
+    makeCurrent();
+    renderer_->UpdateMeshVertices(mesh);
+    doneCurrent();
+    update();
 }
 
 void ViewportWidget::UploadHeatMapColors(const Mesh* mesh, const std::vector<float>& displacements, float maxDisplacement) {
@@ -250,7 +262,9 @@ void ViewportWidget::HandleSculptPress(QMouseEvent *event) {
 
     // Use the morph mesh transform (matches how renderer draws the deformed mesh)
     Transform transform = GetSculptTransform();
-    RaycastHit hit = RayCaster::RayIntersectMesh(ray, *mesh, transform);
+    BVH* bvh = mesh->GetBVH();
+    RaycastHit hit = bvh ? RayCaster::RayIntersectMeshBVH(ray, *mesh, transform, *bvh)
+                         : RayCaster::RayIntersectMesh(ray, *mesh, transform);
 
     if (hit.hit) {
         isSculpting_ = true;
@@ -260,7 +274,9 @@ void ViewportWidget::HandleSculptPress(QMouseEvent *event) {
         currentStroke_ = BrushStroke();
 
         // Record original positions of vertices that will be affected
-        auto affected = brush->GetAffectedVertices(*mesh, transform, hit.position, brush->GetRadius());
+        SpatialHash* sh = mesh->GetSpatialHash(brush->GetRadius() * 2.0f);
+        auto affected = sh ? brush->GetAffectedVertices(*mesh, transform, hit.position, brush->GetRadius(), *sh)
+                           : brush->GetAffectedVertices(*mesh, transform, hit.position, brush->GetRadius());
         const auto& vertices = mesh->GetVertices();
         for (const auto& av : affected) {
             if (av.index >= 0 && av.index < static_cast<int>(vertices.size())) {
@@ -299,7 +315,8 @@ void ViewportWidget::HandleSculptPress(QMouseEvent *event) {
                     case Axis::Z: mirroredNormal.z = -mirroredNormal.z; break;
                 }
                 // Record mirrored affected vertices
-                auto mirroredAffected = brush->GetAffectedVertices(*mesh, transform, mirroredPos, brush->GetRadius());
+                auto mirroredAffected = sh ? brush->GetAffectedVertices(*mesh, transform, mirroredPos, brush->GetRadius(), *sh)
+                                           : brush->GetAffectedVertices(*mesh, transform, mirroredPos, brush->GetRadius());
                 for (const auto& mav : mirroredAffected) {
                     if (mav.index >= 0 && mav.index < static_cast<int>(vertices.size())) {
                         currentStroke_.RecordVertex(mav.index, vertices[mav.index]);
@@ -354,7 +371,9 @@ void ViewportWidget::HandleSculptMove(QMouseEvent *event, const QPoint& delta) {
             worldNormal = planeNormal;
         } else {
             // Smooth brush: raycast against mesh surface
-            RaycastHit hit = RayCaster::RayIntersectMesh(ray, *mesh, transform);
+            BVH* bvh = mesh->GetBVH();
+            RaycastHit hit = bvh ? RayCaster::RayIntersectMeshBVH(ray, *mesh, transform, *bvh)
+                                 : RayCaster::RayIntersectMesh(ray, *mesh, transform);
 
             if (hit.hit) {
                 brushCenter = hit.position;
@@ -363,7 +382,9 @@ void ViewportWidget::HandleSculptMove(QMouseEvent *event, const QPoint& delta) {
             mouseDelta = brushCenter - lastBrushWorldPos_;
 
             // Record any new vertices that may be affected
-            auto affected = brush->GetAffectedVertices(*mesh, transform, brushCenter, brush->GetRadius());
+            SpatialHash* sh = mesh->GetSpatialHash(brush->GetRadius() * 2.0f);
+            auto affected = sh ? brush->GetAffectedVertices(*mesh, transform, brushCenter, brush->GetRadius(), *sh)
+                               : brush->GetAffectedVertices(*mesh, transform, brushCenter, brush->GetRadius());
             const auto& vertices = mesh->GetVertices();
             for (const auto& av : affected) {
                 if (av.index >= 0 && av.index < static_cast<int>(vertices.size())) {
@@ -404,7 +425,9 @@ void ViewportWidget::HandleSculptMove(QMouseEvent *event, const QPoint& delta) {
                 case Axis::Z: mirroredDelta.z = -mirroredDelta.z; break;
             }
             // Record mirrored affected vertices for undo
-            auto mirroredAffected = brush->GetAffectedVertices(*mesh, transform, mirroredCenter, brush->GetRadius());
+            SpatialHash* shMirror = mesh->GetSpatialHash(brush->GetRadius() * 2.0f);
+            auto mirroredAffected = shMirror ? brush->GetAffectedVertices(*mesh, transform, mirroredCenter, brush->GetRadius(), *shMirror)
+                                             : brush->GetAffectedVertices(*mesh, transform, mirroredCenter, brush->GetRadius());
             const auto& verts = mesh->GetVertices();
             for (const auto& mav : mirroredAffected) {
                 if (mav.index >= 0 && mav.index < static_cast<int>(verts.size())) {
@@ -444,7 +467,11 @@ void ViewportWidget::HandleSculptRelease() {
     }
 
     isSculpting_ = false;
-    // currentStroke_ contains the undo data (can be used by undo system later)
+
+    // Emit undo data if the stroke modified any vertices
+    if (!currentStroke_.IsEmpty()) {
+        emit SculptStrokeCompleted(currentStroke_);
+    }
 }
 
 void ViewportWidget::UpdateBrushCursor(float screenX, float screenY) {
@@ -458,7 +485,9 @@ void ViewportWidget::UpdateBrushCursor(float screenX, float screenY) {
     Ray ray = RayCaster::ScreenToRay(screenX, screenY, width(), height(), *camera_);
     Transform transform = GetSculptTransform();
 
-    RaycastHit hit = RayCaster::RayIntersectMesh(ray, *mesh, transform);
+    BVH* bvh = mesh->GetBVH();
+    RaycastHit hit = bvh ? RayCaster::RayIntersectMeshBVH(ray, *mesh, transform, *bvh)
+                         : RayCaster::RayIntersectMesh(ray, *mesh, transform);
 
     if (hit.hit) {
         Vector3 worldNormal = ComputeWorldNormal(*mesh, transform, hit.vertexIndex);
@@ -502,6 +531,17 @@ void ViewportWidget::initializeGL() {
 void ViewportWidget::paintGL() {
     if (renderer_) {
         renderer_->Render(*camera_, width(), height(), project_);
+    }
+
+    // FPS counter
+    frameCount_++;
+    if (!fpsTimer_.isValid()) {
+        fpsTimer_.start();
+    } else if (fpsTimer_.elapsed() >= 500) {
+        currentFPS_ = frameCount_ * 1000.0f / fpsTimer_.elapsed();
+        emit FPSUpdated(currentFPS_);
+        frameCount_ = 0;
+        fpsTimer_.restart();
     }
 
     // Draw overlays with QPainter
@@ -623,6 +663,8 @@ void ViewportWidget::mousePressEvent(QMouseEvent *event) {
                 project_->GetCurrentStage() == WorkflowStage::Alignment) {
                 isTransforming_ = true;
                 transformStartPos_ = event->pos();
+                // Capture transform state for undo
+                transformBeforeState_ = project_->GetTargetMesh().transform;
             }
         }
     }
@@ -654,11 +696,17 @@ void ViewportWidget::HandlePointClick(QMouseEvent *event) {
     RaycastHit hit;
 
     if (side == PointSide::Target && project_->GetTargetMesh().isLoaded && project_->GetTargetMesh().mesh) {
-        hit = RayCaster::RayIntersectMesh(ray, *project_->GetTargetMesh().mesh,
-                                           project_->GetTargetMesh().transform);
+        BVH* bvh = project_->GetTargetMesh().mesh->GetBVH();
+        hit = bvh ? RayCaster::RayIntersectMeshBVH(ray, *project_->GetTargetMesh().mesh,
+                                                     project_->GetTargetMesh().transform, *bvh)
+                  : RayCaster::RayIntersectMesh(ray, *project_->GetTargetMesh().mesh,
+                                                 project_->GetTargetMesh().transform);
     } else if (side == PointSide::Morph && project_->GetMorphMesh().isLoaded && project_->GetMorphMesh().mesh) {
-        hit = RayCaster::RayIntersectMesh(ray, *project_->GetMorphMesh().mesh,
-                                           project_->GetMorphMesh().transform);
+        BVH* bvh = project_->GetMorphMesh().mesh->GetBVH();
+        hit = bvh ? RayCaster::RayIntersectMeshBVH(ray, *project_->GetMorphMesh().mesh,
+                                                     project_->GetMorphMesh().transform, *bvh)
+                  : RayCaster::RayIntersectMesh(ray, *project_->GetMorphMesh().mesh,
+                                                 project_->GetMorphMesh().transform);
     }
 
     if (hit.hit) {
@@ -769,6 +817,11 @@ void ViewportWidget::mouseReleaseEvent(QMouseEvent *event) {
             HandleSculptRelease();
         } else if (isTransforming_) {
             isTransforming_ = false;
+            // Emit undo signal with before/after transform state
+            if (project_ && project_->GetTargetMesh().isLoaded) {
+                Transform afterState = project_->GetTargetMesh().transform;
+                emit TransformApplied(transformBeforeState_, afterState);
+            }
             // Keep the transform mode active so user can continue transforming
         }
     }

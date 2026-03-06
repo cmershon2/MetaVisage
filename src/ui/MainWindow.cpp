@@ -3,10 +3,14 @@
 #include "ui/ViewportContainer.h"
 #include "ui/SidebarWidget.h"
 #include "ui/ExportDialog.h"
+#include "ui/ShortcutsDialog.h"
 #include "utils/RayCaster.h"
+#include "utils/Logger.h"
+#include "utils/ErrorHelper.h"
 #include "deformation/MeshDeformer.h"
 #include "io/MeshExporter.h"
 #include "io/ProjectSerializer.h"
+#include "core/UndoActions.h"
 #include <QHBoxLayout>
 #include <QWidget>
 #include <QMenu>
@@ -93,6 +97,11 @@ MainWindow::MainWindow(QWidget *parent)
       viewportContainer_(nullptr),
       sidebarWidget_(nullptr),
       project_(std::make_unique<Project>()),
+      undoStack_(std::make_unique<UndoStack>()),
+      undoAction_(nullptr),
+      redoAction_(nullptr),
+      statsTimer_(nullptr),
+      currentFPS_(0.0f),
       morphThread_(nullptr),
       morphWorker_(nullptr) {
 
@@ -105,8 +114,14 @@ MainWindow::MainWindow(QWidget *parent)
     CreateStatusBar();
     CreateCentralWidget();
 
+    // Stats timer for updating FPS and vertex/face counts
+    statsTimer_ = new QTimer(this);
+    connect(statsTimer_, &QTimer::timeout, this, &MainWindow::UpdateStatsDisplay);
+    statsTimer_->start(500);
+
     UpdateWindowTitle();
     UpdateStatusBar();
+    UpdateUndoRedoState();
 }
 
 MainWindow::~MainWindow() {
@@ -161,13 +176,13 @@ void MainWindow::CreateMenus() {
     // Edit Menu
     QMenu* editMenu = menuBar_->addMenu(tr("&Edit"));
 
-    QAction* undoAction = editMenu->addAction(tr("&Undo"));
-    undoAction->setShortcut(QKeySequence::Undo);
-    connect(undoAction, &QAction::triggered, this, &MainWindow::OnUndo);
+    undoAction_ = editMenu->addAction(tr("&Undo"));
+    undoAction_->setShortcut(QKeySequence::Undo);
+    connect(undoAction_, &QAction::triggered, this, &MainWindow::OnUndo);
 
-    QAction* redoAction = editMenu->addAction(tr("&Redo"));
-    redoAction->setShortcut(QKeySequence::Redo);
-    connect(redoAction, &QAction::triggered, this, &MainWindow::OnRedo);
+    redoAction_ = editMenu->addAction(tr("&Redo"));
+    redoAction_->setShortcut(QKeySequence::Redo);
+    connect(redoAction_, &QAction::triggered, this, &MainWindow::OnRedo);
 
     editMenu->addSeparator();
 
@@ -345,6 +360,16 @@ void MainWindow::ConnectViewportSignals() {
     // Connect finalize button
     connect(sidebarWidget_, &SidebarWidget::FinalizeRequested,
             this, &MainWindow::OnFinalizeRequested);
+
+    // Connect undo signals from viewport
+    connect(viewportContainer_->GetPrimaryViewport(), &ViewportWidget::TransformApplied,
+            this, &MainWindow::OnTransformApplied);
+    connect(viewportContainer_->GetPrimaryViewport(), &ViewportWidget::SculptStrokeCompleted,
+            this, &MainWindow::OnSculptStrokeCompleted);
+
+    // Connect FPS signal
+    connect(viewportContainer_->GetPrimaryViewport(), &ViewportWidget::FPSUpdated,
+            this, [this](float fps) { currentFPS_ = fps; });
 }
 
 void MainWindow::UpdateWindowTitle() {
@@ -377,12 +402,14 @@ void MainWindow::UpdateStatusBar() {
 // File menu slots
 void MainWindow::OnNewProject() {
     project_ = std::make_unique<Project>();
+    undoStack_->Clear();
     viewportContainer_->SetProject(project_.get());
     sidebarWidget_->SetProject(project_.get());
     viewportContainer_->SetDualMode(false);
     sidebarWidget_->SetStage(WorkflowStage::Alignment);
     UpdateWindowTitle();
     UpdateStatusBar();
+    UpdateUndoRedoState();
 }
 
 void MainWindow::OnOpenProject() {
@@ -461,8 +488,8 @@ void MainWindow::OnOpenProject() {
 
             statusLabel_->setText("Project loaded: " + project_->GetName());
         } else {
-            QMessageBox::critical(this, tr("Error"),
-                tr("Failed to load project: %1").arg(filepath));
+            ErrorHelper::ShowError(this, tr("Load Failed"),
+                tr("Failed to load project."), filepath);
         }
     }
 }
@@ -477,8 +504,8 @@ void MainWindow::OnSaveProject() {
         UpdateWindowTitle();
         statusLabel_->setText("Project saved: " + project_->GetPath());
     } else {
-        QMessageBox::critical(this, tr("Error"),
-            tr("Failed to save project: %1").arg(project_->GetPath()));
+        ErrorHelper::ShowError(this, tr("Save Failed"),
+            tr("Failed to save project."), project_->GetPath());
     }
 }
 
@@ -498,8 +525,8 @@ void MainWindow::OnSaveProjectAs() {
             UpdateWindowTitle();
             statusLabel_->setText("Project saved: " + filepath);
         } else {
-            QMessageBox::critical(this, tr("Error"),
-                tr("Failed to save project: %1").arg(filepath));
+            ErrorHelper::ShowError(this, tr("Save Failed"),
+                tr("Failed to save project."), filepath);
         }
     }
 }
@@ -535,8 +562,8 @@ void MainWindow::OnImportMorphMesh() {
             viewportContainer_->GetPrimaryViewport()->GetCamera()->FocusOnBounds(bounds);
             viewportContainer_->GetPrimaryViewport()->update();
         } else {
-            QMessageBox::critical(this, tr("Error"),
-                tr("Failed to load morph mesh: %1").arg(filepath));
+            ErrorHelper::ShowError(this, tr("Import Failed"),
+                tr("Failed to load morph mesh."), filepath);
         }
     }
 }
@@ -569,8 +596,8 @@ void MainWindow::OnImportTargetMesh() {
             viewportContainer_->GetPrimaryViewport()->GetCamera()->FocusOnBounds(bounds);
             viewportContainer_->GetPrimaryViewport()->update();
         } else {
-            QMessageBox::critical(this, tr("Error"),
-                tr("Failed to load target mesh: %1").arg(filepath));
+            ErrorHelper::ShowError(this, tr("Import Failed"),
+                tr("Failed to load target mesh."), filepath);
         }
     }
 }
@@ -590,7 +617,7 @@ void MainWindow::OnExportMesh() {
     }
 
     if (!meshToExport) {
-        QMessageBox::warning(this, tr("No Mesh"),
+        ErrorHelper::ShowWarning(this, tr("No Mesh"),
             tr("No mesh available to export. Please load or process a mesh first."));
         return;
     }
@@ -641,8 +668,8 @@ void MainWindow::OnExportMesh() {
 
         statusLabel_->setText("Mesh exported to: " + result.exportedFilePath);
     } else {
-        QMessageBox::critical(this, tr("Export Failed"),
-            tr("Failed to export mesh:\n%1").arg(result.errorMessage));
+        ErrorHelper::ShowError(this, tr("Export Failed"),
+            tr("Failed to export mesh."), result.errorMessage);
     }
 }
 
@@ -651,8 +678,152 @@ void MainWindow::OnExit() {
 }
 
 // Edit menu slots
-void MainWindow::OnUndo() {}
-void MainWindow::OnRedo() {}
+void MainWindow::OnUndo() {
+    if (!undoStack_->CanUndo()) return;
+
+    QString desc = undoStack_->UndoDescription();
+    undoStack_->Undo();
+
+    // Refresh UI after undo
+    sidebarWidget_->OnTargetTransformChanged();
+    RefreshPointUI();
+
+    // Re-upload mesh vertex data to GPU if sculpt vertices were modified
+    if (project_->GetCurrentStage() == WorkflowStage::TouchUp) {
+        MorphData& morphData = project_->GetMorphData();
+        if (morphData.deformedMorphMesh) {
+            viewportContainer_->GetPrimaryViewport()->RefreshMeshGPUData(
+                morphData.deformedMorphMesh.get());
+        }
+    }
+
+    viewportContainer_->GetPrimaryViewport()->update();
+    if (viewportContainer_->IsDualMode()) {
+        viewportContainer_->GetSecondaryViewport()->update();
+    }
+    sidebarWidget_->SetNextStageEnabled(project_->CanProceedToNextStage());
+    UpdateUndoRedoState();
+    statusLabel_->setText(QString("Undo: %1").arg(desc));
+}
+
+void MainWindow::OnRedo() {
+    if (!undoStack_->CanRedo()) return;
+
+    QString desc = undoStack_->RedoDescription();
+    undoStack_->Redo();
+
+    // Refresh UI after redo
+    sidebarWidget_->OnTargetTransformChanged();
+    RefreshPointUI();
+
+    // Re-upload mesh vertex data to GPU if sculpt vertices were modified
+    if (project_->GetCurrentStage() == WorkflowStage::TouchUp) {
+        MorphData& morphData = project_->GetMorphData();
+        if (morphData.deformedMorphMesh) {
+            viewportContainer_->GetPrimaryViewport()->RefreshMeshGPUData(
+                morphData.deformedMorphMesh.get());
+        }
+    }
+
+    viewportContainer_->GetPrimaryViewport()->update();
+    if (viewportContainer_->IsDualMode()) {
+        viewportContainer_->GetSecondaryViewport()->update();
+    }
+    sidebarWidget_->SetNextStageEnabled(project_->CanProceedToNextStage());
+    UpdateUndoRedoState();
+    statusLabel_->setText(QString("Redo: %1").arg(desc));
+}
+
+void MainWindow::UpdateUndoRedoState() {
+    if (undoAction_) {
+        undoAction_->setEnabled(undoStack_->CanUndo());
+        undoAction_->setText(undoStack_->CanUndo()
+            ? QString("&Undo %1").arg(undoStack_->UndoDescription())
+            : tr("&Undo"));
+    }
+    if (redoAction_) {
+        redoAction_->setEnabled(undoStack_->CanRedo());
+        redoAction_->setText(undoStack_->CanRedo()
+            ? QString("&Redo %1").arg(undoStack_->RedoDescription())
+            : tr("&Redo"));
+    }
+}
+
+void MainWindow::OnTransformApplied(Transform before, Transform after) {
+    undoStack_->Push(std::make_unique<TransformUndoAction>(project_.get(), before, after));
+    UpdateUndoRedoState();
+}
+
+void MainWindow::OnSculptStrokeCompleted(BrushStroke stroke) {
+    if (stroke.IsEmpty()) return;
+
+    Mesh* mesh = nullptr;
+    MorphData& morphData = project_->GetMorphData();
+    if (morphData.deformedMorphMesh) {
+        mesh = morphData.deformedMorphMesh.get();
+    }
+    if (!mesh) return;
+
+    // Capture after-positions for redo
+    const auto& vertices = mesh->GetVertices();
+    std::map<int, Vector3> afterPositions;
+    // We need to get the original positions from the stroke to know which indices changed
+    // The stroke already has the original positions stored; we get the after positions from current mesh
+    // We use the BrushStroke internals via a small trick: undo, capture originals, then re-apply
+    // Instead, just capture current positions for the same indices
+    // Since BrushStroke stores originalPositions_ as private, we iterate by undoing then re-applying
+    // Simpler approach: store current vertex positions for all indices the stroke modified
+    auto tempVertices = vertices; // copy current state
+    stroke.Undo(tempVertices); // this gives us the "before" state - but we already have it in the stroke
+    // The after positions are just the current vertex positions
+    // We need to know which indices the stroke modified. We can get the count but not the indices from public API.
+    // Let's just undo to get the before-indices, compare, store the after-positions.
+
+    // Actually, let's use a simpler approach: capture all vertices that differ between
+    // current state and undo state
+    for (size_t i = 0; i < vertices.size() && i < tempVertices.size(); ++i) {
+        const Vector3& current = vertices[i];
+        const Vector3& before = tempVertices[i];
+        if (current.x != before.x || current.y != before.y || current.z != before.z) {
+            afterPositions[static_cast<int>(i)] = current;
+        }
+    }
+
+    undoStack_->Push(std::make_unique<SculptStrokeUndoAction>(mesh, stroke, afterPositions));
+    UpdateUndoRedoState();
+}
+
+void MainWindow::BackupProject() {
+    if (project_->GetPath().isEmpty()) return;
+    QString backupPath = project_->GetPath() + ".backup";
+    ProjectSerializer serializer;
+    serializer.Save(*project_, backupPath);
+    MV_LOG_INFO(QString("Project backed up to: %1").arg(backupPath));
+}
+
+void MainWindow::UpdateStatsDisplay() {
+    size_t totalVertices = 0;
+    size_t totalFaces = 0;
+
+    if (project_) {
+        if (project_->GetMorphMesh().isLoaded && project_->GetMorphMesh().mesh) {
+            totalVertices += project_->GetMorphMesh().mesh->GetVertexCount();
+            totalFaces += project_->GetMorphMesh().mesh->GetFaceCount();
+        }
+        if (project_->GetTargetMesh().isLoaded && project_->GetTargetMesh().mesh) {
+            totalVertices += project_->GetTargetMesh().mesh->GetVertexCount();
+            totalFaces += project_->GetTargetMesh().mesh->GetFaceCount();
+        }
+        const MorphData& morph = project_->GetMorphData();
+        if (morph.deformedMorphMesh) {
+            totalVertices += morph.deformedMorphMesh->GetVertexCount();
+            totalFaces += morph.deformedMorphMesh->GetFaceCount();
+        }
+    }
+
+    statsLabel_->setText(QString("Vertices: %1 | Faces: %2 | FPS: %3")
+        .arg(totalVertices).arg(totalFaces).arg(static_cast<int>(currentFPS_)));
+}
 
 void MainWindow::OnPreferences() {
     QMessageBox::information(this, tr("Not Implemented"),
@@ -671,49 +842,12 @@ void MainWindow::OnDocumentation() {
 }
 
 void MainWindow::OnKeyboardShortcuts() {
-    QString shortcuts =
-        "File:\n"
-        "  Ctrl+N - New Project\n"
-        "  Ctrl+O - Open Project\n"
-        "  Ctrl+S - Save Project\n"
-        "  Ctrl+M - Import Morph Mesh\n"
-        "  Ctrl+T - Import Target Mesh\n"
-        "  Ctrl+E - Export Mesh\n\n"
-        "Edit:\n"
-        "  Ctrl+Z - Undo\n"
-        "  Ctrl+Shift+Z - Redo\n\n"
-        "Tools:\n"
-        "  G - Move\n"
-        "  R - Rotate\n"
-        "  S - Scale\n"
-        "  X/Y/Z - Constrain to axis\n\n"
-        "Point Reference:\n"
-        "  Left Click - Place/Select point\n"
-        "  Delete - Remove selected point\n"
-        "  Esc - Deselect point\n\n"
-        "Touch Up:\n"
-        "  Left Click/Drag - Apply brush\n"
-        "  [ - Decrease brush radius\n"
-        "  ] - Increase brush radius\n"
-        "  Brushes: Smooth, Grab, Push/Pull, Inflate\n\n"
-        "View:\n"
-        "  Home - Reset Camera\n"
-        "  1 - Front view\n"
-        "  3 - Right view\n"
-        "  7 - Top view\n"
-        "  5 - Toggle Perspective/Ortho\n"
-        "  F - Focus on selection\n"
-        "  Middle Mouse - Orbit\n"
-        "  Shift+Middle Mouse - Pan\n"
-        "  Scroll - Zoom";
-
-    QMessageBox::information(this, tr("Keyboard Shortcuts"), shortcuts);
+    ShortcutsDialog dialog(this);
+    dialog.exec();
 }
 
 void MainWindow::OnReportIssue() {
-    QMessageBox::information(this, tr("Report Issue"),
-        tr("Please report issues at:\n"
-           "https://github.com/cmershon2/MetaVisage/issues"));
+    QDesktopServices::openUrl(QUrl("https://github.com/cmershon2/MetaVisage/issues"));
 }
 
 void MainWindow::OnAbout() {
@@ -728,7 +862,14 @@ void MainWindow::OnAbout() {
 // Sidebar actions
 void MainWindow::OnResetTransform() {
     if (project_ && project_->GetTargetMesh().isLoaded) {
+        Transform before = project_->GetTargetMesh().transform;
         project_->GetTargetMesh().transform.Reset();
+        Transform after = project_->GetTargetMesh().transform;
+
+        undoStack_->Push(std::make_unique<TransformUndoAction>(
+            project_.get(), before, after));
+        UpdateUndoRedoState();
+
         ViewportWidget* vp = viewportContainer_->GetPrimaryViewport();
         vp->CancelTransform();
         vp->update();
@@ -745,7 +886,15 @@ void MainWindow::OnClearAllPoints() {
         QMessageBox::Yes | QMessageBox::No, QMessageBox::No);
 
     if (result == QMessageBox::Yes) {
-        project_->GetPointReferenceData().correspondences.clear();
+        auto& correspondences = project_->GetPointReferenceData().correspondences;
+        auto beforeCorrespondences = correspondences;
+
+        correspondences.clear();
+
+        undoStack_->Push(std::make_unique<PointPlacementUndoAction>(
+            project_.get(), beforeCorrespondences, correspondences));
+        UpdateUndoRedoState();
+
         viewportContainer_->SetSelectedPointIndex(-1);
         RefreshPointUI();
         statusLabel_->setText("All points cleared");
@@ -757,6 +906,9 @@ void MainWindow::OnPointPlaced(PointSide side, Vector3 position, int vertexIndex
     if (!project_) return;
 
     auto& correspondences = project_->GetPointReferenceData().correspondences;
+
+    // Capture before state for undo
+    auto beforeCorrespondences = correspondences;
 
     // Determine the next point ID
     int nextID = 1;
@@ -812,6 +964,11 @@ void MainWindow::OnPointPlaced(PointSide side, Vector3 position, int vertexIndex
     if (project_->GetPointReferenceData().symmetryEnabled) {
         PlaceSymmetricPoint(side, position, vertexIndex, modifiedIndex);
     }
+
+    // Push undo action
+    undoStack_->Push(std::make_unique<PointPlacementUndoAction>(
+        project_.get(), beforeCorrespondences, correspondences, "Place Point"));
+    UpdateUndoRedoState();
 
     RefreshPointUI();
     statusLabel_->setText(QString("Point %1 placed on %2 mesh")
@@ -908,6 +1065,9 @@ void MainWindow::OnPointDeleteRequested() {
     auto& correspondences = project_->GetPointReferenceData().correspondences;
     int selectedIdx = viewportContainer_->GetPrimaryViewport()->GetSelectedPointIndex();
 
+    // Capture before state for undo
+    auto beforeCorrespondences = correspondences;
+
     if (selectedIdx < 0 || selectedIdx >= static_cast<int>(correspondences.size())) return;
 
     // If this point has a symmetric pair, remove that too
@@ -941,6 +1101,11 @@ void MainWindow::OnPointDeleteRequested() {
     viewportContainer_->SetSelectedPointIndex(-1);
     sidebarWidget_->SetSelectedPointIndex(-1);
 
+    // Push undo action
+    undoStack_->Push(std::make_unique<PointPlacementUndoAction>(
+        project_.get(), beforeCorrespondences, correspondences, "Delete Point"));
+    UpdateUndoRedoState();
+
     RefreshPointUI();
     statusLabel_->setText("Point deleted");
 }
@@ -965,11 +1130,14 @@ void MainWindow::RefreshPointUI() {
 void MainWindow::OnProcessMorph() {
     if (!project_ || morphThread_) return;
 
+    // Backup project before morphing
+    BackupProject();
+
     MorphData& morphData = project_->GetMorphData();
     const MeshReference& morphMeshRef = project_->GetMorphMesh();
 
     if (!morphMeshRef.isLoaded || !morphMeshRef.mesh) {
-        QMessageBox::warning(this, tr("Error"), tr("Morph mesh is not loaded."));
+        ErrorHelper::ShowWarning(this, tr("Error"), tr("Morph mesh is not loaded."));
         return;
     }
 
@@ -990,7 +1158,7 @@ void MainWindow::OnProcessMorph() {
     // Get target mesh reference
     const MeshReference& targetMeshRef = project_->GetTargetMesh();
     if (!targetMeshRef.isLoaded || !targetMeshRef.mesh) {
-        QMessageBox::warning(this, tr("Error"), tr("Target mesh is not loaded."));
+        ErrorHelper::ShowWarning(this, tr("Error"), tr("Target mesh is not loaded."));
         return;
     }
 
@@ -1055,6 +1223,15 @@ void MainWindow::OnMorphComplete(bool success, const QString& errorMessage,
     MorphData& morphData = project_->GetMorphData();
 
     if (success && deformedMesh) {
+        // Capture before state for undo
+        MorphUndoAction::MorphState beforeState;
+        beforeState.deformedMesh = morphData.deformedMorphMesh;
+        beforeState.isProcessed = morphData.isProcessed;
+        beforeState.isAccepted = morphData.isAccepted;
+        beforeState.displacementMagnitudes = morphData.displacementMagnitudes;
+        beforeState.maxDisplacement = morphData.maxDisplacement;
+        beforeState.avgDisplacement = morphData.avgDisplacement;
+
         morphData.deformedMorphMesh = deformedMesh;
         morphData.displacementMagnitudes = displacements;
         morphData.maxDisplacement = maxDisplacement;
@@ -1065,6 +1242,19 @@ void MainWindow::OnMorphComplete(bool success, const QString& errorMessage,
         // Upload heat map colors for the deformed mesh
         viewportContainer_->GetPrimaryViewport()->UploadHeatMapColors(
             deformedMesh.get(), displacements, maxDisplacement);
+
+        // Capture after state and push undo
+        MorphUndoAction::MorphState afterState;
+        afterState.deformedMesh = morphData.deformedMorphMesh;
+        afterState.isProcessed = morphData.isProcessed;
+        afterState.isAccepted = morphData.isAccepted;
+        afterState.displacementMagnitudes = morphData.displacementMagnitudes;
+        afterState.maxDisplacement = morphData.maxDisplacement;
+        afterState.avgDisplacement = morphData.avgDisplacement;
+
+        undoStack_->Push(std::make_unique<MorphUndoAction>(
+            project_.get(), beforeState, afterState));
+        UpdateUndoRedoState();
 
         sidebarWidget_->OnMorphComplete(true,
             QString("Done! Max displacement: %1, Avg: %2")
@@ -1118,9 +1308,12 @@ void MainWindow::OnNextStage() {
                 message = "Cannot proceed to next stage.";
                 break;
         }
-        QMessageBox::warning(this, tr("Cannot Proceed"), message);
+        ErrorHelper::ShowWarning(this, tr("Cannot Proceed"), message);
         return;
     }
+
+    // Backup project before stage transition
+    BackupProject();
 
     // Advance to next stage
     WorkflowStage currentStage = project_->GetCurrentStage();
@@ -1139,6 +1332,10 @@ void MainWindow::OnNextStage() {
         case WorkflowStage::TouchUp:
             return;
     }
+
+    // Clear undo stack when transitioning stages
+    undoStack_->Clear();
+    UpdateUndoRedoState();
 
     project_->SetCurrentStage(nextStage);
     sidebarWidget_->SetStage(nextStage);
@@ -1179,7 +1376,7 @@ void MainWindow::OnFinalizeRequested() {
     }
 
     if (!mesh) {
-        QMessageBox::warning(this, tr("Error"), tr("No mesh available to finalize."));
+        ErrorHelper::ShowWarning(this, tr("Error"), tr("No mesh available to finalize."));
         return;
     }
 

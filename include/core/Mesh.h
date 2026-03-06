@@ -3,8 +3,12 @@
 
 #include "core/Types.h"
 #include <QString>
+#include <memory>
 
 namespace MetaVisage {
+
+class BVH;
+class SpatialHash;
 
 class Mesh {
 public:
@@ -47,6 +51,11 @@ public:
     size_t GetFaceCount() const { return faces_.size(); }
     size_t GetTriangleCount() const;
 
+    // Acceleration structures (lazy-built, mutable for const access)
+    BVH* GetBVH() const;
+    SpatialHash* GetSpatialHash(float cellSize = 1.0f) const;
+    void InvalidateAccelerationStructures();
+
 private:
     QString name_;
     QString filepath_;
@@ -58,6 +67,11 @@ private:
     std::vector<Material> materials_;
 
     BoundingBox bounds_;
+
+    // Lazy acceleration structures
+    mutable std::unique_ptr<BVH> bvh_;
+    mutable std::unique_ptr<SpatialHash> spatialHash_;
+    mutable float spatialHashCellSize_ = 0.0f;
 };
 
 } // namespace MetaVisage
