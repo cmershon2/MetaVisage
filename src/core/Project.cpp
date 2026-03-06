@@ -1,4 +1,5 @@
 #include "core/Project.h"
+#include "io/ProjectSerializer.h"
 
 namespace MetaVisage {
 
@@ -14,16 +15,22 @@ Project::~Project() {
 }
 
 bool Project::Save(const QString& filepath) {
-    // TODO: Implement project serialization in Sprint 10
-    projectPath_ = filepath;
-    lastModified_ = QDateTime::currentDateTime();
-    return false;
+    ProjectSerializer serializer;
+    SerializationResult result = serializer.Save(*this, filepath);
+    if (result.success) {
+        projectPath_ = filepath;
+        lastModified_ = QDateTime::currentDateTime();
+    }
+    return result.success;
 }
 
 bool Project::Load(const QString& filepath) {
-    // TODO: Implement project deserialization in Sprint 10
-    projectPath_ = filepath;
-    return false;
+    ProjectSerializer serializer;
+    SerializationResult result = serializer.Load(*this, filepath);
+    if (result.success) {
+        projectPath_ = filepath;
+    }
+    return result.success;
 }
 
 bool Project::CanProceedToNextStage() const {

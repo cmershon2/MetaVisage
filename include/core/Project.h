@@ -67,11 +67,17 @@ struct MorphData {
     float maxDisplacement;
     float avgDisplacement;
 
+    // Temporary fields used during project deserialization to restore deformed mesh
+    bool hasDeformedData;
+    std::vector<Vector3> savedDeformedVertices;
+    std::vector<Vector3> savedDeformedNormals;
+
     MorphData() : algorithm(DeformationAlgorithm::RBF_TPS),
                   stiffness(0.5f), smoothness(0.5f),
                   isProcessed(false), isAccepted(false),
                   previewMode(MorphPreviewMode::Deformed),
-                  maxDisplacement(0.0f), avgDisplacement(0.0f) {}
+                  maxDisplacement(0.0f), avgDisplacement(0.0f),
+                  hasDeformedData(false) {}
 };
 
 class Project {

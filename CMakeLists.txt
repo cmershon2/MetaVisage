@@ -79,6 +79,9 @@ set(SOURCES
     src/sculpting/GrabBrush.cpp
     src/sculpting/PushPullBrush.cpp
     src/sculpting/InflateBrush.cpp
+    src/io/MeshExporter.cpp
+    src/io/ProjectSerializer.cpp
+    src/ui/ExportDialog.cpp
 )
 
 # Header files
@@ -105,6 +108,9 @@ set(HEADERS
     include/sculpting/PushPullBrush.h
     include/sculpting/InflateBrush.h
     include/sculpting/BrushStroke.h
+    include/io/MeshExporter.h
+    include/io/ProjectSerializer.h
+    include/ui/ExportDialog.h
 )
 
 # Create executable

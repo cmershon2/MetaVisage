@@ -11,7 +11,8 @@
       "Bash(cmake .. -DCMAKE_PREFIX_PATH=\"C:/Qt/6.10.1/msvc2022_64\" -DCMAKE_TOOLCHAIN_FILE=\"C:/Users/Casey Mershon/vcpkg/scripts/buildsystems/vcpkg.cmake\" -G \"Visual Studio 17 2022\" -A x64)",
       "Bash(cmake --build . --config Release)",
       "Bash(powershell -File build-msvc.ps1)",
-      "Bash(cmake --build . --config Debug)"
+      "Bash(cmake --build . --config Debug)",
+      "Bash(xargs grep -l \"MeshExporter\\\\|Serializ\\\\|Export\")"
     ]
   }
 }

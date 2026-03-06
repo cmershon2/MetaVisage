@@ -201,10 +201,10 @@ void MeshRenderer::RenderWithAlpha(unsigned int shaderProgram, const Matrix4x4& 
         glUniform1f(alphaLoc, alpha);
     }
 
-    // Enable alpha blending
+    // Enable alpha blending, disable depth test so overlay renders on top
     glEnable(GL_BLEND);
     glBlendFunc(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA);
-    glDepthMask(GL_FALSE);
+    glDisable(GL_DEPTH_TEST);
 
     glBindVertexArray(vao_);
     glPolygonMode(GL_FRONT_AND_BACK, GL_FILL);
@@ -212,7 +212,7 @@ void MeshRenderer::RenderWithAlpha(unsigned int shaderProgram, const Matrix4x4& 
     glBindVertexArray(0);
 
     // Restore state
-    glDepthMask(GL_TRUE);
+    glEnable(GL_DEPTH_TEST);
     glDisable(GL_BLEND);
 }
 

@@ -2,8 +2,11 @@
 #include "ui/ViewportWidget.h"
 #include "ui/ViewportContainer.h"
 #include "ui/SidebarWidget.h"
+#include "ui/ExportDialog.h"
 #include "utils/RayCaster.h"
 #include "deformation/MeshDeformer.h"
+#include "io/MeshExporter.h"
+#include "io/ProjectSerializer.h"
 #include <QHBoxLayout>
 #include <QWidget>
 #include <QMenu>
@@ -12,6 +15,10 @@
 #include <QMessageBox>
 #include <QKeySequence>
 #include <QThread>
+#include <QProgressDialog>
+#include <QDesktopServices>
+#include <QUrl>
+#include <QFileInfo>
 
 namespace MetaVisage {
 
@@ -383,14 +390,95 @@ void MainWindow::OnOpenProject() {
         this, tr("Open Project"), QString(), tr("MetaVisage Project (*.mmproj)"));
 
     if (!filepath.isEmpty()) {
-        QMessageBox::information(this, tr("Not Implemented"),
-            tr("Project loading will be implemented in Sprint 10"));
+        auto newProject = std::make_unique<Project>();
+        if (newProject->Load(filepath)) {
+            project_ = std::move(newProject);
+            viewportContainer_->SetProject(project_.get());
+            sidebarWidget_->SetProject(project_.get());
+
+            // Restore viewport mode based on stage
+            WorkflowStage stage = project_->GetCurrentStage();
+            viewportContainer_->SetDualMode(stage == WorkflowStage::PointReference);
+            sidebarWidget_->SetStage(stage);
+
+            // Reconstruct deformed mesh from saved vertex data
+            MorphData& morphData = project_->GetMorphData();
+            if (morphData.hasDeformedData && morphData.isProcessed &&
+                project_->GetMorphMesh().isLoaded && project_->GetMorphMesh().mesh) {
+
+                // Store original morph mesh reference
+                morphData.originalMorphMesh = project_->GetMorphMesh().mesh;
+
+                // Create deformed mesh as a copy of the original, then replace vertices/normals
+                auto deformed = std::make_shared<Mesh>();
+                const Mesh& original = *project_->GetMorphMesh().mesh;
+                deformed->SetVertices(morphData.savedDeformedVertices);
+                deformed->SetNormals(morphData.savedDeformedNormals);
+                deformed->SetUVs(original.GetUVs());
+                deformed->SetFaces(original.GetFaces());
+                deformed->SetMaterials(original.GetMaterials());
+                deformed->SetName(original.GetName());
+
+                morphData.deformedMorphMesh = deformed;
+
+                // Clear the temporary saved data to free memory
+                morphData.savedDeformedVertices.clear();
+                morphData.savedDeformedNormals.clear();
+                morphData.hasDeformedData = false;
+            }
+
+            // Set up Touch Up stage if that's where we loaded into
+            if (stage == WorkflowStage::TouchUp) {
+                viewportContainer_->GetPrimaryViewport()->SetViewportLabel("Touch Up");
+            }
+
+            // Focus camera on loaded mesh
+            if (project_->GetMorphMesh().isLoaded && project_->GetMorphMesh().mesh) {
+                const BoundingBox& bounds = project_->GetMorphMesh().mesh->GetBounds();
+                viewportContainer_->GetPrimaryViewport()->GetCamera()->FocusOnBounds(bounds);
+            }
+
+            // Update sidebar mesh labels
+            if (project_->GetMorphMesh().isLoaded) {
+                QLabel* morphStatus = sidebarWidget_->findChild<QLabel*>("morphStatus");
+                if (morphStatus) {
+                    morphStatus->setText("Morph Mesh: " + project_->GetMorphMesh().mesh->GetName());
+                    morphStatus->setStyleSheet("QLabel { color: #2ECC71; }");
+                }
+            }
+            if (project_->GetTargetMesh().isLoaded) {
+                QLabel* targetStatus = sidebarWidget_->findChild<QLabel*>("targetStatus");
+                if (targetStatus) {
+                    targetStatus->setText("Target Mesh: " + project_->GetTargetMesh().mesh->GetName());
+                    targetStatus->setStyleSheet("QLabel { color: #2ECC71; }");
+                }
+            }
+
+            UpdateWindowTitle();
+            UpdateStatusBar();
+            sidebarWidget_->SetNextStageEnabled(project_->CanProceedToNextStage());
+            viewportContainer_->GetPrimaryViewport()->update();
+
+            statusLabel_->setText("Project loaded: " + project_->GetName());
+        } else {
+            QMessageBox::critical(this, tr("Error"),
+                tr("Failed to load project: %1").arg(filepath));
+        }
     }
 }
 
 void MainWindow::OnSaveProject() {
     if (project_->GetPath().isEmpty()) {
         OnSaveProjectAs();
+        return;
+    }
+
+    if (project_->Save(project_->GetPath())) {
+        UpdateWindowTitle();
+        statusLabel_->setText("Project saved: " + project_->GetPath());
+    } else {
+        QMessageBox::critical(this, tr("Error"),
+            tr("Failed to save project: %1").arg(project_->GetPath()));
     }
 }
 
@@ -399,8 +487,20 @@ void MainWindow::OnSaveProjectAs() {
         this, tr("Save Project As"), QString(), tr("MetaVisage Project (*.mmproj)"));
 
     if (!filepath.isEmpty()) {
-        QMessageBox::information(this, tr("Not Implemented"),
-            tr("Project saving will be implemented in Sprint 10"));
+        if (!filepath.endsWith(".mmproj", Qt::CaseInsensitive)) {
+            filepath += ".mmproj";
+        }
+
+        if (project_->Save(filepath)) {
+            // Update project name from filename
+            QFileInfo info(filepath);
+            project_->SetName(info.completeBaseName());
+            UpdateWindowTitle();
+            statusLabel_->setText("Project saved: " + filepath);
+        } else {
+            QMessageBox::critical(this, tr("Error"),
+                tr("Failed to save project: %1").arg(filepath));
+        }
     }
 }
 
@@ -476,8 +576,74 @@ void MainWindow::OnImportTargetMesh() {
 }
 
 void MainWindow::OnExportMesh() {
-    QMessageBox::information(this, tr("Not Implemented"),
-        tr("Mesh export will be implemented in Sprint 10"));
+    // Determine which mesh to export (prefer deformed, fall back to morph)
+    const MorphData& morphData = project_->GetMorphData();
+    const Mesh* meshToExport = nullptr;
+    const Transform* exportTransform = nullptr;
+
+    if (morphData.deformedMorphMesh) {
+        meshToExport = morphData.deformedMorphMesh.get();
+        exportTransform = &project_->GetMorphMesh().transform;
+    } else if (project_->GetMorphMesh().isLoaded && project_->GetMorphMesh().mesh) {
+        meshToExport = project_->GetMorphMesh().mesh.get();
+        exportTransform = &project_->GetMorphMesh().transform;
+    }
+
+    if (!meshToExport) {
+        QMessageBox::warning(this, tr("No Mesh"),
+            tr("No mesh available to export. Please load or process a mesh first."));
+        return;
+    }
+
+    // Show export dialog
+    ExportDialog dialog(this);
+    if (dialog.exec() != QDialog::Accepted) {
+        return;
+    }
+
+    QString filepath = dialog.GetFilePath();
+    ExportOptions options = dialog.GetOptions();
+
+    // Show progress
+    QProgressDialog progress("Exporting mesh...", "Cancel", 0, 100, this);
+    progress.setWindowModality(Qt::WindowModal);
+    progress.setMinimumDuration(0);
+    progress.setValue(0);
+
+    // Export
+    MeshExporter exporter;
+    exporter.SetProgressCallback([&progress](float p, const QString& msg) {
+        progress.setValue(static_cast<int>(p * 100.0f));
+        progress.setLabelText(msg);
+    });
+
+    ExportResult result = exporter.Export(*meshToExport, filepath, options, exportTransform);
+
+    progress.setValue(100);
+
+    if (result.success) {
+        QString message = QString("Mesh exported successfully!\n\n"
+                                  "File: %1\n"
+                                  "Vertices: %2\n"
+                                  "Faces: %3")
+                              .arg(result.exportedFilePath)
+                              .arg(result.vertexCount)
+                              .arg(result.faceCount);
+
+        QMessageBox::StandardButton reply = QMessageBox::information(
+            this, tr("Export Complete"), message + "\n\nOpen export folder?",
+            QMessageBox::Yes | QMessageBox::No, QMessageBox::Yes);
+
+        if (reply == QMessageBox::Yes) {
+            QFileInfo info(result.exportedFilePath);
+            QDesktopServices::openUrl(QUrl::fromLocalFile(info.absolutePath()));
+        }
+
+        statusLabel_->setText("Mesh exported to: " + result.exportedFilePath);
+    } else {
+        QMessageBox::critical(this, tr("Export Failed"),
+            tr("Failed to export mesh:\n%1").arg(result.errorMessage));
+    }
 }
 
 void MainWindow::OnExit() {
