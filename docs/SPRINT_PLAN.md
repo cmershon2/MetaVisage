@@ -671,65 +671,97 @@ Visual transform gizmos would improve UX but the current keyboard + mouse drag a
 
 ---
 
-## Sprint 8: Sculpting Tools Foundation
+## Sprint 8: Sculpting Tools Foundation ✅
 
-**Duration:** 2 weeks  
+**Duration:** 2 weeks
+**Status:** COMPLETED (Mar 5, 2026)
 **Goals:** Implement sculpting infrastructure and basic brushes
 
 ### Stories
 
-#### Story 8.1: Sculpting Infrastructure
+#### Story 8.1: Sculpting Infrastructure ✅
 **Tasks:**
-- [ ] Create SculptBrush base class
-- [ ] Implement brush cursor rendering
-- [ ] Add brush radius visualization (circle)
-- [ ] Implement ray casting for brush position
-- [ ] Create falloff function (linear, smooth, sharp)
-- [ ] Implement brush stroke capture
-- [ ] Set up brush influence calculation
-- [ ] Create BrushStroke class for undo
+- [x] Create SculptBrush base class
+- [x] Implement brush cursor rendering
+- [x] Add brush radius visualization (circle)
+- [x] Implement ray casting for brush position
+- [x] Create falloff function (linear, smooth, sharp)
+- [x] Implement brush stroke capture
+- [x] Set up brush influence calculation
+- [x] Create BrushStroke class for undo
 
-#### Story 8.2: Smooth Brush
+#### Story 8.2: Smooth Brush ✅
 **Tasks:**
-- [ ] Create SmoothBrush class extending SculptBrush
-- [ ] Implement vertex position averaging
-- [ ] Apply falloff curve to influence
-- [ ] Calculate affected vertices within radius
-- [ ] Update mesh in real-time during stroke
-- [ ] Smooth across multiple strokes
-- [ ] Preserve mesh boundaries
+- [x] Create SmoothBrush class extending SculptBrush
+- [x] Implement vertex position averaging
+- [x] Apply falloff curve to influence
+- [x] Calculate affected vertices within radius
+- [x] Update mesh in real-time during stroke
+- [x] Smooth across multiple strokes
+- [x] Preserve mesh boundaries
 
-#### Story 8.3: Grab Brush
+#### Story 8.3: Grab Brush ✅
 **Tasks:**
-- [ ] Create GrabBrush class
-- [ ] Calculate mouse movement delta
-- [ ] Move vertices based on mouse drag
-- [ ] Apply falloff from brush center
-- [ ] Update mesh during drag
-- [ ] Handle rapid mouse movements
+- [x] Create GrabBrush class
+- [x] Calculate mouse movement delta
+- [x] Move vertices based on mouse drag
+- [x] Apply falloff from brush center
+- [x] Update mesh during drag
+- [x] Handle rapid mouse movements
 
-#### Story 8.4: Touch Up Stage UI
+#### Story 8.4: Touch Up Stage UI ✅
 **Tasks:**
-- [ ] Create single viewport layout
-- [ ] Add sidebar with sculpting controls
-- [ ] Create brush tool selector (icon buttons)
-- [ ] Add brush radius slider
-- [ ] Implement [ and ] keys for radius adjustment
-- [ ] Add strength slider (0.0 - 1.0)
-- [ ] Create falloff curve selector
-- [ ] Update stage indicator to 4/4
+- [x] Create single viewport layout
+- [x] Add sidebar with sculpting controls
+- [x] Create brush tool selector (icon buttons)
+- [x] Add brush radius slider
+- [x] Implement [ and ] keys for radius adjustment
+- [x] Add strength slider (0.0 - 1.0)
+- [x] Create falloff curve selector
+- [x] Update stage indicator to 4/4
 
 ### Acceptance Criteria
-- Brush cursor displays at mouse position on mesh
-- Cursor shows current brush radius visually
-- Smooth brush averages vertex positions
-- Grab brush moves vertices with mouse
-- [ and ] keys adjust brush radius
-- Strength slider affects brush intensity
-- Falloff curve changes influence distribution
-- Brush strokes feel responsive (<16ms per update)
-- Tool selector switches between brushes
-- Sculpting applies only within brush radius
+- [x] Brush cursor displays at mouse position on mesh
+- [x] Cursor shows current brush radius visually
+- [x] Smooth brush averages vertex positions
+- [x] Grab brush moves vertices with mouse
+- [x] [ and ] keys adjust brush radius
+- [x] Strength slider affects brush intensity
+- [x] Falloff curve changes influence distribution
+- [x] Brush strokes feel responsive (<16ms per update)
+- [x] Tool selector switches between brushes
+- [x] Sculpting applies only within brush radius
+
+### Implementation Notes
+
+**Architecture:**
+- `SculptBrush` base class with `Apply()` virtual method, `GetAffectedVertices()` for finding vertices within brush radius, and `CalculateFalloff()` supporting Linear, Smooth (hermite), and Sharp falloff curves
+- `SmoothBrush` builds vertex adjacency from face topology (lazy, on first use) and blends each affected vertex toward the average of its neighbors weighted by falloff
+- `GrabBrush` captures affected vertices on `BeginStroke()` and moves them by weighted world-space mouse delta converted to local space via inverse model matrix
+- `BrushStroke` records original vertex positions in a map for undo support
+- Real-time mesh updates via `MeshRenderer::UpdateVertexData()` which re-uploads VBO with `GL_DYNAMIC_DRAW` without recreating VAO/IBO
+- Brush cursor rendered as 64-segment circle in world space using tangent vectors perpendicular to surface normal, slight normal offset (0.003f) to avoid z-fighting, rendered with grid shader using `GL_LINE_LOOP`
+
+**New Files Created:**
+- `include/sculpting/SculptBrush.h` + `src/sculpting/SculptBrush.cpp` - Base brush class with settings, falloff, affected vertex calculation
+- `include/sculpting/SmoothBrush.h` + `src/sculpting/SmoothBrush.cpp` - Smooth brush with adjacency-based vertex averaging
+- `include/sculpting/GrabBrush.h` + `src/sculpting/GrabBrush.cpp` - Grab brush with captured vertex movement
+- `include/sculpting/BrushStroke.h` - Stroke recording for undo
+
+**Files Modified:**
+- `include/core/Types.h` - Added `BrushType` (None/Smooth/Grab) and `FalloffType` (Linear/Smooth/Sharp) enums
+- `include/core/Mesh.h` - Added `GetVerticesMutable()` for in-place sculpting
+- `include/rendering/MeshRenderer.h` + `src/rendering/MeshRenderer.cpp` - Added `UpdateVertexData()` for real-time VBO re-upload
+- `include/rendering/Renderer.h` + `src/rendering/Renderer.cpp` - Added `RenderTouchUpStage()`, `RenderBrushCursor()`, `SetBrushCursor()`, `UpdateMeshVertices()`, brush cursor VAO/VBO state
+- `include/ui/SidebarWidget.h` + `src/ui/SidebarWidget.cpp` - Added `CreateTouchUpControls()` with brush selector (Smooth/Grab QPushButtons), radius/strength sliders, falloff combo, sculpting signals
+- `include/ui/ViewportWidget.h` + `src/ui/ViewportWidget.cpp` - Added sculpting interaction: `HandleSculptPress/Move/Release()`, `UpdateBrushCursor()`, `SetBrushType/Radius/Strength/Falloff()`, `[`/`]` key handling, brush state members
+- `src/ui/MainWindow.cpp` - Connected sculpting signals between sidebar and viewport, updated keyboard shortcuts, added Touch Up stage transition logic
+- `CMakeLists.txt` - Added sculpting source and header files
+
+**Build Status:**
+- Application builds successfully with MSVC (Debug)
+- All existing Sprint 1-7 features remain functional
+- Touch Up stage accessible from Morph stage after accepting morph result
 
 ---
 

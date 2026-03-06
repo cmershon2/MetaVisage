@@ -589,6 +589,20 @@ enum class MorphPreviewMode {
     HeatMap     // Color vertices by displacement magnitude
 };
 
+// Sculpting brush types (Touch Up stage)
+enum class BrushType {
+    None,
+    Smooth,     // Average vertex positions for smoothing
+    Grab        // Move vertices with mouse drag
+};
+
+// Brush falloff curve types
+enum class FalloffType {
+    Linear,     // Linear falloff: 1 - t
+    Smooth,     // Smooth hermite: 1 - (3t^2 - 2t^3)
+    Sharp       // Sharp falloff: 1 - t^3
+};
+
 } // namespace MetaVisage
 
 #endif // TYPES_H

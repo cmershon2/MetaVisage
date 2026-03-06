@@ -216,6 +216,49 @@ void MeshRenderer::RenderWithAlpha(unsigned int shaderProgram, const Matrix4x4& 
     glDisable(GL_BLEND);
 }
 
+void MeshRenderer::UpdateVertexData(const Mesh& mesh) {
+    if (vao_ == 0 || vbo_ == 0) return;
+
+    const auto& vertices = mesh.GetVertices();
+    const auto& normals = mesh.GetNormals();
+    const auto& uvs = mesh.GetUVs();
+
+    if (vertices.empty()) return;
+
+    // Rebuild interleaved vertex data: position(3) + normal(3) + uv(2)
+    std::vector<float> vertexData;
+    vertexData.reserve(vertices.size() * 8);
+
+    for (size_t i = 0; i < vertices.size(); ++i) {
+        vertexData.push_back(vertices[i].x);
+        vertexData.push_back(vertices[i].y);
+        vertexData.push_back(vertices[i].z);
+
+        if (i < normals.size()) {
+            vertexData.push_back(normals[i].x);
+            vertexData.push_back(normals[i].y);
+            vertexData.push_back(normals[i].z);
+        } else {
+            vertexData.push_back(0.0f);
+            vertexData.push_back(1.0f);
+            vertexData.push_back(0.0f);
+        }
+
+        if (i < uvs.size()) {
+            vertexData.push_back(uvs[i].x);
+            vertexData.push_back(uvs[i].y);
+        } else {
+            vertexData.push_back(0.0f);
+            vertexData.push_back(0.0f);
+        }
+    }
+
+    // Re-upload vertex data to existing VBO
+    glBindBuffer(GL_ARRAY_BUFFER, vbo_);
+    glBufferData(GL_ARRAY_BUFFER, vertexData.size() * sizeof(float), vertexData.data(), GL_DYNAMIC_DRAW);
+    glBindBuffer(GL_ARRAY_BUFFER, 0);
+}
+
 void MeshRenderer::UploadVertexColors(const std::vector<Vector3>& colors) {
     if (vao_ == 0 || colors.size() != vertexCount_) return;
 

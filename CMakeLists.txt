@@ -74,6 +74,9 @@ set(SOURCES
     src/utils/RayCaster.cpp
     src/deformation/RBFInterpolator.cpp
     src/deformation/MeshDeformer.cpp
+    src/sculpting/SculptBrush.cpp
+    src/sculpting/SmoothBrush.cpp
+    src/sculpting/GrabBrush.cpp
 )
 
 # Header files
@@ -94,6 +97,10 @@ set(HEADERS
     include/utils/RayCaster.h
     include/deformation/RBFInterpolator.h
     include/deformation/MeshDeformer.h
+    include/sculpting/SculptBrush.h
+    include/sculpting/SmoothBrush.h
+    include/sculpting/GrabBrush.h
+    include/sculpting/BrushStroke.h
 )
 
 # Create executable

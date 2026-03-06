@@ -11,6 +11,7 @@
 #include <QCheckBox>
 #include <QComboBox>
 #include <QProgressBar>
+#include <QButtonGroup>
 #include "core/Types.h"
 
 namespace MetaVisage {
@@ -38,6 +39,9 @@ public:
     void OnMorphComplete(bool success, const QString& message);
     void SetMorphProcessing(bool processing);
 
+    // Touch Up stage - update brush radius display from viewport
+    void SetBrushRadius(float radius);
+
 public slots:
     // Update display when transform mode changes
     void OnTransformModeChanged(TransformMode mode, AxisConstraint axis);
@@ -58,6 +62,10 @@ private slots:
     void OnSmoothnessChanged(int value);
     void OnKernelTypeChanged(int index);
     void OnPreviewModeChanged(int index);
+    // Handle sculpting parameter changes
+    void OnBrushRadiusChanged(int value);
+    void OnBrushStrengthChanged(int value);
+    void OnFalloffTypeChanged(int index);
 
 signals:
     void NextStageRequested();
@@ -74,6 +82,12 @@ signals:
     void AcceptMorphRequested();
     void MorphParameterChanged();
     void MorphPreviewModeChanged(MorphPreviewMode mode);
+
+    // Touch Up stage signals
+    void BrushTypeChanged(BrushType type);
+    void BrushRadiusChangedSignal(float radius);
+    void BrushStrengthChangedSignal(float strength);
+    void BrushFalloffChanged(FalloffType falloff);
 
 private:
     void CreateAlignmentControls();
@@ -129,6 +143,16 @@ private:
     QPushButton* acceptButton_;
     QPushButton* reprocessButton_;
     QPushButton* resetDefaultsButton_;
+
+    // Touch Up stage UI elements (only valid during TouchUp stage)
+    QButtonGroup* brushButtonGroup_;
+    QPushButton* smoothBrushButton_;
+    QPushButton* grabBrushButton_;
+    QSlider* brushRadiusSlider_;
+    QLabel* brushRadiusValueLabel_;
+    QSlider* brushStrengthSlider_;
+    QLabel* brushStrengthValueLabel_;
+    QComboBox* falloffTypeCombo_;
 
     // Flag to prevent feedback loops when updating spinboxes programmatically
     bool updatingTransformDisplay_;

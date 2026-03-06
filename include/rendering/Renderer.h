@@ -44,6 +44,10 @@ public:
     void InvalidateMesh(const Mesh* mesh);
     void UploadHeatMapColors(const Mesh* mesh, const std::vector<float>& displacements, float maxDisplacement);
 
+    // Sculpting (Touch Up stage)
+    void SetBrushCursor(const Vector3& position, const Vector3& normal, float radius, float innerRadius, bool visible);
+    void UpdateMeshVertices(const Mesh* mesh);
+
 private:
     void RenderGrid(const Matrix4x4& viewProjection);
     void RenderMesh(const Mesh& mesh, const Transform& transform,
@@ -55,6 +59,9 @@ private:
     void RenderPoints(const Camera& camera, int width, int height, Project* project);
     void RenderMorphStage(const Camera& camera, int width, int height, Project* project,
                           const Matrix4x4& viewProjection);
+    void RenderTouchUpStage(const Camera& camera, int width, int height, Project* project,
+                            const Matrix4x4& viewProjection);
+    void RenderBrushCursor(const Matrix4x4& viewProjection);
 
     MeshRenderer* GetOrCreateMeshRenderer(const Mesh& mesh);
 
@@ -73,6 +80,17 @@ private:
     // Point rendering state
     float pointSize_;
     int selectedPointIndex_;
+
+    // Brush cursor state (parameters stored from SetBrushCursor, geometry built in RenderBrushCursor)
+    unsigned int brushCursorVAO_;
+    unsigned int brushCursorVBO_;
+    bool brushCursorVisible_;
+    int brushCursorSegments_;
+    bool brushCursorDirty_;       // True when parameters changed and geometry needs rebuild
+    Vector3 brushCursorPosition_;
+    Vector3 brushCursorNormal_;
+    float brushCursorRadius_;
+    float brushCursorInnerRadius_;
 };
 
 } // namespace MetaVisage
