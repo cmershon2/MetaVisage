@@ -18,7 +18,14 @@ Renderer::Renderer()
       gridVBO_(0),
       gridVertexCount_(0),
       pointSize_(12.0f),
-      selectedPointIndex_(-1) {
+      selectedPointIndex_(-1),
+      brushCursorVAO_(0),
+      brushCursorVBO_(0),
+      brushCursorVisible_(false),
+      brushCursorSegments_(0),
+      brushCursorDirty_(false),
+      brushCursorRadius_(0.0f),
+      brushCursorInnerRadius_(0.0f) {
 }
 
 Renderer::~Renderer() {
@@ -27,6 +34,12 @@ Renderer::~Renderer() {
     }
     if (gridVBO_ != 0) {
         glDeleteBuffers(1, &gridVBO_);
+    }
+    if (brushCursorVAO_ != 0) {
+        glDeleteVertexArrays(1, &brushCursorVAO_);
+    }
+    if (brushCursorVBO_ != 0) {
+        glDeleteBuffers(1, &brushCursorVBO_);
     }
 }
 
@@ -139,6 +152,12 @@ void Renderer::Render(const Camera& camera, int width, int height, Project* proj
             return;
         }
 
+        // Touch Up stage uses specialized rendering
+        if (project->GetCurrentStage() == WorkflowStage::TouchUp) {
+            RenderTouchUpStage(camera, width, height, project, viewProjection);
+            return;
+        }
+
         // Render morph mesh (blue color, locked in place)
         if (renderFilter_ != RenderFilter::TargetOnly) {
             const MeshReference& morphMeshRef = project->GetMorphMesh();
@@ -175,7 +194,6 @@ void Renderer::RenderMorphStage(const Camera& camera, int width, int height, Pro
 
     switch (morphPreviewMode_) {
         case MorphPreviewMode::Deformed:
-            // Show the deformed mesh (or original if not yet processed)
             if (morphData.isProcessed && morphData.deformedMorphMesh) {
                 RenderMesh(*morphData.deformedMorphMesh, morphMeshRef.transform, morphColor, viewProjection);
             } else {
@@ -184,18 +202,15 @@ void Renderer::RenderMorphStage(const Camera& camera, int width, int height, Pro
             break;
 
         case MorphPreviewMode::Original:
-            // Show the original undeformed morph mesh
             RenderMesh(*morphMeshRef.mesh, morphMeshRef.transform, morphColor, viewProjection);
             break;
 
         case MorphPreviewMode::Overlay:
-            // Show deformed mesh solid + target mesh semi-transparent
             if (morphData.isProcessed && morphData.deformedMorphMesh) {
                 RenderMesh(*morphData.deformedMorphMesh, morphMeshRef.transform, morphColor, viewProjection);
             } else {
                 RenderMesh(*morphMeshRef.mesh, morphMeshRef.transform, morphColor, viewProjection);
             }
-            // Render target mesh as semi-transparent overlay
             {
                 const MeshReference& targetMeshRef = project->GetTargetMesh();
                 if (targetMeshRef.isLoaded && targetMeshRef.mesh) {
@@ -206,13 +221,167 @@ void Renderer::RenderMorphStage(const Camera& camera, int width, int height, Pro
             break;
 
         case MorphPreviewMode::HeatMap:
-            // Show deformed mesh with heat map coloring
             if (morphData.isProcessed && morphData.deformedMorphMesh) {
                 RenderMeshHeatMap(*morphData.deformedMorphMesh, morphMeshRef.transform, viewProjection);
             } else {
                 RenderMesh(*morphMeshRef.mesh, morphMeshRef.transform, morphColor, viewProjection);
             }
             break;
+    }
+}
+
+void Renderer::RenderTouchUpStage(const Camera& camera, int /*width*/, int /*height*/,
+                                   Project* project, const Matrix4x4& viewProjection) {
+    const MorphData& morphData = project->GetMorphData();
+    const MeshReference& morphMeshRef = project->GetMorphMesh();
+
+    if (!morphMeshRef.isLoaded || !morphMeshRef.mesh) return;
+
+    Vector3 morphColor(0.3f, 0.5f, 0.9f);
+
+    // Render the deformed mesh for sculpting
+    if (morphData.deformedMorphMesh) {
+        RenderMesh(*morphData.deformedMorphMesh, morphMeshRef.transform, morphColor, viewProjection);
+    } else {
+        RenderMesh(*morphMeshRef.mesh, morphMeshRef.transform, morphColor, viewProjection);
+    }
+
+    // Render brush cursor on top
+    RenderBrushCursor(viewProjection);
+}
+
+void Renderer::SetBrushCursor(const Vector3& position, const Vector3& normal, float radius, float innerRadius, bool visible) {
+    // Only store parameters here - NO GL calls allowed since this is called from
+    // mouse event handlers outside of a valid GL context. The actual geometry
+    // generation and GPU upload happens in RenderBrushCursor() during paintGL().
+    brushCursorVisible_ = visible;
+    brushCursorPosition_ = position;
+    brushCursorNormal_ = normal;
+    brushCursorRadius_ = radius;
+    brushCursorInnerRadius_ = innerRadius;
+    brushCursorDirty_ = true;
+}
+
+void Renderer::RenderBrushCursor(const Matrix4x4& viewProjection) {
+    if (!brushCursorVisible_ || brushCursorRadius_ <= 0.0f) return;
+
+    bool hasInnerCircle = (brushCursorInnerRadius_ > 0.0f &&
+                           brushCursorInnerRadius_ < brushCursorRadius_);
+
+    // Rebuild circle geometry if parameters changed (we're now in a valid GL context)
+    if (brushCursorDirty_) {
+        brushCursorDirty_ = false;
+
+        const int segments = 64;
+        const float PI = 3.14159265359f;
+
+        // Find tangent vectors perpendicular to the normal
+        Vector3 tangent1, tangent2;
+        Vector3 up(0.0f, 1.0f, 0.0f);
+        if (std::abs(brushCursorNormal_.Dot(up)) > 0.9f) {
+            up = Vector3(1.0f, 0.0f, 0.0f);
+        }
+        tangent1 = brushCursorNormal_.Cross(up).Normalized();
+        tangent2 = brushCursorNormal_.Cross(tangent1).Normalized();
+
+        // Slight offset along normal to avoid z-fighting
+        Vector3 offset = brushCursorNormal_ * 0.003f;
+
+        std::vector<float> circleData;
+        int totalVerts = hasInnerCircle ? segments * 2 : segments;
+        circleData.reserve(totalVerts * 6);
+
+        // Outer circle - bright cyan (bold)
+        float cr = 0.2f, cg = 0.85f, cb = 1.0f;
+        for (int i = 0; i < segments; ++i) {
+            float angle = 2.0f * PI * i / segments;
+            float cos_a = std::cos(angle);
+            float sin_a = std::sin(angle);
+
+            Vector3 point = brushCursorPosition_ + offset +
+                            (tangent1 * cos_a + tangent2 * sin_a) * brushCursorRadius_;
+
+            circleData.push_back(point.x);
+            circleData.push_back(point.y);
+            circleData.push_back(point.z);
+            circleData.push_back(cr);
+            circleData.push_back(cg);
+            circleData.push_back(cb);
+        }
+
+        // Inner circle - dimmer cyan (thin falloff indicator)
+        if (hasInnerCircle) {
+            float icr = 0.15f, icg = 0.55f, icb = 0.7f;
+            for (int i = 0; i < segments; ++i) {
+                float angle = 2.0f * PI * i / segments;
+                float cos_a = std::cos(angle);
+                float sin_a = std::sin(angle);
+
+                Vector3 point = brushCursorPosition_ + offset +
+                                (tangent1 * cos_a + tangent2 * sin_a) * brushCursorInnerRadius_;
+
+                circleData.push_back(point.x);
+                circleData.push_back(point.y);
+                circleData.push_back(point.z);
+                circleData.push_back(icr);
+                circleData.push_back(icg);
+                circleData.push_back(icb);
+            }
+        }
+
+        // Create or update GPU buffers
+        if (brushCursorVAO_ == 0) {
+            glGenVertexArrays(1, &brushCursorVAO_);
+            glGenBuffers(1, &brushCursorVBO_);
+        }
+
+        glBindVertexArray(brushCursorVAO_);
+        glBindBuffer(GL_ARRAY_BUFFER, brushCursorVBO_);
+        glBufferData(GL_ARRAY_BUFFER, circleData.size() * sizeof(float),
+                     circleData.data(), GL_DYNAMIC_DRAW);
+
+        glVertexAttribPointer(0, 3, GL_FLOAT, GL_FALSE, 6 * sizeof(float), (void*)0);
+        glEnableVertexAttribArray(0);
+        glVertexAttribPointer(1, 3, GL_FLOAT, GL_FALSE, 6 * sizeof(float),
+                              (void*)(3 * sizeof(float)));
+        glEnableVertexAttribArray(1);
+
+        glBindVertexArray(0);
+        brushCursorSegments_ = segments;
+    }
+
+    if (brushCursorVAO_ == 0 || brushCursorSegments_ == 0) return;
+
+    shaderManager_->UseShader("grid");
+    unsigned int program = shaderManager_->GetShader("grid");
+
+    int vpLoc = glGetUniformLocation(program, "uViewProjection");
+    glUniformMatrix4fv(vpLoc, 1, GL_FALSE, viewProjection.Data());
+
+    glDepthFunc(GL_LEQUAL);
+
+    glBindVertexArray(brushCursorVAO_);
+
+    // Draw outer circle (bold)
+    glLineWidth(2.5f);
+    glDrawArrays(GL_LINE_LOOP, 0, brushCursorSegments_);
+
+    // Draw inner circle (thin falloff indicator)
+    if (hasInnerCircle) {
+        glLineWidth(1.0f);
+        glDrawArrays(GL_LINE_LOOP, brushCursorSegments_, brushCursorSegments_);
+    }
+
+    glBindVertexArray(0);
+
+    glDepthFunc(GL_LESS);
+    glLineWidth(1.0f);
+}
+
+void Renderer::UpdateMeshVertices(const Mesh* mesh) {
+    auto it = meshRenderers_.find(mesh);
+    if (it != meshRenderers_.end()) {
+        it->second->UpdateVertexData(*mesh);
     }
 }
 
@@ -277,7 +446,6 @@ void Renderer::UploadHeatMapColors(const Mesh* mesh, const std::vector<float>& d
     MeshRenderer* renderer = GetOrCreateMeshRenderer(*mesh);
     if (!renderer->HasMesh()) return;
 
-    // Map displacement magnitudes to colors: blue -> cyan -> green -> yellow -> red
     std::vector<Vector3> colors;
     colors.reserve(displacements.size());
 
@@ -288,19 +456,15 @@ void Renderer::UploadHeatMapColors(const Mesh* mesh, const std::vector<float>& d
         Vector3 color;
 
         if (t < 0.25f) {
-            // Blue to Cyan
             float s = t / 0.25f;
             color = Vector3(0.0f, s, 1.0f);
         } else if (t < 0.5f) {
-            // Cyan to Green
             float s = (t - 0.25f) / 0.25f;
             color = Vector3(0.0f, 1.0f, 1.0f - s);
         } else if (t < 0.75f) {
-            // Green to Yellow
             float s = (t - 0.5f) / 0.25f;
             color = Vector3(s, 1.0f, 0.0f);
         } else {
-            // Yellow to Red
             float s = (t - 0.75f) / 0.25f;
             color = Vector3(1.0f, 1.0f - s, 0.0f);
         }

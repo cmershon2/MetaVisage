@@ -52,6 +52,14 @@ SidebarWidget::SidebarWidget(QWidget *parent)
       acceptButton_(nullptr),
       reprocessButton_(nullptr),
       resetDefaultsButton_(nullptr),
+      brushButtonGroup_(nullptr),
+      smoothBrushButton_(nullptr),
+      grabBrushButton_(nullptr),
+      brushRadiusSlider_(nullptr),
+      brushRadiusValueLabel_(nullptr),
+      brushStrengthSlider_(nullptr),
+      brushStrengthValueLabel_(nullptr),
+      falloffTypeCombo_(nullptr),
       updatingTransformDisplay_(false),
       selectedPointIndex_(-1) {
 
@@ -103,6 +111,7 @@ SidebarWidget::~SidebarWidget() {
 
 void SidebarWidget::SetStage(WorkflowStage stage) {
     ClearControls();
+    nextStageButton_->setVisible(true); // Re-show; TouchUp hides it
 
     switch (stage) {
         case WorkflowStage::Alignment:
@@ -792,9 +801,136 @@ void SidebarWidget::CreateMorphControls() {
 void SidebarWidget::CreateTouchUpControls() {
     QVBoxLayout* controlsLayout = new QVBoxLayout(controlsWidget_);
     controlsLayout->setContentsMargins(0, 0, 0, 0);
-    QLabel* info = new QLabel("Refine the mesh with sculpting tools.");
+    controlsLayout->setSpacing(16);
+
+    QLabel* info = new QLabel("Refine the mesh with sculpting tools.\nLeft-click and drag on the mesh to sculpt.");
     info->setWordWrap(true);
     controlsLayout->addWidget(info);
+
+    // Brush Tool Selector
+    QGroupBox* toolGroup = new QGroupBox("Brush Tools");
+    QHBoxLayout* toolLayout = new QHBoxLayout(toolGroup);
+
+    brushButtonGroup_ = new QButtonGroup(this);
+    brushButtonGroup_->setExclusive(true);
+
+    smoothBrushButton_ = new QPushButton("Smooth");
+    smoothBrushButton_->setCheckable(true);
+    smoothBrushButton_->setChecked(true);
+    smoothBrushButton_->setStyleSheet(
+        "QPushButton { background-color: #34495E; padding: 8px 16px; border: 2px solid #555; border-radius: 4px; }"
+        "QPushButton:checked { background-color: #3498DB; border-color: #3498DB; }");
+    brushButtonGroup_->addButton(smoothBrushButton_, 0);
+    toolLayout->addWidget(smoothBrushButton_);
+
+    grabBrushButton_ = new QPushButton("Grab");
+    grabBrushButton_->setCheckable(true);
+    grabBrushButton_->setStyleSheet(
+        "QPushButton { background-color: #34495E; padding: 8px 16px; border: 2px solid #555; border-radius: 4px; }"
+        "QPushButton:checked { background-color: #3498DB; border-color: #3498DB; }");
+    brushButtonGroup_->addButton(grabBrushButton_, 1);
+    toolLayout->addWidget(grabBrushButton_);
+
+    connect(brushButtonGroup_, QOverload<int>::of(&QButtonGroup::idClicked), this, [this](int id) {
+        BrushType type = (id == 0) ? BrushType::Smooth : BrushType::Grab;
+        emit BrushTypeChanged(type);
+    });
+
+    controlsLayout->addWidget(toolGroup);
+
+    // Brush Settings
+    QGroupBox* settingsGroup = new QGroupBox("Brush Settings");
+    QVBoxLayout* settingsLayout = new QVBoxLayout(settingsGroup);
+    settingsLayout->setSpacing(8);
+
+    // Radius slider
+    QHBoxLayout* radiusLabelLayout = new QHBoxLayout();
+    radiusLabelLayout->addWidget(new QLabel("Radius:"));
+    brushRadiusValueLabel_ = new QLabel("0.5");
+    brushRadiusValueLabel_->setAlignment(Qt::AlignRight);
+    radiusLabelLayout->addWidget(brushRadiusValueLabel_);
+    settingsLayout->addLayout(radiusLabelLayout);
+
+    brushRadiusSlider_ = new QSlider(Qt::Horizontal);
+    brushRadiusSlider_->setRange(1, 1000);
+    brushRadiusSlider_->setValue(5);
+    connect(brushRadiusSlider_, &QSlider::valueChanged, this, &SidebarWidget::OnBrushRadiusChanged);
+    settingsLayout->addWidget(brushRadiusSlider_);
+
+    QLabel* radiusHint = new QLabel("[ ] keys to adjust");
+    radiusHint->setStyleSheet("QLabel { color: #888; font-size: 10px; }");
+    settingsLayout->addWidget(radiusHint);
+
+    // Strength slider
+    QHBoxLayout* strengthLabelLayout = new QHBoxLayout();
+    strengthLabelLayout->addWidget(new QLabel("Strength:"));
+    brushStrengthValueLabel_ = new QLabel("0.50");
+    brushStrengthValueLabel_->setAlignment(Qt::AlignRight);
+    strengthLabelLayout->addWidget(brushStrengthValueLabel_);
+    settingsLayout->addLayout(strengthLabelLayout);
+
+    brushStrengthSlider_ = new QSlider(Qt::Horizontal);
+    brushStrengthSlider_->setRange(1, 100);
+    brushStrengthSlider_->setValue(50);
+    connect(brushStrengthSlider_, &QSlider::valueChanged, this, &SidebarWidget::OnBrushStrengthChanged);
+    settingsLayout->addWidget(brushStrengthSlider_);
+
+    // Falloff type
+    QHBoxLayout* falloffLayout = new QHBoxLayout();
+    falloffLayout->addWidget(new QLabel("Falloff:"));
+    falloffTypeCombo_ = new QComboBox();
+    falloffTypeCombo_->addItem("Smooth");
+    falloffTypeCombo_->addItem("Linear");
+    falloffTypeCombo_->addItem("Sharp");
+    falloffTypeCombo_->setCurrentIndex(0);
+    connect(falloffTypeCombo_, QOverload<int>::of(&QComboBox::currentIndexChanged),
+            this, &SidebarWidget::OnFalloffTypeChanged);
+    falloffLayout->addWidget(falloffTypeCombo_);
+    settingsLayout->addLayout(falloffLayout);
+
+    controlsLayout->addWidget(settingsGroup);
+    controlsLayout->addStretch();
+
+    // Hide next stage button for final stage
+    nextStageButton_->setVisible(false);
+}
+
+void SidebarWidget::OnBrushRadiusChanged(int value) {
+    float radius = value / 10.0f;
+    if (brushRadiusValueLabel_) {
+        brushRadiusValueLabel_->setText(QString::number(radius, 'f', 1));
+    }
+    emit BrushRadiusChangedSignal(radius);
+}
+
+void SidebarWidget::OnBrushStrengthChanged(int value) {
+    float strength = value / 100.0f;
+    if (brushStrengthValueLabel_) {
+        brushStrengthValueLabel_->setText(QString::number(strength, 'f', 2));
+    }
+    emit BrushStrengthChangedSignal(strength);
+}
+
+void SidebarWidget::OnFalloffTypeChanged(int index) {
+    FalloffType falloff;
+    switch (index) {
+        case 0: falloff = FalloffType::Smooth; break;
+        case 1: falloff = FalloffType::Linear; break;
+        case 2: falloff = FalloffType::Sharp; break;
+        default: falloff = FalloffType::Smooth; break;
+    }
+    emit BrushFalloffChanged(falloff);
+}
+
+void SidebarWidget::SetBrushRadius(float radius) {
+    if (brushRadiusSlider_) {
+        brushRadiusSlider_->blockSignals(true);
+        brushRadiusSlider_->setValue(static_cast<int>(radius * 10.0f));
+        brushRadiusSlider_->blockSignals(false);
+    }
+    if (brushRadiusValueLabel_) {
+        brushRadiusValueLabel_->setText(QString::number(radius, 'f', 1));
+    }
 }
 
 void SidebarWidget::ClearControls() {
@@ -812,6 +948,10 @@ void SidebarWidget::ClearControls() {
     kernelTypeCombo_ = nullptr; processButton_ = nullptr; cancelButton_ = nullptr;
     progressBar_ = nullptr; progressLabel_ = nullptr; previewModeCombo_ = nullptr;
     acceptButton_ = nullptr; reprocessButton_ = nullptr; resetDefaultsButton_ = nullptr;
+    brushButtonGroup_ = nullptr; smoothBrushButton_ = nullptr; grabBrushButton_ = nullptr;
+    brushRadiusSlider_ = nullptr; brushRadiusValueLabel_ = nullptr;
+    brushStrengthSlider_ = nullptr; brushStrengthValueLabel_ = nullptr;
+    falloffTypeCombo_ = nullptr;
     selectedPointIndex_ = -1;
 
     if (controlsWidget_->layout()) {

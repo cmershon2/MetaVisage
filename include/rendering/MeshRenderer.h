@@ -17,6 +17,7 @@ public:
     ~MeshRenderer();
 
     void UploadMesh(const Mesh& mesh);
+    void UpdateVertexData(const Mesh& mesh);
     void Render(unsigned int shaderProgram, const Matrix4x4& viewProjection, const Transform& transform,
                 ShadingMode mode, const Vector3& color);
     void RenderWithAlpha(unsigned int shaderProgram, const Matrix4x4& viewProjection, const Transform& transform,

@@ -312,6 +312,20 @@ void MainWindow::ConnectViewportSignals() {
             this, &MainWindow::OnMorphParameterChanged);
     connect(sidebarWidget_, &SidebarWidget::MorphPreviewModeChanged,
             this, &MainWindow::OnMorphPreviewModeChanged);
+
+    // Connect Touch Up sculpting signals
+    connect(sidebarWidget_, &SidebarWidget::BrushTypeChanged,
+            viewportContainer_->GetPrimaryViewport(), &ViewportWidget::SetBrushType);
+    connect(sidebarWidget_, &SidebarWidget::BrushRadiusChangedSignal,
+            viewportContainer_->GetPrimaryViewport(), &ViewportWidget::SetBrushRadius);
+    connect(sidebarWidget_, &SidebarWidget::BrushStrengthChangedSignal,
+            viewportContainer_->GetPrimaryViewport(), &ViewportWidget::SetBrushStrength);
+    connect(sidebarWidget_, &SidebarWidget::BrushFalloffChanged,
+            viewportContainer_->GetPrimaryViewport(), &ViewportWidget::SetBrushFalloff);
+
+    // Connect viewport brush radius change (from [ ] keys) back to sidebar
+    connect(viewportContainer_->GetPrimaryViewport(), &ViewportWidget::BrushRadiusChanged,
+            sidebarWidget_, &SidebarWidget::SetBrushRadius);
 }
 
 void MainWindow::UpdateWindowTitle() {
@@ -499,6 +513,10 @@ void MainWindow::OnKeyboardShortcuts() {
         "  Left Click - Place/Select point\n"
         "  Delete - Remove selected point\n"
         "  Esc - Deselect point\n\n"
+        "Touch Up:\n"
+        "  Left Click/Drag - Apply brush\n"
+        "  [ - Decrease brush radius\n"
+        "  ] - Increase brush radius\n\n"
         "View:\n"
         "  Home - Reset Camera\n"
         "  1 - Front view\n"
@@ -960,6 +978,12 @@ void MainWindow::OnNextStage() {
         if (!morphData.originalMorphMesh) {
             morphData.originalMorphMesh = project_->GetMorphMesh().mesh;
         }
+    }
+
+    // When entering Touch Up stage, set viewport label
+    if (nextStage == WorkflowStage::TouchUp) {
+        viewportContainer_->GetPrimaryViewport()->SetViewportLabel("Touch Up");
+        statusLabel_->setText("Touch Up - Use sculpting brushes to refine the morph");
     }
 
     viewportContainer_->GetPrimaryViewport()->update();

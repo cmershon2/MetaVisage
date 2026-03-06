@@ -2,6 +2,9 @@
 #include "rendering/Renderer.h"
 #include "core/Project.h"
 #include "utils/RayCaster.h"
+#include "sculpting/SculptBrush.h"
+#include "sculpting/SmoothBrush.h"
+#include "sculpting/GrabBrush.h"
 #include <QDebug>
 #include <QPainter>
 #include <cmath>
@@ -22,7 +25,12 @@ ViewportWidget::ViewportWidget(QWidget *parent)
       renderFilter_(RenderFilter::All),
       isActive_(false),
       viewportLabel_(""),
-      selectedPointIndex_(-1) {
+      selectedPointIndex_(-1),
+      activeBrushType_(BrushType::Smooth),
+      smoothBrush_(std::make_unique<SmoothBrush>()),
+      grabBrush_(std::make_unique<GrabBrush>()),
+      isSculpting_(false),
+      brushOnMesh_(false) {
 
     setFocusPolicy(Qt::StrongFocus);
     setMouseTracking(true);
@@ -92,6 +100,279 @@ void ViewportWidget::UploadHeatMapColors(const Mesh* mesh, const std::vector<flo
     }
     doneCurrent();
 }
+
+// --- Sculpting accessors ---
+
+void ViewportWidget::SetBrushType(BrushType type) {
+    activeBrushType_ = type;
+}
+
+void ViewportWidget::SetBrushRadius(float radius) {
+    SculptBrush* brush = GetActiveBrush();
+    if (brush) {
+        brush->SetRadius(radius);
+    }
+}
+
+void ViewportWidget::SetBrushStrength(float strength) {
+    SculptBrush* brush = GetActiveBrush();
+    if (brush) {
+        brush->SetStrength(strength);
+    }
+}
+
+void ViewportWidget::SetBrushFalloff(FalloffType falloff) {
+    if (smoothBrush_) smoothBrush_->SetFalloff(falloff);
+    if (grabBrush_) grabBrush_->SetFalloff(falloff);
+}
+
+float ViewportWidget::GetBrushRadius() const {
+    if (activeBrushType_ == BrushType::Smooth && smoothBrush_) {
+        return smoothBrush_->GetRadius();
+    } else if (activeBrushType_ == BrushType::Grab && grabBrush_) {
+        return grabBrush_->GetRadius();
+    }
+    return 0.5f;
+}
+
+float ViewportWidget::GetBrushStrength() const {
+    if (activeBrushType_ == BrushType::Smooth && smoothBrush_) {
+        return smoothBrush_->GetStrength();
+    } else if (activeBrushType_ == BrushType::Grab && grabBrush_) {
+        return grabBrush_->GetStrength();
+    }
+    return 0.5f;
+}
+
+SculptBrush* ViewportWidget::GetActiveBrush() {
+    switch (activeBrushType_) {
+        case BrushType::Smooth: return smoothBrush_.get();
+        case BrushType::Grab:   return grabBrush_.get();
+        default: return nullptr;
+    }
+}
+
+Mesh* ViewportWidget::GetSculptMesh() {
+    if (!project_) return nullptr;
+
+    // In Touch Up stage, we sculpt the deformed morph mesh
+    auto& morphData = project_->GetMorphData();
+    if (morphData.deformedMorphMesh) {
+        return morphData.deformedMorphMesh.get();
+    }
+
+    return nullptr;
+}
+
+Transform ViewportWidget::GetSculptTransform() const {
+    // The deformed mesh is rendered using the morph mesh's transform (which has the
+    // -90° X rotation), so raycasting and brush operations must use the same transform.
+    if (project_ && project_->GetMorphMesh().isLoaded) {
+        return project_->GetMorphMesh().transform;
+    }
+    return Transform();
+}
+
+Vector3 ViewportWidget::ComputeWorldNormal(const Mesh& mesh, const Transform& transform,
+                                            int vertexIndex) {
+    const auto& normals = mesh.GetNormals();
+    if (vertexIndex < 0 || vertexIndex >= static_cast<int>(normals.size())) {
+        return Vector3(0.0f, 1.0f, 0.0f); // Default up
+    }
+
+    Vector3 localNormal = normals[vertexIndex];
+
+    // Transform normal to world space using the normal matrix (inverse transpose of model)
+    Matrix4x4 modelMatrix = transform.GetMatrix();
+    Matrix4x4 normalMatrix = modelMatrix.Inverse().Transpose();
+
+    Vector3 worldNormal;
+    worldNormal.x = normalMatrix.m[0] * localNormal.x + normalMatrix.m[4] * localNormal.y + normalMatrix.m[8] * localNormal.z;
+    worldNormal.y = normalMatrix.m[1] * localNormal.x + normalMatrix.m[5] * localNormal.y + normalMatrix.m[9] * localNormal.z;
+    worldNormal.z = normalMatrix.m[2] * localNormal.x + normalMatrix.m[6] * localNormal.y + normalMatrix.m[10] * localNormal.z;
+
+    return worldNormal.Normalized();
+}
+
+// Helper: compute inner radius ratio based on falloff type (where weight drops to 50%)
+static float GetFalloffInnerRatio(FalloffType falloff) {
+    switch (falloff) {
+        case FalloffType::Linear: return 0.5f;    // 1-t = 0.5 at t=0.5
+        case FalloffType::Smooth: return 0.5f;    // hermite midpoint
+        case FalloffType::Sharp:  return 0.794f;  // 1-t^3 = 0.5 at t≈0.794
+        default: return 0.5f;
+    }
+}
+
+// --- Sculpting interaction ---
+
+void ViewportWidget::HandleSculptPress(QMouseEvent *event) {
+    SculptBrush* brush = GetActiveBrush();
+    Mesh* mesh = GetSculptMesh();
+    if (!brush || !mesh || !project_) return;
+
+    float screenX = static_cast<float>(event->pos().x());
+    float screenY = static_cast<float>(event->pos().y());
+
+    Ray ray = RayCaster::ScreenToRay(screenX, screenY, width(), height(), *camera_);
+
+    // Use the morph mesh transform (matches how renderer draws the deformed mesh)
+    Transform transform = GetSculptTransform();
+    RaycastHit hit = RayCaster::RayIntersectMesh(ray, *mesh, transform);
+
+    if (hit.hit) {
+        isSculpting_ = true;
+        lastBrushWorldPos_ = hit.position;
+
+        // Start recording vertices for undo
+        currentStroke_ = BrushStroke();
+
+        // Record original positions of vertices that will be affected
+        auto affected = brush->GetAffectedVertices(*mesh, transform, hit.position, brush->GetRadius());
+        const auto& vertices = mesh->GetVertices();
+        for (const auto& av : affected) {
+            if (av.index >= 0 && av.index < static_cast<int>(vertices.size())) {
+                currentStroke_.RecordVertex(av.index, vertices[av.index]);
+            }
+        }
+
+        // Begin brush stroke
+        brush->BeginStroke(*mesh, transform, hit.position);
+
+        // Apply immediately for smooth brush (grab waits for movement)
+        if (activeBrushType_ == BrushType::Smooth) {
+            Vector3 worldNormal = ComputeWorldNormal(*mesh, transform, hit.vertexIndex);
+            if (brush->Apply(*mesh, transform, hit.position, worldNormal, Vector3(), 0.016f)) {
+                mesh->CalculateNormals();
+                makeCurrent();
+                if (renderer_) {
+                    renderer_->UpdateMeshVertices(mesh);
+                }
+                doneCurrent();
+                update();
+            }
+        }
+    }
+}
+
+void ViewportWidget::HandleSculptMove(QMouseEvent *event, const QPoint& delta) {
+    SculptBrush* brush = GetActiveBrush();
+    Mesh* mesh = GetSculptMesh();
+    if (!brush || !mesh || !project_) return;
+
+    float screenX = static_cast<float>(event->pos().x());
+    float screenY = static_cast<float>(event->pos().y());
+
+    if (isSculpting_) {
+        // Active sculpting stroke
+        Ray ray = RayCaster::ScreenToRay(screenX, screenY, width(), height(), *camera_);
+        Transform transform = GetSculptTransform();
+
+        Vector3 brushCenter = lastBrushWorldPos_;
+        Vector3 worldNormal(0.0f, 1.0f, 0.0f);
+        Vector3 mouseDelta;
+
+        if (activeBrushType_ == BrushType::Grab) {
+            // Grab brush: project mouse onto a view-aligned plane through the last
+            // brush position. This allows pulling vertices away from the mesh surface
+            // because movement is no longer constrained to the mesh.
+            Vector3 viewDir = (camera_->GetTarget() - camera_->GetPosition()).Normalized();
+            Vector3 planeNormal = viewDir * -1.0f; // plane faces toward camera
+
+            float denom = planeNormal.Dot(ray.direction);
+            if (std::abs(denom) > 1e-6f) {
+                float t = planeNormal.Dot(lastBrushWorldPos_ - ray.origin) / denom;
+                if (t > 0.0f) {
+                    brushCenter = ray.PointAt(t);
+                }
+            }
+            mouseDelta = brushCenter - lastBrushWorldPos_;
+            // Use camera-facing normal for cursor orientation
+            worldNormal = planeNormal;
+        } else {
+            // Smooth brush: raycast against mesh surface
+            RaycastHit hit = RayCaster::RayIntersectMesh(ray, *mesh, transform);
+
+            if (hit.hit) {
+                brushCenter = hit.position;
+                worldNormal = ComputeWorldNormal(*mesh, transform, hit.vertexIndex);
+            }
+            mouseDelta = brushCenter - lastBrushWorldPos_;
+
+            // Record any new vertices that may be affected
+            auto affected = brush->GetAffectedVertices(*mesh, transform, brushCenter, brush->GetRadius());
+            const auto& vertices = mesh->GetVertices();
+            for (const auto& av : affected) {
+                if (av.index >= 0 && av.index < static_cast<int>(vertices.size())) {
+                    currentStroke_.RecordVertex(av.index, vertices[av.index]);
+                }
+            }
+        }
+
+        // Apply brush
+        if (brush->Apply(*mesh, transform, brushCenter, worldNormal, mouseDelta, 0.016f)) {
+            mesh->CalculateNormals();
+            makeCurrent();
+            if (renderer_) {
+                renderer_->UpdateMeshVertices(mesh);
+            }
+            doneCurrent();
+            update();
+        }
+
+        lastBrushWorldPos_ = brushCenter;
+
+        // Update brush cursor
+        if (renderer_) {
+            float innerRadius = brush->GetRadius() * GetFalloffInnerRatio(brush->GetFalloff());
+            renderer_->SetBrushCursor(brushCenter, worldNormal, brush->GetRadius(), innerRadius, true);
+        }
+    } else {
+        // Not sculpting - just update brush cursor position on hover
+        UpdateBrushCursor(screenX, screenY);
+    }
+}
+
+void ViewportWidget::HandleSculptRelease() {
+    if (!isSculpting_) return;
+
+    SculptBrush* brush = GetActiveBrush();
+    if (brush) {
+        brush->EndStroke();
+    }
+
+    isSculpting_ = false;
+    // currentStroke_ contains the undo data (can be used by undo system later)
+}
+
+void ViewportWidget::UpdateBrushCursor(float screenX, float screenY) {
+    SculptBrush* brush = GetActiveBrush();
+    Mesh* mesh = GetSculptMesh();
+    if (!brush || !mesh || !renderer_) {
+        if (renderer_) renderer_->SetBrushCursor(Vector3(), Vector3(), 0.0f, 0.0f, false);
+        return;
+    }
+
+    Ray ray = RayCaster::ScreenToRay(screenX, screenY, width(), height(), *camera_);
+    Transform transform = GetSculptTransform();
+
+    RaycastHit hit = RayCaster::RayIntersectMesh(ray, *mesh, transform);
+
+    if (hit.hit) {
+        Vector3 worldNormal = ComputeWorldNormal(*mesh, transform, hit.vertexIndex);
+        float innerRadius = brush->GetRadius() * GetFalloffInnerRatio(brush->GetFalloff());
+        renderer_->SetBrushCursor(hit.position, worldNormal, brush->GetRadius(), innerRadius, true);
+        brushOnMesh_ = true;
+        lastBrushWorldPos_ = hit.position;
+    } else {
+        renderer_->SetBrushCursor(Vector3(), Vector3(), 0.0f, 0.0f, false);
+        brushOnMesh_ = false;
+    }
+
+    update();
+}
+
+// --- OpenGL ---
 
 void ViewportWidget::initializeGL() {
     initializeOpenGLFunctions();
@@ -215,6 +496,8 @@ void ViewportWidget::resizeGL(int w, int h) {
     glViewport(0, 0, w, h);
 }
 
+// --- Input handling ---
+
 void ViewportWidget::mousePressEvent(QMouseEvent *event) {
     // Ensure viewport has focus for keyboard input
     setFocus();
@@ -222,10 +505,14 @@ void ViewportWidget::mousePressEvent(QMouseEvent *event) {
     lastMousePos_ = event->pos();
 
     bool inPointReferenceStage = project_ && project_->GetCurrentStage() == WorkflowStage::PointReference;
+    bool inTouchUpStage = project_ && project_->GetCurrentStage() == WorkflowStage::TouchUp;
 
     // Left click behavior depends on stage
     if (event->button() == Qt::LeftButton) {
-        if (inPointReferenceStage) {
+        if (inTouchUpStage && activeBrushType_ != BrushType::None) {
+            // Touch Up stage: start sculpting
+            HandleSculptPress(event);
+        } else if (inPointReferenceStage) {
             // In Point Reference stage: place or select points
             HandlePointClick(event);
         } else if (transformMode_ != TransformMode::None) {
@@ -355,7 +642,12 @@ void ViewportWidget::mouseMoveEvent(QMouseEvent *event) {
     QPoint delta = event->pos() - lastMousePos_;
     lastMousePos_ = event->pos();
 
-    if (isTransforming_) {
+    bool inTouchUpStage = project_ && project_->GetCurrentStage() == WorkflowStage::TouchUp;
+
+    if (inTouchUpStage && (isSculpting_ || (!isOrbiting_ && !isPanning_))) {
+        // In Touch Up: handle sculpting move or hover cursor update
+        HandleSculptMove(event, delta);
+    } else if (isTransforming_) {
         ApplyTransform(delta);
         update();
     } else if (isOrbiting_) {
@@ -371,7 +663,9 @@ void ViewportWidget::mouseMoveEvent(QMouseEvent *event) {
 
 void ViewportWidget::mouseReleaseEvent(QMouseEvent *event) {
     if (event->button() == Qt::LeftButton) {
-        if (isTransforming_) {
+        if (isSculpting_) {
+            HandleSculptRelease();
+        } else if (isTransforming_) {
             isTransforming_ = false;
             // Keep the transform mode active so user can continue transforming
         }
@@ -394,6 +688,7 @@ void ViewportWidget::keyPressEvent(QKeyEvent *event) {
     // Check if we're in the Alignment stage for transform tools
     bool inAlignmentStage = project_ && project_->GetCurrentStage() == WorkflowStage::Alignment;
     bool inPointReferenceStage = project_ && project_->GetCurrentStage() == WorkflowStage::PointReference;
+    bool inTouchUpStage = project_ && project_->GetCurrentStage() == WorkflowStage::TouchUp;
     bool hasTargetMesh = project_ && project_->GetTargetMesh().isLoaded;
 
     switch (event->key()) {
@@ -435,6 +730,33 @@ void ViewportWidget::keyPressEvent(QKeyEvent *event) {
             if (transformMode_ != TransformMode::None) {
                 axisConstraint_ = (axisConstraint_ == AxisConstraint::Z) ? AxisConstraint::None : AxisConstraint::Z;
                 emit TransformModeChanged(transformMode_, axisConstraint_);
+            }
+            break;
+
+        // Brush radius keys (Touch Up stage)
+        case Qt::Key_BracketLeft:
+            if (inTouchUpStage) {
+                SculptBrush* brush = GetActiveBrush();
+                if (brush) {
+                    float step = std::max(0.1f, brush->GetRadius() * 0.1f);
+                    float newRadius = std::max(0.1f, brush->GetRadius() - step);
+                    brush->SetRadius(newRadius);
+                    emit BrushRadiusChanged(newRadius);
+                    update();
+                }
+            }
+            break;
+
+        case Qt::Key_BracketRight:
+            if (inTouchUpStage) {
+                SculptBrush* brush = GetActiveBrush();
+                if (brush) {
+                    float step = std::max(0.1f, brush->GetRadius() * 0.1f);
+                    float newRadius = std::min(100.0f, brush->GetRadius() + step);
+                    brush->SetRadius(newRadius);
+                    emit BrushRadiusChanged(newRadius);
+                    update();
+                }
             }
             break;
 

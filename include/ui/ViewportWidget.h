@@ -9,11 +9,16 @@
 #include <memory>
 #include "core/Camera.h"
 #include "core/Types.h"
+#include "sculpting/BrushStroke.h"
 
 namespace MetaVisage {
 
 class Renderer;
 class Project;
+class Transform;
+class SculptBrush;
+class SmoothBrush;
+class GrabBrush;
 
 class ViewportWidget : public QOpenGLWidget, protected QOpenGLFunctions_4_3_Core {
     Q_OBJECT
@@ -57,6 +62,15 @@ public:
     void InvalidateMesh(const Mesh* mesh);
     void UploadHeatMapColors(const Mesh* mesh, const std::vector<float>& displacements, float maxDisplacement);
 
+    // Sculpting (Touch Up stage)
+    void SetBrushType(BrushType type);
+    void SetBrushRadius(float radius);
+    void SetBrushStrength(float strength);
+    void SetBrushFalloff(FalloffType falloff);
+    BrushType GetBrushType() const { return activeBrushType_; }
+    float GetBrushRadius() const;
+    float GetBrushStrength() const;
+
 signals:
     // Signal emitted when transform mode changes
     void TransformModeChanged(TransformMode mode, AxisConstraint axis);
@@ -70,6 +84,8 @@ signals:
     void PointSelected(int correspondenceIndex);
     // Signal emitted when delete key is pressed to remove selected point
     void PointDeleteRequested();
+    // Signal emitted when brush radius changes (from [ ] keys)
+    void BrushRadiusChanged(float radius);
 
 protected:
     // OpenGL functions
@@ -93,6 +109,16 @@ private:
     bool TrySelectExistingPoint(float screenX, float screenY);
     PointSide GetViewportPointSide() const;
     void DrawPointLabels(QPainter& painter);
+
+    // Sculpting helpers
+    void HandleSculptPress(QMouseEvent *event);
+    void HandleSculptMove(QMouseEvent *event, const QPoint& delta);
+    void HandleSculptRelease();
+    void UpdateBrushCursor(float screenX, float screenY);
+    SculptBrush* GetActiveBrush();
+    Mesh* GetSculptMesh();
+    Transform GetSculptTransform() const;
+    Vector3 ComputeWorldNormal(const Mesh& mesh, const Transform& transform, int vertexIndex);
 
     std::unique_ptr<Camera> camera_;
     std::unique_ptr<Renderer> renderer_;
@@ -118,6 +144,15 @@ private:
 
     // Point reference state
     int selectedPointIndex_;
+
+    // Sculpting state
+    BrushType activeBrushType_;
+    std::unique_ptr<SmoothBrush> smoothBrush_;
+    std::unique_ptr<GrabBrush> grabBrush_;
+    bool isSculpting_;
+    BrushStroke currentStroke_;
+    Vector3 lastBrushWorldPos_;
+    bool brushOnMesh_;
 };
 
 } // namespace MetaVisage

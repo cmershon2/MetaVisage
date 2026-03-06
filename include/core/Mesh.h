@@ -28,6 +28,9 @@ public:
     // Modifiers
     void SetVertices(const std::vector<Vector3>& vertices);
     void SetNormals(const std::vector<Vector3>& normals);
+
+    // Mutable access for sculpting (modifies vertices in-place)
+    std::vector<Vector3>& GetVerticesMutable() { return vertices_; }
     void SetUVs(const std::vector<Vector2>& uvs);
     void SetFaces(const std::vector<Face>& faces);
     void SetMaterials(const std::vector<Material>& materials);
