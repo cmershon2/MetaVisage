@@ -5,11 +5,14 @@
 #include "core/Mesh.h"
 #include <Eigen/Dense>
 #include <Eigen/Sparse>
+#include <Eigen/SVD>
 #include <vector>
 #include <functional>
 #include <atomic>
 #include <set>
 #include <utility>
+#include <map>
+#include <queue>
 
 namespace MetaVisage {
 
@@ -23,15 +26,51 @@ struct NRICPParams {
     float landmarkWeight;        // Weight for user-defined landmarks
     float epsilon;               // Convergence threshold for early termination
 
+    // Boundary exclusion parameters
+    bool enableBoundaryExclusion;   // Auto-detect and exclude boundary/interior regions from ICP
+    int boundaryExclusionHops;      // Number of edge hops from boundary edges to exclude
+    float maxCorrespondenceDistance; // Max allowed ICP correspondence distance (-1.0 = auto from bbox)
+
+    // Inner optimization iterations per ICP step
+    int optimizationIterations;     // Number of optimization sub-steps (1 = current behavior)
+
+    // Optimization delta (step-size damping)
+    float dpInitial;                // Initial damping factor (1.0 = no damping)
+    float dpFinal;                  // Final damping factor (1.0 = no damping)
+
+    // Rigidity regularization (ARAP term)
+    float gammaInitial;             // Initial rigidity weight (0 = disabled)
+    float gammaFinal;               // Final rigidity weight (0 = disabled)
+
+    // Control node subsampling
+    float samplingInitial;          // Initial voxel size for control nodes (0 = all vertices)
+    float samplingFinal;            // Final voxel size for control nodes (0 = all vertices)
+    bool normalizeSampling;         // If true, sampling values are relative to bbox diagonal
+
     NRICPParams()
         : stiffnessSteps(5), alphaInitial(100.0f), alphaFinal(1.0f),
           icpIterations(3), normalThreshold(60.0f),
-          landmarkWeight(10.0f), epsilon(1e-4f) {}
+          landmarkWeight(10.0f), epsilon(1e-4f),
+          enableBoundaryExclusion(true), boundaryExclusionHops(3),
+          maxCorrespondenceDistance(-1.0f),
+          optimizationIterations(1),
+          dpInitial(1.0f), dpFinal(1.0f),
+          gammaInitial(0.0f), gammaFinal(0.0f),
+          samplingInitial(0.0f), samplingFinal(0.0f),
+          normalizeSampling(true) {}
 };
 
 // Edge in the mesh graph for stiffness regularization
 struct MeshEdge {
     int v0, v1;
+};
+
+// Control node subsampling data
+struct ControlNodeData {
+    std::vector<int> controlNodeIndices;                          // K indices into source vertices
+    std::vector<MeshEdge> controlEdges;                           // kNN edges among control nodes
+    std::vector<std::vector<std::pair<int, float>>> interpolationWeights; // per-vertex: (controlLocalIdx, weight)
+    int controlNodeCount = 0;
 };
 
 using NRICPProgressCallback = std::function<void(float progress, const std::string& message)>;
@@ -68,6 +107,9 @@ private:
     // Build the mesh edge adjacency list from faces
     void BuildEdges();
 
+    // Detect boundary vertices (near open edges) and mark exclusion zone via BFS
+    void DetectAndExcludeBoundaryVertices();
+
     // Find correspondences for all source vertices against target mesh
     // Applies normal angle threshold filtering
     void FindCorrespondences(const std::vector<Vector3>& currentPositions,
@@ -77,15 +119,30 @@ private:
                              std::vector<Vector3>& correspondencePoints);
 
     // Build and solve the sparse linear system for one NRICP step
-    // X is 4N x 3 matrix (per-vertex affine transforms)
+    // X is 4K x 3 matrix (per-node affine transforms, K = nodeCount)
     void SolveLinearSystem(float alpha,
+                           float gamma,
                            const std::vector<int>& corrIndices,
                            const std::vector<Vector3>& corrPoints,
+                           const ControlNodeData* controlData,
                            Eigen::MatrixXd& X);
 
-    // Apply the solved transformations to produce new vertex positions
+    // Apply the solved transformations to produce new vertex positions (all-vertex path)
     void ApplyTransformations(const Eigen::MatrixXd& X,
                               std::vector<Vector3>& outPositions);
+
+    // Apply transforms using control node interpolation (subsampled path)
+    void ApplyTransformationsSubsampled(const Eigen::MatrixXd& X,
+                                        const ControlNodeData& controlData,
+                                        std::vector<Vector3>& outPositions);
+
+    // Compute closest rotation matrices from current per-node affine transforms (ARAP)
+    void ComputeRotationTargets(const Eigen::MatrixXd& X, int nodeCount);
+
+    // Control node subsampling methods
+    ControlNodeData ComputeControlNodes(float voxelSize);
+    void BuildControlNodeEdges(ControlNodeData& data, int kNeighbors = 8);
+    void ComputeInterpolationWeights(ControlNodeData& data, int kNearest = 4);
 
     // Compute per-vertex normals from current positions and faces
     void ComputeNormals(const std::vector<Vector3>& positions,
@@ -114,6 +171,21 @@ private:
     // Progress
     NRICPProgressCallback progressCallback_;
     std::atomic<bool>* cancelled_;
+
+    // Boundary exclusion state
+    std::vector<bool> excludedVertices_;
+    std::vector<std::vector<int>> vertexAdjacency_;
+    float resolvedMaxCorrespondenceDistance_;
+
+    // Rigidity regularization state (ARAP rotation targets)
+    std::vector<Eigen::Matrix3d> rotationTargets_;
+
+    // Control node subsampling state
+    ControlNodeData controlNodeData_;
+
+    // Cached bounding box for sampling normalization
+    Vector3 bboxMin_, bboxMax_;
+    float bboxDiagonal_;
 };
 
 } // namespace MetaVisage

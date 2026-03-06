@@ -128,6 +128,8 @@ SerializationResult ProjectSerializer::Load(Project& project, const QString& fil
         morphData.nricpNormalThreshold = loaded.nricpNormalThreshold;
         morphData.nricpLandmarkWeight = loaded.nricpLandmarkWeight;
         morphData.nricpEpsilon = loaded.nricpEpsilon;
+        morphData.nricpEnableBoundaryExclusion = loaded.nricpEnableBoundaryExclusion;
+        morphData.nricpBoundaryExclusionHops = loaded.nricpBoundaryExclusionHops;
     }
 
     result.success = true;
@@ -223,6 +225,18 @@ QJsonObject ProjectSerializer::SerializeMorphData(const MorphData& data) const {
     obj["nricpNormalThreshold"] = static_cast<double>(data.nricpNormalThreshold);
     obj["nricpLandmarkWeight"] = static_cast<double>(data.nricpLandmarkWeight);
     obj["nricpEpsilon"] = static_cast<double>(data.nricpEpsilon);
+    obj["nricpEnableBoundaryExclusion"] = data.nricpEnableBoundaryExclusion;
+    obj["nricpBoundaryExclusionHops"] = data.nricpBoundaryExclusionHops;
+
+    // NRICP optimization, rigidity, and subsampling parameters
+    obj["nricpOptimizationIterations"] = data.nricpOptimizationIterations;
+    obj["nricpDpInitial"] = static_cast<double>(data.nricpDpInitial);
+    obj["nricpDpFinal"] = static_cast<double>(data.nricpDpFinal);
+    obj["nricpGammaInitial"] = static_cast<double>(data.nricpGammaInitial);
+    obj["nricpGammaFinal"] = static_cast<double>(data.nricpGammaFinal);
+    obj["nricpSamplingInitial"] = static_cast<double>(data.nricpSamplingInitial);
+    obj["nricpSamplingFinal"] = static_cast<double>(data.nricpSamplingFinal);
+    obj["nricpNormalizeSampling"] = data.nricpNormalizeSampling;
 
     // Save deformed mesh vertex data if it exists
     if (data.deformedMorphMesh && data.isProcessed) {
@@ -365,6 +379,18 @@ MorphData ProjectSerializer::DeserializeMorphData(const QJsonObject& obj) const 
     data.nricpNormalThreshold = static_cast<float>(obj["nricpNormalThreshold"].toDouble(60.0));
     data.nricpLandmarkWeight = static_cast<float>(obj["nricpLandmarkWeight"].toDouble(10.0));
     data.nricpEpsilon = static_cast<float>(obj["nricpEpsilon"].toDouble(1e-4));
+    data.nricpEnableBoundaryExclusion = obj["nricpEnableBoundaryExclusion"].toBool(true);
+    data.nricpBoundaryExclusionHops = obj["nricpBoundaryExclusionHops"].toInt(3);
+
+    // NRICP optimization, rigidity, and subsampling parameters (backward compatible)
+    data.nricpOptimizationIterations = obj["nricpOptimizationIterations"].toInt(1);
+    data.nricpDpInitial = static_cast<float>(obj["nricpDpInitial"].toDouble(1.0));
+    data.nricpDpFinal = static_cast<float>(obj["nricpDpFinal"].toDouble(1.0));
+    data.nricpGammaInitial = static_cast<float>(obj["nricpGammaInitial"].toDouble(0.0));
+    data.nricpGammaFinal = static_cast<float>(obj["nricpGammaFinal"].toDouble(0.0));
+    data.nricpSamplingInitial = static_cast<float>(obj["nricpSamplingInitial"].toDouble(0.0));
+    data.nricpSamplingFinal = static_cast<float>(obj["nricpSamplingFinal"].toDouble(0.0));
+    data.nricpNormalizeSampling = obj["nricpNormalizeSampling"].toBool(true);
 
     // Restore deformed mesh vertex data if present
     if (obj.contains("deformedVertices") && obj.contains("deformedNormals")) {

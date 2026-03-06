@@ -1061,6 +1061,18 @@ User feedback identified that RBF/TPS deformation is insufficient for wrapping M
 - [x] NRICP parameters persist in project files; old projects load with sensible defaults
 - [x] No new external dependencies (uses existing Eigen3 Sparse module)
 
+#### Story 11.5.5: Boundary Vertex Exclusion (Interior Geometry Fix)
+**Background:** MetaHuman morph meshes contain interior geometry (mouth box, eye sockets, ear canals) that does not exist on target scan meshes. During NRICP, these interior vertices found bad correspondences on the target exterior, causing them to cut through the face surface.
+
+**Tasks:**
+- [x] Implement boundary edge detection (edges with only 1 adjacent face)
+- [x] BFS propagation from boundary vertices to mark exclusion zone (configurable hops)
+- [x] Skip excluded vertices in FindCorrespondences() (stiffness term interpolates their transforms)
+- [x] Add max correspondence distance threshold (auto-computed from bounding box diagonal)
+- [x] Add UI: "Exclude Boundary Regions" checkbox + "Boundary Depth" slider (1-10 hops)
+- [x] Serialize boundary exclusion params in ProjectSerializer with backward-compatible defaults
+- [x] Wire params through MorphData, NRICPParams, and MorphWorker
+
 ---
 
 ## Sprint 12: Testing & Release Prep

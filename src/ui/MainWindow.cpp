@@ -1176,6 +1176,16 @@ void MainWindow::OnProcessMorph() {
     nricpParams.normalThreshold = morphData.nricpNormalThreshold;
     nricpParams.landmarkWeight = morphData.nricpLandmarkWeight;
     nricpParams.epsilon = morphData.nricpEpsilon;
+    nricpParams.enableBoundaryExclusion = morphData.nricpEnableBoundaryExclusion;
+    nricpParams.boundaryExclusionHops = morphData.nricpBoundaryExclusionHops;
+    nricpParams.optimizationIterations = morphData.nricpOptimizationIterations;
+    nricpParams.dpInitial = morphData.nricpDpInitial;
+    nricpParams.dpFinal = morphData.nricpDpFinal;
+    nricpParams.gammaInitial = morphData.nricpGammaInitial;
+    nricpParams.gammaFinal = morphData.nricpGammaFinal;
+    nricpParams.samplingInitial = morphData.nricpSamplingInitial;
+    nricpParams.samplingFinal = morphData.nricpSamplingFinal;
+    nricpParams.normalizeSampling = morphData.nricpNormalizeSampling;
 
     // Create worker and thread, passing transforms for coordinate space conversion
     morphThread_ = new QThread(this);

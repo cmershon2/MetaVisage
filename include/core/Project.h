@@ -69,6 +69,24 @@ struct MorphData {
     float nricpLandmarkWeight;     // Weight for user-defined landmarks
     float nricpEpsilon;            // Convergence threshold
 
+    // NRICP boundary exclusion parameters
+    bool nricpEnableBoundaryExclusion;   // Auto-exclude boundary/interior regions from ICP
+    int nricpBoundaryExclusionHops;      // Edge hops from boundary to exclude
+
+    // NRICP optimization iterations and delta
+    int nricpOptimizationIterations;     // Inner optimization iterations per ICP step (1 = disabled)
+    float nricpDpInitial;               // Initial step-size damping (1.0 = no damping)
+    float nricpDpFinal;                 // Final step-size damping (1.0 = no damping)
+
+    // NRICP rigidity regularization
+    float nricpGammaInitial;            // Initial ARAP rigidity weight (0 = disabled)
+    float nricpGammaFinal;              // Final ARAP rigidity weight (0 = disabled)
+
+    // NRICP control node subsampling
+    float nricpSamplingInitial;         // Initial control node sampling (0 = all vertices)
+    float nricpSamplingFinal;           // Final control node sampling (0 = all vertices)
+    bool nricpNormalizeSampling;        // Sampling values relative to bbox diagonal
+
     std::shared_ptr<Mesh> originalMorphMesh;
     std::shared_ptr<Mesh> deformedMorphMesh;
     bool isProcessed;
@@ -89,6 +107,12 @@ struct MorphData {
                   nricpAlphaInitial(100.0f), nricpAlphaFinal(1.0f),
                   nricpIcpIterations(3), nricpNormalThreshold(60.0f),
                   nricpLandmarkWeight(10.0f), nricpEpsilon(1e-4f),
+                  nricpEnableBoundaryExclusion(true), nricpBoundaryExclusionHops(3),
+                  nricpOptimizationIterations(1),
+                  nricpDpInitial(1.0f), nricpDpFinal(1.0f),
+                  nricpGammaInitial(0.0f), nricpGammaFinal(0.0f),
+                  nricpSamplingInitial(0.0f), nricpSamplingFinal(0.0f),
+                  nricpNormalizeSampling(true),
                   isProcessed(false), isAccepted(false),
                   previewMode(MorphPreviewMode::Deformed),
                   maxDisplacement(0.0f), avgDisplacement(0.0f),
