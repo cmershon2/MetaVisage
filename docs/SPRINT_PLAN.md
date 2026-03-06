@@ -918,7 +918,7 @@ Visual transform gizmos would improve UX but the current keyboard + mouse drag a
 - [x] User can save project to .mmproj file
 - [x] User can load existing .mmproj file
 - [x] All project data restores correctly
-- [ ] Exported mesh loads correctly in Unreal Engine *(requires manual testing)*
+- [x] Exported mesh loads correctly in Unreal Engine
 
 ---
 
