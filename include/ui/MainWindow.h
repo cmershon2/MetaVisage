@@ -7,8 +7,11 @@
 #include <QStatusBar>
 #include <QLabel>
 #include <QThread>
+#include <QTimer>
 #include <memory>
 #include "core/Project.h"
+#include "core/UndoStack.h"
+#include "sculpting/BrushStroke.h"
 
 namespace MetaVisage {
 
@@ -78,6 +81,13 @@ private slots:
     // Touch Up actions
     void OnFinalizeRequested();
 
+    // Undo/redo signals from viewport
+    void OnTransformApplied(Transform before, Transform after);
+    void OnSculptStrokeCompleted(BrushStroke stroke);
+
+    // Stats timer
+    void UpdateStatsDisplay();
+
 private:
     void CreateMenus();
     void CreateToolBar();
@@ -87,6 +97,8 @@ private:
     void UpdateStatusBar();
     void ConnectViewportSignals();
     void RefreshPointUI();
+    void UpdateUndoRedoState();
+    void BackupProject();
 
     // Symmetry helpers
     void PlaceSymmetricPoint(PointSide side, const Vector3& position, int vertexIndex, int parentIndex);
@@ -104,6 +116,15 @@ private:
 
     // Project data
     std::unique_ptr<Project> project_;
+
+    // Undo/Redo
+    std::unique_ptr<UndoStack> undoStack_;
+    QAction* undoAction_;
+    QAction* redoAction_;
+
+    // Stats timer
+    QTimer* statsTimer_;
+    float currentFPS_;
 
     // Morph processing
     QThread* morphThread_;

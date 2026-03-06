@@ -1,4 +1,7 @@
 #include "core/Mesh.h"
+#include "utils/BVH.h"
+#include "utils/SpatialHash.h"
+#include "utils/Logger.h"
 #include <algorithm>
 #include <cmath>
 #ifdef HAVE_ASSIMP
@@ -7,7 +10,6 @@
 #include <assimp/scene.h>
 #include <assimp/postprocess.h>
 #endif
-#include <QDebug>
 #include <QFileInfo>
 
 namespace MetaVisage {
@@ -33,13 +35,13 @@ bool Mesh::Load(const QString& filepath) {
     );
 
     if (!scene || scene->mFlags & AI_SCENE_FLAGS_INCOMPLETE || !scene->mRootNode) {
-        qWarning() << "Assimp error:" << importer.GetErrorString();
+        MV_LOG_ERROR(QString("Assimp error loading '%1': %2").arg(filepath, importer.GetErrorString()));
         return false;
     }
 
     // For simplicity, load only the first mesh
     if (scene->mNumMeshes == 0) {
-        qWarning() << "No meshes found in file:" << filepath;
+        MV_LOG_WARNING(QString("No meshes found in file: %1").arg(filepath));
         return false;
     }
 
@@ -118,17 +120,13 @@ bool Mesh::Load(const QString& filepath) {
 
     CalculateBounds();
 
-    qDebug() << "Loaded mesh:" << name_;
-    qDebug() << "  Vertices:" << vertices_.size();
-    qDebug() << "  Faces:" << faces_.size();
-    qDebug() << "  Normals:" << normals_.size();
-    qDebug() << "  UVs:" << uvs_.size();
-    qDebug() << "  Materials:" << materials_.size();
+    MV_LOG_INFO(QString("Loaded mesh '%1': %2 vertices, %3 faces, %4 normals, %5 UVs, %6 materials")
+        .arg(name_).arg(vertices_.size()).arg(faces_.size())
+        .arg(normals_.size()).arg(uvs_.size()).arg(materials_.size()));
 
     return Validate();
 #else
-    qWarning() << "Assimp not available - cannot load mesh:" << filepath;
-    qWarning() << "To enable mesh loading, install Assimp: vcpkg install assimp:x64-mingw-dynamic";
+    MV_LOG_WARNING(QString("Assimp not available - cannot load mesh: %1").arg(filepath));
     return false;
 #endif
 }
@@ -194,15 +192,15 @@ bool Mesh::Save(const QString& filepath) {
 
     aiReturn ret = exporter.Export(&scene, formatId, filepath.toStdString());
     if (ret != aiReturn_SUCCESS) {
-        qWarning() << "Mesh save failed:" << exporter.GetErrorString();
+        MV_LOG_ERROR(QString("Mesh save failed: %1").arg(exporter.GetErrorString()));
         return false;
     }
 
-    qDebug() << "Mesh saved to:" << filepath;
+    MV_LOG_INFO(QString("Mesh saved to: %1").arg(filepath));
     return true;
 #else
     Q_UNUSED(filepath);
-    qWarning() << "Assimp not available - cannot save mesh";
+    MV_LOG_WARNING("Assimp not available - cannot save mesh");
     return false;
 #endif
 }
@@ -210,6 +208,7 @@ bool Mesh::Save(const QString& filepath) {
 void Mesh::SetVertices(const std::vector<Vector3>& vertices) {
     vertices_ = vertices;
     CalculateBounds();
+    InvalidateAccelerationStructures();
 }
 
 void Mesh::SetNormals(const std::vector<Vector3>& normals) {
@@ -292,21 +291,37 @@ void Mesh::CalculateBounds() {
 bool Mesh::Validate() const {
     // Check if we have vertices
     if (vertices_.empty()) {
+        MV_LOG_WARNING("Mesh validation failed: no vertices");
         return false;
     }
 
     // Check if we have faces
     if (faces_.empty()) {
+        MV_LOG_WARNING("Mesh validation failed: no faces");
         return false;
     }
 
     // Check if face indices are valid
-    for (const auto& face : faces_) {
+    for (size_t fi = 0; fi < faces_.size(); ++fi) {
+        const auto& face = faces_[fi];
+        if (face.vertexIndices.size() < 3) {
+            MV_LOG_WARNING(QString("Mesh validation: face %1 has fewer than 3 vertices").arg(fi));
+            return false;
+        }
         for (unsigned int idx : face.vertexIndices) {
             if (idx >= vertices_.size()) {
+                MV_LOG_WARNING(QString("Mesh validation: face %1 has out-of-bounds vertex index %2 (max %3)")
+                    .arg(fi).arg(idx).arg(vertices_.size() - 1));
                 return false;
             }
         }
+    }
+
+    // Check normals match vertices if present
+    if (!normals_.empty() && normals_.size() != vertices_.size()) {
+        MV_LOG_WARNING(QString("Mesh validation: normal count (%1) doesn't match vertex count (%2)")
+            .arg(normals_.size()).arg(vertices_.size()));
+        return false;
     }
 
     return true;
@@ -329,6 +344,29 @@ size_t Mesh::GetTriangleCount() const {
         }
     }
     return count;
+}
+
+BVH* Mesh::GetBVH() const {
+    if (!bvh_) {
+        bvh_ = std::make_unique<BVH>();
+        bvh_->Build(vertices_, faces_);
+    }
+    return bvh_.get();
+}
+
+SpatialHash* Mesh::GetSpatialHash(float cellSize) const {
+    if (!spatialHash_ || std::abs(spatialHashCellSize_ - cellSize) > 1e-6f) {
+        spatialHash_ = std::make_unique<SpatialHash>();
+        spatialHash_->Build(vertices_, cellSize);
+        spatialHashCellSize_ = cellSize;
+    }
+    return spatialHash_.get();
+}
+
+void Mesh::InvalidateAccelerationStructures() {
+    bvh_.reset();
+    spatialHash_.reset();
+    spatialHashCellSize_ = 0.0f;
 }
 
 } // namespace MetaVisage

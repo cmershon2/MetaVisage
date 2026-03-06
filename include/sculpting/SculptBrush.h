@@ -8,6 +8,8 @@
 
 namespace MetaVisage {
 
+class SpatialHash;
+
 struct BrushSettings {
     float radius = 0.5f;
     float strength = 0.5f;
@@ -42,6 +44,12 @@ public:
     std::vector<AffectedVertex> GetAffectedVertices(
         const Mesh& mesh, const Transform& transform,
         const Vector3& worldCenter, float radius) const;
+
+    // SpatialHash-accelerated version (O(1) average vs O(n) brute force)
+    std::vector<AffectedVertex> GetAffectedVertices(
+        const Mesh& mesh, const Transform& transform,
+        const Vector3& worldCenter, float radius,
+        const SpatialHash& spatialHash) const;
 
     // Apply the brush effect - implemented by subclasses
     // worldCenter: brush position in world space

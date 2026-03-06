@@ -1,5 +1,5 @@
 #include "deformation/MeshDeformer.h"
-#include <QDebug>
+#include "utils/Logger.h"
 #include <cmath>
 #include <algorithm>
 #include <numeric>
@@ -141,17 +141,7 @@ void MeshDeformer::ExtractControlPoints(std::vector<Vector3>& sourcePoints,
         }
     }
 
-    qDebug() << "ExtractControlPoints: Extracted" << sourcePoints.size() << "control point pairs";
-    if (!sourcePoints.empty()) {
-        qDebug() << "  First source point (morph local):"
-                 << sourcePoints[0].x << sourcePoints[0].y << sourcePoints[0].z;
-        qDebug() << "  First target point (in morph local):"
-                 << targetPoints[0].x << targetPoints[0].y << targetPoints[0].z;
-        qDebug() << "  First morph vertex (local):"
-                 << (morphVertices.empty() ? Vector3() : morphVertices[0]).x
-                 << (morphVertices.empty() ? Vector3() : morphVertices[0]).y
-                 << (morphVertices.empty() ? Vector3() : morphVertices[0]).z;
-    }
+    MV_LOG_INFO(QString("ExtractControlPoints: Extracted %1 control point pairs").arg(sourcePoints.size()));
 }
 
 std::shared_ptr<Mesh> MeshDeformer::CopyMesh(const std::shared_ptr<Mesh>& source) const {
@@ -191,9 +181,8 @@ DeformationResult MeshDeformer::Deform() {
         return result;
     }
 
-    qDebug() << "MeshDeformer: Starting deformation with"
-             << sourcePoints.size() << "control points and"
-             << sourceMesh_->GetVertexCount() << "vertices";
+    MV_LOG_INFO(QString("Starting deformation with %1 control points and %2 vertices")
+        .arg(sourcePoints.size()).arg(sourceMesh_->GetVertexCount()));
 
     // Check for cancellation
     if (cancelled_.load()) {
@@ -304,10 +293,8 @@ DeformationResult MeshDeformer::Deform() {
     result.maxDisplacement = maxDisp;
     result.avgDisplacement = (vertexCount > 0) ? static_cast<float>(totalDisp / vertexCount) : 0.0f;
 
-    qDebug() << "MeshDeformer: Deformation complete";
-    qDebug() << "  Max displacement:" << result.maxDisplacement;
-    qDebug() << "  Avg displacement:" << result.avgDisplacement;
-    qDebug() << "  Vertices processed:" << vertexCount;
+    MV_LOG_INFO(QString("Deformation complete: max displacement=%1, avg=%2, vertices=%3")
+        .arg(result.maxDisplacement).arg(result.avgDisplacement).arg(vertexCount));
 
     return result;
 }

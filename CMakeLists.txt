@@ -82,6 +82,12 @@ set(SOURCES
     src/io/MeshExporter.cpp
     src/io/ProjectSerializer.cpp
     src/ui/ExportDialog.cpp
+    src/utils/Logger.cpp
+    src/utils/ErrorHelper.cpp
+    src/core/UndoStack.cpp
+    src/utils/BVH.cpp
+    src/utils/SpatialHash.cpp
+    src/ui/ShortcutsDialog.cpp
 )
 
 # Header files
@@ -111,6 +117,14 @@ set(HEADERS
     include/io/MeshExporter.h
     include/io/ProjectSerializer.h
     include/ui/ExportDialog.h
+    include/utils/Logger.h
+    include/utils/ErrorHelper.h
+    include/core/UndoableAction.h
+    include/core/UndoStack.h
+    include/core/UndoActions.h
+    include/utils/BVH.h
+    include/utils/SpatialHash.h
+    include/ui/ShortcutsDialog.h
 )
 
 # Create executable

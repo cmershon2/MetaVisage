@@ -12,7 +12,8 @@
       "Bash(cmake --build . --config Release)",
       "Bash(powershell -File build-msvc.ps1)",
       "Bash(cmake --build . --config Debug)",
-      "Bash(xargs grep -l \"MeshExporter\\\\|Serializ\\\\|Export\")"
+      "Bash(xargs grep -l \"MeshExporter\\\\|Serializ\\\\|Export\")",
+      "Bash(cmake --build build)"
     ]
   }
 }

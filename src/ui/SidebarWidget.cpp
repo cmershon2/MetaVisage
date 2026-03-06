@@ -358,8 +358,21 @@ void SidebarWidget::CreateAlignmentControls() {
     connect(scaleZSpinBox_, QOverload<double>::of(&QDoubleSpinBox::valueChanged),
             this, [this](double) { OnSpinBoxValueChanged(); });
 
+    // Add tooltips to transform spinboxes
+    posXSpinBox_->setToolTip("Target mesh X position");
+    posYSpinBox_->setToolTip("Target mesh Y position");
+    posZSpinBox_->setToolTip("Target mesh Z position");
+    rotXSpinBox_->setToolTip("Target mesh X rotation (degrees)");
+    rotYSpinBox_->setToolTip("Target mesh Y rotation (degrees)");
+    rotZSpinBox_->setToolTip("Target mesh Z rotation (degrees)");
+    scaleXSpinBox_->setToolTip("Target mesh X scale");
+    scaleYSpinBox_->setToolTip("Target mesh Y scale");
+    scaleZSpinBox_->setToolTip("Target mesh Z scale");
+    shadingCombo->setToolTip("Change mesh rendering mode");
+
     // Reset button
     resetTransformButton_ = new QPushButton("Reset Transform");
+    resetTransformButton_->setToolTip("Reset target mesh transform to identity");
     resetTransformButton_->setStyleSheet(
         "QPushButton {"
         "    background-color: #E74C3C;"
@@ -466,6 +479,7 @@ void SidebarWidget::CreatePointReferenceControls() {
         "QSlider::groove:horizontal { background: #34495E; height: 6px; border-radius: 3px; }"
         "QSlider::handle:horizontal { background: #3498DB; width: 14px; margin: -4px 0; border-radius: 7px; }"
     );
+    pointSizeSlider_->setToolTip("Adjust correspondence point display size");
     connect(pointSizeSlider_, &QSlider::valueChanged, this, &SidebarWidget::OnPointSizeChanged);
     sizeLayout->addWidget(pointSizeSlider_);
 
@@ -498,6 +512,7 @@ void SidebarWidget::CreatePointReferenceControls() {
         "    background-color: #C0392B;"
         "}"
     );
+    clearAllPointsButton_->setToolTip("Remove all correspondence points from both meshes");
     connect(clearAllPointsButton_, &QPushButton::clicked, this, &SidebarWidget::ClearAllPointsRequested);
     actionsLayout->addWidget(clearAllPointsButton_);
 
@@ -517,6 +532,7 @@ void SidebarWidget::CreatePointReferenceControls() {
     QVBoxLayout* symmetryLayout = new QVBoxLayout(symmetryGroup);
 
     symmetryCheckBox_ = new QCheckBox("Enable Symmetry Mode");
+    symmetryCheckBox_->setToolTip("Automatically place mirrored points across the symmetry axis");
     symmetryCheckBox_->setStyleSheet("QCheckBox { color: white; }");
     connect(symmetryCheckBox_, &QCheckBox::toggled, this, &SidebarWidget::OnSymmetryToggled);
     symmetryLayout->addWidget(symmetryCheckBox_);
@@ -591,6 +607,7 @@ void SidebarWidget::CreateMorphControls() {
     stiffLabel->setMinimumWidth(75);
     stiffLayout->addWidget(stiffLabel);
     stiffnessSlider_ = new QSlider(Qt::Horizontal);
+    stiffnessSlider_->setToolTip("Controls mesh rigidity (0=flexible, 1=rigid)");
     stiffnessSlider_->setRange(0, 100);
     stiffnessSlider_->setValue(50);
     stiffnessSlider_->setStyleSheet(sliderStyle);
@@ -607,6 +624,7 @@ void SidebarWidget::CreateMorphControls() {
     smoothLabel->setMinimumWidth(75);
     smoothLayout->addWidget(smoothLabel);
     smoothnessSlider_ = new QSlider(Qt::Horizontal);
+    smoothnessSlider_->setToolTip("Blends point influence regions (0=sharp, 1=smooth)");
     smoothnessSlider_->setRange(0, 100);
     smoothnessSlider_->setValue(50);
     smoothnessSlider_->setStyleSheet(sliderStyle);
@@ -623,6 +641,7 @@ void SidebarWidget::CreateMorphControls() {
     kernelLabel->setMinimumWidth(75);
     kernelLayout->addWidget(kernelLabel);
     kernelTypeCombo_ = new QComboBox();
+    kernelTypeCombo_->setToolTip("RBF interpolation kernel (TPS recommended for most cases)");
     kernelTypeCombo_->addItem("Thin-Plate Spline", static_cast<int>(DeformationAlgorithm::RBF_TPS));
     kernelTypeCombo_->addItem("Gaussian", static_cast<int>(DeformationAlgorithm::RBF_GAUSSIAN));
     kernelTypeCombo_->addItem("Multiquadric", static_cast<int>(DeformationAlgorithm::RBF_MULTIQUADRIC));
@@ -662,6 +681,7 @@ void SidebarWidget::CreateMorphControls() {
         "    background-color: #555;"
         "}"
     );
+    processButton_->setToolTip("Run RBF deformation to morph the mesh");
     connect(processButton_, &QPushButton::clicked, this, &SidebarWidget::ProcessMorphRequested);
     processLayout->addWidget(processButton_);
 
@@ -716,6 +736,7 @@ void SidebarWidget::CreateMorphControls() {
     QVBoxLayout* previewLayout = new QVBoxLayout(previewGroup);
 
     previewModeCombo_ = new QComboBox();
+    previewModeCombo_->setToolTip("Switch between different preview visualizations");
     previewModeCombo_->addItem("Deformed", static_cast<int>(MorphPreviewMode::Deformed));
     previewModeCombo_->addItem("Original", static_cast<int>(MorphPreviewMode::Original));
     previewModeCombo_->addItem("Overlay", static_cast<int>(MorphPreviewMode::Overlay));
@@ -753,6 +774,7 @@ void SidebarWidget::CreateMorphControls() {
         "    background-color: #555;"
         "}"
     );
+    acceptButton_->setToolTip("Accept the morph result and proceed to Touch Up");
     connect(acceptButton_, &QPushButton::clicked, this, &SidebarWidget::AcceptMorphRequested);
     actionsLayout->addWidget(acceptButton_);
 
@@ -834,6 +856,7 @@ void SidebarWidget::CreateTouchUpControls() {
     brushButtonGroup_->setExclusive(true);
 
     smoothBrushButton_ = new QPushButton("Smooth");
+    smoothBrushButton_->setToolTip("Average vertex positions to smooth the surface");
     smoothBrushButton_->setCheckable(true);
     smoothBrushButton_->setChecked(true);
     smoothBrushButton_->setStyleSheet(buttonStyle);
@@ -841,18 +864,21 @@ void SidebarWidget::CreateTouchUpControls() {
     toolLayout->addWidget(smoothBrushButton_, 0, 0);
 
     grabBrushButton_ = new QPushButton("Grab");
+    grabBrushButton_->setToolTip("Click and drag to move vertices with falloff");
     grabBrushButton_->setCheckable(true);
     grabBrushButton_->setStyleSheet(buttonStyle);
     brushButtonGroup_->addButton(grabBrushButton_, 1);
     toolLayout->addWidget(grabBrushButton_, 0, 1);
 
     pushPullBrushButton_ = new QPushButton("Push/Pull");
+    pushPullBrushButton_->setToolTip("Push vertices inward or pull outward along surface normal");
     pushPullBrushButton_->setCheckable(true);
     pushPullBrushButton_->setStyleSheet(buttonStyle);
     brushButtonGroup_->addButton(pushPullBrushButton_, 2);
     toolLayout->addWidget(pushPullBrushButton_, 1, 0);
 
     inflateBrushButton_ = new QPushButton("Inflate");
+    inflateBrushButton_->setToolTip("Expand or contract the surface along vertex normals");
     inflateBrushButton_->setCheckable(true);
     inflateBrushButton_->setStyleSheet(buttonStyle);
     brushButtonGroup_->addButton(inflateBrushButton_, 3);
@@ -887,6 +913,7 @@ void SidebarWidget::CreateTouchUpControls() {
     settingsLayout->addLayout(radiusLabelLayout);
 
     brushRadiusSlider_ = new QSlider(Qt::Horizontal);
+    brushRadiusSlider_->setToolTip("Brush radius - use [ ] keys to adjust");
     brushRadiusSlider_->setRange(1, 1000);
     brushRadiusSlider_->setValue(5);
     connect(brushRadiusSlider_, &QSlider::valueChanged, this, &SidebarWidget::OnBrushRadiusChanged);
@@ -905,6 +932,7 @@ void SidebarWidget::CreateTouchUpControls() {
     settingsLayout->addLayout(strengthLabelLayout);
 
     brushStrengthSlider_ = new QSlider(Qt::Horizontal);
+    brushStrengthSlider_->setToolTip("Brush effect intensity");
     brushStrengthSlider_->setRange(1, 100);
     brushStrengthSlider_->setValue(50);
     connect(brushStrengthSlider_, &QSlider::valueChanged, this, &SidebarWidget::OnBrushStrengthChanged);
@@ -914,6 +942,7 @@ void SidebarWidget::CreateTouchUpControls() {
     QHBoxLayout* falloffLayout = new QHBoxLayout();
     falloffLayout->addWidget(new QLabel("Falloff:"));
     falloffTypeCombo_ = new QComboBox();
+    falloffTypeCombo_->setToolTip("How brush strength decreases from center to edge");
     falloffTypeCombo_->addItem("Smooth");
     falloffTypeCombo_->addItem("Linear");
     falloffTypeCombo_->addItem("Sharp");
@@ -932,6 +961,7 @@ void SidebarWidget::CreateTouchUpControls() {
     QVBoxLayout* symmetryLayout = new QVBoxLayout(symmetryGroup);
 
     sculptSymmetryCheckBox_ = new QCheckBox("Enable Symmetry");
+    sculptSymmetryCheckBox_->setToolTip("Mirror sculpting strokes across the symmetry axis");
     sculptSymmetryCheckBox_->setStyleSheet("QCheckBox { color: white; }");
     symmetryLayout->addWidget(sculptSymmetryCheckBox_);
 
@@ -996,6 +1026,7 @@ void SidebarWidget::CreateTouchUpControls() {
         "    background-color: #27AE60;"
         "}"
     );
+    finalizeButton_->setToolTip("Export the finished mesh for use in Unreal Engine");
     connect(finalizeButton_, &QPushButton::clicked, this, &SidebarWidget::FinalizeRequested);
     controlsLayout->addWidget(finalizeButton_);
 

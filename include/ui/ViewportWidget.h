@@ -6,9 +6,11 @@
 #include <QMouseEvent>
 #include <QWheelEvent>
 #include <QKeyEvent>
+#include <QElapsedTimer>
 #include <memory>
 #include "core/Camera.h"
 #include "core/Types.h"
+#include "core/Transform.h"
 #include "sculpting/BrushStroke.h"
 
 namespace MetaVisage {
@@ -73,6 +75,9 @@ public:
     float GetBrushRadius() const;
     float GetBrushStrength() const;
 
+    // Re-upload mesh vertex data to GPU (call after modifying vertices externally, e.g. undo)
+    void RefreshMeshGPUData(Mesh* mesh);
+
     // Sculpting symmetry
     void SetSculptSymmetry(bool enabled, Axis axis);
 
@@ -94,6 +99,12 @@ signals:
     void PointDeleteRequested();
     // Signal emitted when brush radius changes (from [ ] keys)
     void BrushRadiusChanged(float radius);
+    // Signal emitted when an alignment transform is completed
+    void TransformApplied(Transform before, Transform after);
+    // Signal emitted when a sculpt stroke is completed
+    void SculptStrokeCompleted(BrushStroke stroke);
+    // Signal emitted with FPS updates
+    void FPSUpdated(float fps);
 
 protected:
     // OpenGL functions
@@ -170,6 +181,14 @@ private:
 
     // Target overlay in Touch Up
     bool showTargetOverlay_;
+
+    // Transform undo state capture
+    Transform transformBeforeState_;
+
+    // FPS counter
+    QElapsedTimer fpsTimer_;
+    int frameCount_;
+    float currentFPS_;
 };
 
 } // namespace MetaVisage

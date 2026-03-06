@@ -1,9 +1,9 @@
 #include "io/ProjectSerializer.h"
+#include "utils/Logger.h"
 #include <QFile>
 #include <QJsonDocument>
 #include <QDir>
 #include <QFileInfo>
-#include <QDebug>
 
 namespace MetaVisage {
 
@@ -47,7 +47,7 @@ SerializationResult ProjectSerializer::Save(const Project& project, const QStrin
     file.close();
 
     result.success = true;
-    qDebug() << "Project saved to:" << filepath;
+    MV_LOG_INFO(QString("Project saved to: %1").arg(filepath));
     return result;
 }
 
@@ -123,9 +123,9 @@ SerializationResult ProjectSerializer::Load(Project& project, const QString& fil
     }
 
     result.success = true;
-    qDebug() << "Project loaded from:" << filepath;
+    MV_LOG_INFO(QString("Project loaded from: %1").arg(filepath));
     if (!result.warnings.isEmpty()) {
-        qDebug() << "Warnings:" << result.warnings;
+        MV_LOG_WARNING(QString("Project load warnings: %1").arg(result.warnings.join("; ")));
     }
     return result;
 }
