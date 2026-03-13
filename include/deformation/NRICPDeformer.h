@@ -14,6 +14,10 @@
 #include <map>
 #include <queue>
 
+#ifdef _OPENMP
+#include <omp.h>
+#endif
+
 namespace MetaVisage {
 
 // Parameters for the NRICP algorithm
@@ -110,16 +114,35 @@ private:
     // Detect boundary vertices (near open edges) and mark exclusion zone via BFS
     void DetectAndExcludeBoundaryVertices();
 
-    // Find correspondences for all source vertices against target mesh
-    // Applies normal angle threshold filtering
+    // Find correspondences for all source vertices against target mesh (parallelized)
     void FindCorrespondences(const std::vector<Vector3>& currentPositions,
                              const std::vector<Vector3>& currentNormals,
                              float normalThresholdCos,
                              std::vector<int>& correspondenceIndices,
                              std::vector<Vector3>& correspondencePoints);
 
-    // Build and solve the sparse linear system for one NRICP step
-    // X is 4K x 3 matrix (per-node affine transforms, K = nodeCount)
+    // Build the sparse system matrix A and compute AtA factorization (called once per ICP step)
+    // Returns the number of rows actually used
+    int BuildSystemMatrix(float alpha,
+                          float gamma,
+                          const std::vector<int>& corrIndices,
+                          const std::vector<Vector3>& corrPoints,
+                          const ControlNodeData* controlData,
+                          int nodeCount);
+
+    // Build the RHS matrix B (can be called repeatedly with updated rotation targets)
+    void BuildRHS(float alpha,
+                  float gamma,
+                  const std::vector<int>& corrIndices,
+                  const std::vector<Vector3>& corrPoints,
+                  const ControlNodeData* controlData,
+                  int nodeCount,
+                  int totalRows);
+
+    // Solve using the already-factorized system: X = solver.solve(A^T * B)
+    void SolveFromFactorized(Eigen::MatrixXd& X);
+
+    // Legacy single-call solve (kept for compatibility, calls the above internally)
     void SolveLinearSystem(float alpha,
                            float gamma,
                            const std::vector<int>& corrIndices,
@@ -196,6 +219,16 @@ private:
     // Weld map: groups of vertex indices sharing the same position (UV seam duplicates)
     std::vector<std::vector<int>> weldGroups_;       // Each group has 2+ vertices at same position
     std::vector<int> weldGroupIndex_;                // Per-vertex: index into weldGroups_ (-1 if not welded)
+
+    // Cached linear system components for solver reuse
+    Eigen::SparseMatrix<double> cachedA_;            // System matrix A
+    Eigen::SparseMatrix<double> cachedAtA_;          // Normal equations matrix A^T*A
+    Eigen::MatrixXd cachedB_;                        // RHS matrix B
+    Eigen::SimplicialLDLT<Eigen::SparseMatrix<double>> cachedSolver_;  // Factorized solver
+    bool solverFactorized_;                          // Whether cachedSolver_ has valid factorization
+    int cachedRigidityStartRow_;                     // Row offset where rigidity rows begin in B
+    int cachedTotalRows_;                            // Total rows in the system
+    int cachedCols_;                                 // Total columns in the system
 };
 
 } // namespace MetaVisage

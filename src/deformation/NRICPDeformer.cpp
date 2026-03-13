@@ -15,7 +15,8 @@ namespace MetaVisage {
 
 NRICPDeformer::NRICPDeformer()
     : vertexCount_(0), cancelled_(nullptr), resolvedMaxCorrespondenceDistance_(-1.0f),
-      bboxDiagonal_(0.0f) {
+      bboxDiagonal_(0.0f), solverFactorized_(false), cachedRigidityStartRow_(0),
+      cachedTotalRows_(0), cachedCols_(0) {
 }
 
 NRICPDeformer::~NRICPDeformer() {
@@ -56,13 +57,10 @@ void NRICPDeformer::BuildWeldMap() {
 
     if (vertexCount_ == 0) return;
 
-    // Spatial hashing to find vertices at the same position.
-    // Use a cell size that's small enough to only group truly coincident vertices.
     const float epsilon = 1e-5f;
-    const float cellSize = epsilon * 10.0f; // 1e-4 cells
+    const float cellSize = epsilon * 10.0f;
     const float invCell = 1.0f / cellSize;
 
-    // Hash: grid cell -> list of vertex indices
     struct CellHash {
         size_t operator()(const std::tuple<int, int, int>& key) const {
             auto h1 = std::hash<int>{}(std::get<0>(key));
@@ -82,7 +80,6 @@ void NRICPDeformer::BuildWeldMap() {
         grid[{cx, cy, cz}].push_back(i);
     }
 
-    // For each vertex, check its cell and 26 neighbors for coincident vertices
     float epsSq = epsilon * epsilon;
     std::vector<bool> visited(vertexCount_, false);
 
@@ -97,7 +94,6 @@ void NRICPDeformer::BuildWeldMap() {
         std::vector<int> group;
         group.push_back(i);
 
-        // Check 3x3x3 neighborhood
         for (int dx = -1; dx <= 1; ++dx) {
             for (int dy = -1; dy <= 1; ++dy) {
                 for (int dz = -1; dz <= 1; ++dz) {
@@ -118,7 +114,6 @@ void NRICPDeformer::BuildWeldMap() {
 
         visited[i] = true;
 
-        // Only store groups with 2+ vertices (actual UV seam splits)
         if (group.size() >= 2) {
             int groupIdx = static_cast<int>(weldGroups_.size());
             for (int idx : group) {
@@ -139,7 +134,6 @@ void NRICPDeformer::BuildWeldMap() {
 
 void NRICPDeformer::EnforceWeldConstraints(std::vector<Vector3>& positions) {
     for (const auto& group : weldGroups_) {
-        // Compute average position for the group
         double ax = 0.0, ay = 0.0, az = 0.0;
         for (int idx : group) {
             ax += static_cast<double>(positions[idx].x);
@@ -151,7 +145,6 @@ void NRICPDeformer::EnforceWeldConstraints(std::vector<Vector3>& positions) {
                     static_cast<float>(ay) * invCount,
                     static_cast<float>(az) * invCount);
 
-        // Assign average to all vertices in group
         for (int idx : group) {
             positions[idx] = avg;
         }
@@ -166,7 +159,6 @@ void NRICPDeformer::BuildEdges() {
         const auto& indices = face.vertexIndices;
         if (indices.size() < 3) continue;
 
-        // Fan triangulation for n-gons, collect edges
         for (size_t i = 0; i < indices.size(); ++i) {
             int a = static_cast<int>(indices[i]);
             int b = static_cast<int>(indices[(i + 1) % indices.size()]);
@@ -176,8 +168,6 @@ void NRICPDeformer::BuildEdges() {
         }
     }
 
-    // Add weld edges: connect all vertex pairs within each weld group
-    // so the stiffness term keeps UV seam duplicates moving together
     int weldEdgeCount = 0;
     for (const auto& group : weldGroups_) {
         for (size_t i = 0; i < group.size(); ++i) {
@@ -208,7 +198,6 @@ void NRICPDeformer::DetectAndExcludeBoundaryVertices() {
         return;
     }
 
-    // Step 1: Build edge-to-face-count map to find boundary edges
     std::map<std::pair<int, int>, int> edgeFaceCount;
 
     for (const auto& face : sourceFaces_) {
@@ -224,7 +213,6 @@ void NRICPDeformer::DetectAndExcludeBoundaryVertices() {
         }
     }
 
-    // Step 2: Find boundary vertices (vertices on edges with face count == 1)
     std::vector<bool> isBoundaryVertex(vertexCount_, false);
     int boundaryEdgeCount = 0;
 
@@ -249,14 +237,12 @@ void NRICPDeformer::DetectAndExcludeBoundaryVertices() {
         return;
     }
 
-    // Step 3: Build vertex adjacency list from edges_ (for BFS propagation)
     vertexAdjacency_.assign(vertexCount_, std::vector<int>());
     for (const auto& edge : edges_) {
         vertexAdjacency_[edge.v0].push_back(edge.v1);
         vertexAdjacency_[edge.v1].push_back(edge.v0);
     }
 
-    // Step 4: BFS from all boundary vertices, propagating N hops
     int hops = params_.boundaryExclusionHops;
     std::vector<int> distance(vertexCount_, -1);
 
@@ -295,6 +281,10 @@ void NRICPDeformer::DetectAndExcludeBoundaryVertices() {
         .arg(hops));
 }
 
+// ============================================================================
+// Correspondence finding - parallelized with OpenMP
+// ============================================================================
+
 void NRICPDeformer::FindCorrespondences(
     const std::vector<Vector3>& currentPositions,
     const std::vector<Vector3>& currentNormals,
@@ -307,29 +297,80 @@ void NRICPDeformer::FindCorrespondences(
 
     if (!targetMesh_) return;
 
-    // Ensure target BVH is built
     BVH* targetBVH = targetMesh_->GetBVH();
     if (!targetBVH || !targetBVH->IsBuilt()) return;
 
     const auto& targetVertices = targetMesh_->GetVertices();
 
-    // Pre-compute squared max distance for fast comparison
     float maxDistSq = (resolvedMaxCorrespondenceDistance_ > 0.0f)
         ? resolvedMaxCorrespondenceDistance_ * resolvedMaxCorrespondenceDistance_
         : -1.0f;
 
+#ifdef _OPENMP
+    // Parallel path: each thread collects its own results, then merge
+    int numThreads = omp_get_max_threads();
+    std::vector<std::vector<int>> threadIndices(numThreads);
+    std::vector<std::vector<Vector3>> threadPoints(numThreads);
+
+    // Pre-reserve estimated capacity per thread
+    int estimatedPerThread = vertexCount_ / numThreads + 64;
+    for (int t = 0; t < numThreads; ++t) {
+        threadIndices[t].reserve(estimatedPerThread);
+        threadPoints[t].reserve(estimatedPerThread);
+    }
+
+    #pragma omp parallel
+    {
+        int tid = omp_get_thread_num();
+        auto& localIndices = threadIndices[tid];
+        auto& localPoints = threadPoints[tid];
+
+        #pragma omp for schedule(dynamic, 256)
+        for (int i = 0; i < vertexCount_; ++i) {
+            if (!excludedVertices_.empty() && excludedVertices_[i]) continue;
+
+            BVHClosestPointResult result = targetBVH->FindClosestPoint(currentPositions[i], targetVertices);
+
+            if (!result.found) continue;
+            if (maxDistSq > 0.0f && result.distanceSq > maxDistSq) continue;
+
+            if (i < static_cast<int>(currentNormals.size()) && currentNormals[i].Length() > 0.01f) {
+                float dotProduct = currentNormals[i].Normalized().Dot(result.normal.Normalized());
+                if (dotProduct < normalThresholdCos) continue;
+            }
+
+            localIndices.push_back(i);
+            localPoints.push_back(result.point);
+        }
+    }
+
+    // Merge thread-local results
+    int totalCount = 0;
+    for (int t = 0; t < numThreads; ++t) {
+        totalCount += static_cast<int>(threadIndices[t].size());
+    }
+    correspondenceIndices.reserve(totalCount);
+    correspondencePoints.reserve(totalCount);
+
+    for (int t = 0; t < numThreads; ++t) {
+        correspondenceIndices.insert(correspondenceIndices.end(),
+            threadIndices[t].begin(), threadIndices[t].end());
+        correspondencePoints.insert(correspondencePoints.end(),
+            threadPoints[t].begin(), threadPoints[t].end());
+    }
+#else
+    // Serial fallback
+    correspondenceIndices.reserve(vertexCount_);
+    correspondencePoints.reserve(vertexCount_);
+
     for (int i = 0; i < vertexCount_; ++i) {
-        // Skip excluded boundary/interior vertices (cheap check before BVH query)
         if (!excludedVertices_.empty() && excludedVertices_[i]) continue;
 
         BVHClosestPointResult result = targetBVH->FindClosestPoint(currentPositions[i], targetVertices);
 
         if (!result.found) continue;
-
-        // Distance threshold filtering
         if (maxDistSq > 0.0f && result.distanceSq > maxDistSq) continue;
 
-        // Normal angle filtering
         if (i < static_cast<int>(currentNormals.size()) && currentNormals[i].Length() > 0.01f) {
             float dotProduct = currentNormals[i].Normalized().Dot(result.normal.Normalized());
             if (dotProduct < normalThresholdCos) continue;
@@ -338,6 +379,7 @@ void NRICPDeformer::FindCorrespondences(
         correspondenceIndices.push_back(i);
         correspondencePoints.push_back(result.point);
     }
+#endif
 }
 
 // ============================================================================
@@ -347,18 +389,18 @@ void NRICPDeformer::FindCorrespondences(
 void NRICPDeformer::ComputeRotationTargets(const Eigen::MatrixXd& X, int nodeCount) {
     rotationTargets_.resize(nodeCount);
 
+#ifdef _OPENMP
+    #pragma omp parallel for schedule(static)
+#endif
     for (int i = 0; i < nodeCount; ++i) {
-        // Extract 3x3 linear part from X block [4i:4i+2, 0:2]
         Eigen::Matrix3d A;
         A(0, 0) = X(4 * i + 0, 0); A(0, 1) = X(4 * i + 0, 1); A(0, 2) = X(4 * i + 0, 2);
         A(1, 0) = X(4 * i + 1, 0); A(1, 1) = X(4 * i + 1, 1); A(1, 2) = X(4 * i + 1, 2);
         A(2, 0) = X(4 * i + 2, 0); A(2, 1) = X(4 * i + 2, 1); A(2, 2) = X(4 * i + 2, 2);
 
-        // Polar decomposition via SVD: A = U * S * V^T => R = U * V^T
         Eigen::JacobiSVD<Eigen::Matrix3d> svd(A, Eigen::ComputeFullU | Eigen::ComputeFullV);
         Eigen::Matrix3d R = svd.matrixU() * svd.matrixV().transpose();
 
-        // Ensure proper rotation (det = +1, not reflection)
         if (R.determinant() < 0.0) {
             Eigen::Matrix3d U = svd.matrixU();
             U.col(2) *= -1.0;
@@ -370,23 +412,20 @@ void NRICPDeformer::ComputeRotationTargets(const Eigen::MatrixXd& X, int nodeCou
 }
 
 // ============================================================================
-// Phase 3: Control node subsampling methods
+// Phase 3: Control node subsampling methods (grid-accelerated kNN)
 // ============================================================================
 
 ControlNodeData NRICPDeformer::ComputeControlNodes(float voxelSize) {
     ControlNodeData data;
 
     if (voxelSize <= 0.0f) {
-        // Disabled: all vertices are control nodes
         data.controlNodeCount = vertexCount_;
         data.controlNodeIndices.resize(vertexCount_);
         std::iota(data.controlNodeIndices.begin(), data.controlNodeIndices.end(), 0);
         return data;
     }
 
-    // Voxel grid: map each vertex to a voxel, pick closest vertex to voxel center
     float invVoxel = 1.0f / voxelSize;
-    // For each voxel, store (vertex index, distance to voxel center)
     std::map<std::tuple<int, int, int>, std::pair<int, float>> voxelBest;
 
     for (int i = 0; i < vertexCount_; ++i) {
@@ -396,7 +435,6 @@ ControlNodeData NRICPDeformer::ComputeControlNodes(float voxelSize) {
         int vz = static_cast<int>(std::floor((v.z - bboxMin_.z) * invVoxel));
         auto key = std::make_tuple(vx, vy, vz);
 
-        // Compute distance to voxel center
         float cx = bboxMin_.x + (vx + 0.5f) * voxelSize;
         float cy = bboxMin_.y + (vy + 0.5f) * voxelSize;
         float cz = bboxMin_.z + (vz + 0.5f) * voxelSize;
@@ -433,17 +471,72 @@ void NRICPDeformer::BuildControlNodeEdges(ControlNodeData& data, int kNeighbors)
         controlPositions[i] = sourceVertices_[data.controlNodeIndices[i]];
     }
 
-    // For each control node, find k nearest neighbors
-    std::set<std::pair<int, int>> edgeSet;
+    // Use spatial grid to accelerate kNN search instead of brute-force O(K^2)
+    // Estimate cell size: we want each cell to contain roughly kNeighbors nodes
+    // Average spacing ~ (bbox_volume / K)^(1/3)
+    Vector3 bboxSize = bboxMax_ - bboxMin_;
+    float volume = std::max(bboxSize.x, 1e-6f) * std::max(bboxSize.y, 1e-6f) * std::max(bboxSize.z, 1e-6f);
+    float avgSpacing = std::cbrt(volume / std::max(K, 1));
+    // Search radius should cover kNeighbors: use ~3x average spacing
+    float cellSize = avgSpacing * 3.0f;
+    float invCell = 1.0f / cellSize;
+
+    struct CellHash {
+        size_t operator()(const std::tuple<int, int, int>& key) const {
+            auto h1 = std::hash<int>{}(std::get<0>(key));
+            auto h2 = std::hash<int>{}(std::get<1>(key));
+            auto h3 = std::hash<int>{}(std::get<2>(key));
+            return h1 ^ (h2 * 2654435761u) ^ (h3 * 40503u);
+        }
+    };
+
+    std::unordered_map<std::tuple<int, int, int>, std::vector<int>, CellHash> grid;
     for (int i = 0; i < K; ++i) {
-        // Compute distances to all other control nodes
+        const Vector3& v = controlPositions[i];
+        int cx = static_cast<int>(std::floor(v.x * invCell));
+        int cy = static_cast<int>(std::floor(v.y * invCell));
+        int cz = static_cast<int>(std::floor(v.z * invCell));
+        grid[{cx, cy, cz}].push_back(i);
+    }
+
+    // Determine search radius in cells (start with 1, expand if needed)
+    int searchRadius = 1;
+
+    std::set<std::pair<int, int>> edgeSet;
+
+    for (int i = 0; i < K; ++i) {
+        const Vector3& vi = controlPositions[i];
+        int cx = static_cast<int>(std::floor(vi.x * invCell));
+        int cy = static_cast<int>(std::floor(vi.y * invCell));
+        int cz = static_cast<int>(std::floor(vi.z * invCell));
+
+        // Collect candidates from nearby cells
         std::vector<std::pair<float, int>> dists;
-        dists.reserve(K - 1);
-        for (int j = 0; j < K; ++j) {
-            if (i == j) continue;
-            Vector3 diff = controlPositions[j] - controlPositions[i];
-            float d = diff.Dot(diff);
-            dists.push_back({d, j});
+
+        for (int dx = -searchRadius; dx <= searchRadius; ++dx) {
+            for (int dy = -searchRadius; dy <= searchRadius; ++dy) {
+                for (int dz = -searchRadius; dz <= searchRadius; ++dz) {
+                    auto it = grid.find({cx + dx, cy + dy, cz + dz});
+                    if (it == grid.end()) continue;
+                    for (int j : it->second) {
+                        if (i == j) continue;
+                        Vector3 diff = controlPositions[j] - vi;
+                        float d = diff.Dot(diff);
+                        dists.push_back({d, j});
+                    }
+                }
+            }
+        }
+
+        // If we didn't find enough neighbors, fall back to wider search
+        if (static_cast<int>(dists.size()) < kNeighbors) {
+            dists.clear();
+            for (int j = 0; j < K; ++j) {
+                if (i == j) continue;
+                Vector3 diff = controlPositions[j] - vi;
+                float d = diff.Dot(diff);
+                dists.push_back({d, j});
+            }
         }
 
         int count = std::min(kNeighbors, static_cast<int>(dists.size()));
@@ -482,36 +575,90 @@ void NRICPDeformer::ComputeInterpolationWeights(ControlNodeData& data, int kNear
 
     int actualK = std::min(kNearest, K);
 
+    // Build spatial grid for control node kNN lookup
+    Vector3 bboxSize = bboxMax_ - bboxMin_;
+    float volume = std::max(bboxSize.x, 1e-6f) * std::max(bboxSize.y, 1e-6f) * std::max(bboxSize.z, 1e-6f);
+    float avgSpacing = std::cbrt(volume / std::max(K, 1));
+    float cellSize = avgSpacing * 3.0f;
+    float invCell = 1.0f / cellSize;
+
+    struct CellHash {
+        size_t operator()(const std::tuple<int, int, int>& key) const {
+            auto h1 = std::hash<int>{}(std::get<0>(key));
+            auto h2 = std::hash<int>{}(std::get<1>(key));
+            auto h3 = std::hash<int>{}(std::get<2>(key));
+            return h1 ^ (h2 * 2654435761u) ^ (h3 * 40503u);
+        }
+    };
+
+    std::unordered_map<std::tuple<int, int, int>, std::vector<int>, CellHash> grid;
+    for (int i = 0; i < K; ++i) {
+        const Vector3& v = controlPositions[i];
+        int cx = static_cast<int>(std::floor(v.x * invCell));
+        int cy = static_cast<int>(std::floor(v.y * invCell));
+        int cz = static_cast<int>(std::floor(v.z * invCell));
+        grid[{cx, cy, cz}].push_back(i);
+    }
+
+    int searchRadius = 1;
+
+#ifdef _OPENMP
+    #pragma omp parallel for schedule(dynamic, 512)
+#endif
     for (int v = 0; v < vertexCount_; ++v) {
         int localIdx = vertexToControlLocal[v];
         if (localIdx >= 0) {
-            // This vertex IS a control node: weight 1.0 for itself
             data.interpolationWeights[v] = {{localIdx, 1.0f}};
             continue;
         }
 
-        // Find kNearest control nodes by distance
+        const Vector3& sv = sourceVertices_[v];
+        int cx = static_cast<int>(std::floor(sv.x * invCell));
+        int cy = static_cast<int>(std::floor(sv.y * invCell));
+        int cz = static_cast<int>(std::floor(sv.z * invCell));
+
+        // Collect candidates from nearby cells
         std::vector<std::pair<float, int>> dists;
-        dists.reserve(K);
-        for (int c = 0; c < K; ++c) {
-            Vector3 diff = controlPositions[c] - sourceVertices_[v];
-            float d = diff.Dot(diff); // squared distance for sorting
-            dists.push_back({d, c});
+
+        for (int dx = -searchRadius; dx <= searchRadius; ++dx) {
+            for (int dy = -searchRadius; dy <= searchRadius; ++dy) {
+                for (int dz = -searchRadius; dz <= searchRadius; ++dz) {
+                    auto it = grid.find({cx + dx, cy + dy, cz + dz});
+                    if (it == grid.end()) continue;
+                    for (int c : it->second) {
+                        Vector3 diff = controlPositions[c] - sv;
+                        float d = diff.Dot(diff);
+                        dists.push_back({d, c});
+                    }
+                }
+            }
         }
-        std::partial_sort(dists.begin(), dists.begin() + actualK, dists.end());
+
+        // Fall back to brute-force if not enough neighbors found
+        if (static_cast<int>(dists.size()) < actualK) {
+            dists.clear();
+            dists.reserve(K);
+            for (int c = 0; c < K; ++c) {
+                Vector3 diff = controlPositions[c] - sv;
+                float d = diff.Dot(diff);
+                dists.push_back({d, c});
+            }
+        }
+
+        int count = std::min(actualK, static_cast<int>(dists.size()));
+        std::partial_sort(dists.begin(), dists.begin() + count, dists.end());
 
         float totalWeight = 0.0f;
         std::vector<std::pair<int, float>> weights;
-        weights.reserve(actualK);
+        weights.reserve(count);
 
-        for (int n = 0; n < actualK; ++n) {
+        for (int n = 0; n < count; ++n) {
             float d = std::sqrt(std::max(dists[n].first, 1e-12f));
             float w = 1.0f / d;
             weights.push_back({dists[n].second, w});
             totalWeight += w;
         }
 
-        // Normalize
         if (totalWeight > 0.0f) {
             for (auto& [idx, w] : weights) {
                 w /= totalWeight;
@@ -523,43 +670,36 @@ void NRICPDeformer::ComputeInterpolationWeights(ControlNodeData& data, int kNear
 }
 
 // ============================================================================
-// Linear system solve (supports both all-vertex and subsampled paths)
+// Linear system: split into build, factorize, and solve phases
 // ============================================================================
 
-void NRICPDeformer::SolveLinearSystem(
+int NRICPDeformer::BuildSystemMatrix(
     float alpha,
     float gamma,
     const std::vector<int>& corrIndices,
-    const std::vector<Vector3>& corrPoints,
+    const std::vector<Vector3>& /* corrPoints */,
     const ControlNodeData* controlData,
-    Eigen::MatrixXd& X) {
+    int nodeCount) {
 
-    // Determine if we're using subsampled control nodes or all vertices
     const bool subsampled = (controlData != nullptr && controlData->controlNodeCount < vertexCount_);
+    cachedCols_ = 4 * nodeCount;
 
-    const int nodeCount = subsampled ? controlData->controlNodeCount : vertexCount_;
-    const int cols = 4 * nodeCount;
-
-    // Choose edge set based on path
     const auto& activeEdges = subsampled ? controlData->controlEdges : edges_;
 
     int stiffRows = 4 * static_cast<int>(activeEdges.size());
     int dataRows = static_cast<int>(corrIndices.size());
     int landmarkRows = static_cast<int>(landmarks_.size());
-    int rigidityRows = (gamma > 0.0f && !rotationTargets_.empty()) ? 3 * nodeCount : 0;
-    int totalRows = stiffRows + dataRows + landmarkRows + rigidityRows;
+    int rigidityRows = (gamma > 0.0f) ? 3 * nodeCount : 0;
+    cachedTotalRows_ = stiffRows + dataRows + landmarkRows + rigidityRows;
+    cachedRigidityStartRow_ = stiffRows + dataRows + landmarkRows;
 
     // Build sparse matrix A using triplets
     std::vector<Eigen::Triplet<double>> triplets;
     triplets.reserve(stiffRows * 2 + dataRows * 4 + landmarkRows * 4 + rigidityRows);
 
-    // Right-hand side (3 columns for x, y, z)
-    Eigen::MatrixXd B = Eigen::MatrixXd::Zero(totalRows, 3);
-
     int row = 0;
 
     // --- Stiffness term ---
-    // For each edge (i,j), penalize difference in per-node transforms
     double alphaD = static_cast<double>(alpha);
     for (const auto& edge : activeEdges) {
         int i = edge.v0;
@@ -568,13 +708,11 @@ void NRICPDeformer::SolveLinearSystem(
             triplets.emplace_back(row + k, 4 * i + k, alphaD);
             triplets.emplace_back(row + k, 4 * j + k, -alphaD);
         }
-        // B rows are zero (stiffness drives uniform transformation)
         row += 4;
     }
 
     // --- Data term (ICP correspondences) ---
     if (subsampled) {
-        // Subsampled path: scatter data term across interpolated control nodes
         for (size_t c = 0; c < corrIndices.size(); ++c) {
             int vi = corrIndices[c];
             const Vector3& sv = sourceVertices_[vi];
@@ -587,14 +725,9 @@ void NRICPDeformer::SolveLinearSystem(
                 triplets.emplace_back(row, 4 * ci + 2, wd * static_cast<double>(sv.z));
                 triplets.emplace_back(row, 4 * ci + 3, wd);
             }
-
-            B(row, 0) = static_cast<double>(corrPoints[c].x);
-            B(row, 1) = static_cast<double>(corrPoints[c].y);
-            B(row, 2) = static_cast<double>(corrPoints[c].z);
             row++;
         }
     } else {
-        // All-vertex path: direct 1-to-1 mapping
         for (size_t c = 0; c < corrIndices.size(); ++c) {
             int vi = corrIndices[c];
             const Vector3& sv = sourceVertices_[vi];
@@ -603,10 +736,6 @@ void NRICPDeformer::SolveLinearSystem(
             triplets.emplace_back(row, 4 * vi + 1, static_cast<double>(sv.y));
             triplets.emplace_back(row, 4 * vi + 2, static_cast<double>(sv.z));
             triplets.emplace_back(row, 4 * vi + 3, 1.0);
-
-            B(row, 0) = static_cast<double>(corrPoints[c].x);
-            B(row, 1) = static_cast<double>(corrPoints[c].y);
-            B(row, 2) = static_cast<double>(corrPoints[c].z);
             row++;
         }
     }
@@ -614,7 +743,6 @@ void NRICPDeformer::SolveLinearSystem(
     // --- Landmark term ---
     double wl = static_cast<double>(params_.landmarkWeight);
     if (subsampled) {
-        // Subsampled path: scatter landmark term across interpolated control nodes
         for (const auto& [vi, target] : landmarks_) {
             if (vi < 0 || vi >= vertexCount_) continue;
             const Vector3& sv = sourceVertices_[vi];
@@ -627,14 +755,9 @@ void NRICPDeformer::SolveLinearSystem(
                 triplets.emplace_back(row, 4 * ci + 2, wd * static_cast<double>(sv.z));
                 triplets.emplace_back(row, 4 * ci + 3, wd);
             }
-
-            B(row, 0) = wl * static_cast<double>(target.x);
-            B(row, 1) = wl * static_cast<double>(target.y);
-            B(row, 2) = wl * static_cast<double>(target.z);
             row++;
         }
     } else {
-        // All-vertex path: direct mapping
         for (const auto& [vi, target] : landmarks_) {
             if (vi < 0 || vi >= nodeCount) continue;
             const Vector3& sv = sourceVertices_[vi];
@@ -643,69 +766,145 @@ void NRICPDeformer::SolveLinearSystem(
             triplets.emplace_back(row, 4 * vi + 1, wl * static_cast<double>(sv.y));
             triplets.emplace_back(row, 4 * vi + 2, wl * static_cast<double>(sv.z));
             triplets.emplace_back(row, 4 * vi + 3, wl);
-
-            B(row, 0) = wl * static_cast<double>(target.x);
-            B(row, 1) = wl * static_cast<double>(target.y);
-            B(row, 2) = wl * static_cast<double>(target.z);
             row++;
         }
     }
 
-    // --- Rigidity regularization term (ARAP) ---
-    if (gamma > 0.0f && !rotationTargets_.empty()) {
+    // --- Rigidity regularization term (ARAP) - just the A structure ---
+    if (gamma > 0.0f) {
         double gammaD = static_cast<double>(gamma);
-        int rigidityNodeCount = std::min(nodeCount, static_cast<int>(rotationTargets_.size()));
-        for (int i = 0; i < rigidityNodeCount; ++i) {
-            const Eigen::Matrix3d& R = rotationTargets_[i];
-            // Penalize: gamma * (X[4i+k, :] - R[k, :]) for k=0,1,2
+        for (int i = 0; i < nodeCount; ++i) {
             for (int k = 0; k < 3; ++k) {
                 triplets.emplace_back(row, 4 * i + k, gammaD);
-                B(row, 0) = gammaD * R(k, 0);
-                B(row, 1) = gammaD * R(k, 1);
-                B(row, 2) = gammaD * R(k, 2);
                 row++;
             }
         }
     }
 
-    // Build sparse matrix
-    Eigen::SparseMatrix<double> A(row, cols);
-    A.setFromTriplets(triplets.begin(), triplets.end());
+    // Build sparse matrix A
+    cachedA_.resize(row, cachedCols_);
+    cachedA_.setFromTriplets(triplets.begin(), triplets.end());
 
-    // Form normal equations: A^T * A * X = A^T * B
-    Eigen::SparseMatrix<double> AtA = (A.transpose() * A).eval();
-    Eigen::MatrixXd AtB = A.transpose() * B;
+    // Form normal equations: AtA = A^T * A
+    cachedAtA_ = (cachedA_.transpose() * cachedA_).eval();
 
-    // Add small diagonal regularization for numerical stability
-    for (int i = 0; i < cols; ++i) {
-        AtA.coeffRef(i, i) += 1e-6;
+    // Add diagonal regularization
+    for (int i = 0; i < cachedCols_; ++i) {
+        cachedAtA_.coeffRef(i, i) += 1e-6;
     }
 
-    // Solve using Cholesky decomposition (symmetric positive definite)
-    Eigen::SimplicialLDLT<Eigen::SparseMatrix<double>> solver;
-    solver.compute(AtA);
+    // Factorize (symbolic analysis + numeric factorization)
+    cachedSolver_.compute(cachedAtA_);
 
-    if (solver.info() != Eigen::Success) {
+    if (cachedSolver_.info() != Eigen::Success) {
         MV_LOG_WARNING("NRICP: Cholesky decomposition failed, increasing regularization");
-        for (int i = 0; i < cols; ++i) {
-            AtA.coeffRef(i, i) += 1e-3;
+        for (int i = 0; i < cachedCols_; ++i) {
+            cachedAtA_.coeffRef(i, i) += 1e-3;
         }
-        solver.compute(AtA);
+        cachedSolver_.compute(cachedAtA_);
     }
 
-    X = solver.solve(AtB);
+    solverFactorized_ = (cachedSolver_.info() == Eigen::Success);
+    return row;
+}
+
+void NRICPDeformer::BuildRHS(
+    float alpha,
+    float gamma,
+    const std::vector<int>& corrIndices,
+    const std::vector<Vector3>& corrPoints,
+    const ControlNodeData* controlData,
+    int nodeCount,
+    int totalRows) {
+
+    (void)alpha; // alpha only affects A, not B
+
+    const bool subsampled = (controlData != nullptr && controlData->controlNodeCount < vertexCount_);
+
+    cachedB_ = Eigen::MatrixXd::Zero(totalRows, 3);
+
+    const auto& activeEdges = subsampled ? controlData->controlEdges : edges_;
+
+    int row = 4 * static_cast<int>(activeEdges.size()); // Skip stiffness rows (all zeros in B)
+
+    // --- Data term RHS ---
+    for (size_t c = 0; c < corrIndices.size(); ++c) {
+        cachedB_(row, 0) = static_cast<double>(corrPoints[c].x);
+        cachedB_(row, 1) = static_cast<double>(corrPoints[c].y);
+        cachedB_(row, 2) = static_cast<double>(corrPoints[c].z);
+        row++;
+    }
+
+    // --- Landmark term RHS ---
+    double wl = static_cast<double>(params_.landmarkWeight);
+    for (const auto& [vi, target] : landmarks_) {
+        if (subsampled) {
+            if (vi < 0 || vi >= vertexCount_) continue;
+        } else {
+            if (vi < 0 || vi >= nodeCount) continue;
+        }
+        cachedB_(row, 0) = wl * static_cast<double>(target.x);
+        cachedB_(row, 1) = wl * static_cast<double>(target.y);
+        cachedB_(row, 2) = wl * static_cast<double>(target.z);
+        row++;
+    }
+
+    // --- Rigidity RHS (rotation targets) ---
+    if (gamma > 0.0f && !rotationTargets_.empty()) {
+        double gammaD = static_cast<double>(gamma);
+        int rigidityNodeCount = std::min(nodeCount, static_cast<int>(rotationTargets_.size()));
+        for (int i = 0; i < rigidityNodeCount; ++i) {
+            const Eigen::Matrix3d& R = rotationTargets_[i];
+            for (int k = 0; k < 3; ++k) {
+                cachedB_(row, 0) = gammaD * R(k, 0);
+                cachedB_(row, 1) = gammaD * R(k, 1);
+                cachedB_(row, 2) = gammaD * R(k, 2);
+                row++;
+            }
+        }
+    }
+}
+
+void NRICPDeformer::SolveFromFactorized(Eigen::MatrixXd& X) {
+    if (!solverFactorized_) {
+        MV_LOG_WARNING("NRICP: Solver not factorized, cannot solve");
+        return;
+    }
+
+    Eigen::MatrixXd AtB = cachedA_.transpose() * cachedB_;
+    X = cachedSolver_.solve(AtB);
+}
+
+// Legacy single-call interface (used if needed)
+void NRICPDeformer::SolveLinearSystem(
+    float alpha,
+    float gamma,
+    const std::vector<int>& corrIndices,
+    const std::vector<Vector3>& corrPoints,
+    const ControlNodeData* controlData,
+    Eigen::MatrixXd& X) {
+
+    const bool subsampled = (controlData != nullptr && controlData->controlNodeCount < vertexCount_);
+    const int nodeCount = subsampled ? controlData->controlNodeCount : vertexCount_;
+
+    int totalRows = BuildSystemMatrix(alpha, gamma, corrIndices, corrPoints, controlData, nodeCount);
+    BuildRHS(alpha, gamma, corrIndices, corrPoints, controlData, nodeCount, totalRows);
+    SolveFromFactorized(X);
 }
 
 void NRICPDeformer::ApplyTransformations(const Eigen::MatrixXd& X,
                                           std::vector<Vector3>& outPositions) {
     outPositions.resize(vertexCount_);
+
+#ifdef _OPENMP
+    #pragma omp parallel for schedule(static)
+#endif
     for (int i = 0; i < vertexCount_; ++i) {
         const Vector3& sv = sourceVertices_[i];
         double vx = static_cast<double>(sv.x);
         double vy = static_cast<double>(sv.y);
         double vz = static_cast<double>(sv.z);
 
-        // Per-vertex affine transform: [vx, vy, vz, 1] * X[4i:4i+3, :]
         double px = vx * X(4 * i + 0, 0) + vy * X(4 * i + 1, 0) + vz * X(4 * i + 2, 0) + X(4 * i + 3, 0);
         double py = vx * X(4 * i + 0, 1) + vy * X(4 * i + 1, 1) + vz * X(4 * i + 2, 1) + X(4 * i + 3, 1);
         double pz = vx * X(4 * i + 0, 2) + vy * X(4 * i + 1, 2) + vz * X(4 * i + 2, 2) + X(4 * i + 3, 2);
@@ -721,6 +920,9 @@ void NRICPDeformer::ApplyTransformationsSubsampled(
 
     outPositions.resize(vertexCount_);
 
+#ifdef _OPENMP
+    #pragma omp parallel for schedule(dynamic, 512)
+#endif
     for (int v = 0; v < vertexCount_; ++v) {
         const auto& weights = controlData.interpolationWeights[v];
         const Vector3& sv = sourceVertices_[v];
@@ -733,7 +935,6 @@ void NRICPDeformer::ApplyTransformationsSubsampled(
         for (const auto& [ci, w] : weights) {
             double wd = static_cast<double>(w);
 
-            // Apply this control node's transform to this vertex, then weight
             double cx = vx * X(4 * ci + 0, 0) + vy * X(4 * ci + 1, 0) + vz * X(4 * ci + 2, 0) + X(4 * ci + 3, 0);
             double cy = vx * X(4 * ci + 0, 1) + vy * X(4 * ci + 1, 1) + vz * X(4 * ci + 2, 1) + X(4 * ci + 3, 1);
             double cz = vx * X(4 * ci + 0, 2) + vy * X(4 * ci + 1, 2) + vz * X(4 * ci + 2, 2) + X(4 * ci + 3, 2);
@@ -751,11 +952,11 @@ void NRICPDeformer::ComputeNormals(const std::vector<Vector3>& positions,
                                     std::vector<Vector3>& normals) {
     normals.assign(positions.size(), Vector3(0.0f, 0.0f, 0.0f));
 
+    // Face normal accumulation (sequential - writes to shared vertex normals)
     for (const auto& face : sourceFaces_) {
         const auto& indices = face.vertexIndices;
         if (indices.size() < 3) continue;
 
-        // Fan triangulation
         for (size_t i = 1; i < indices.size() - 1; ++i) {
             unsigned int i0 = indices[0];
             unsigned int i1 = indices[i];
@@ -774,11 +975,15 @@ void NRICPDeformer::ComputeNormals(const std::vector<Vector3>& positions,
         }
     }
 
-    // Normalize
-    for (auto& n : normals) {
-        float len = n.Length();
+    // Normalize in parallel
+    int normalCount = static_cast<int>(normals.size());
+#ifdef _OPENMP
+    #pragma omp parallel for schedule(static)
+#endif
+    for (int i = 0; i < normalCount; ++i) {
+        float len = normals[i].Length();
         if (len > 1e-8f) {
-            n = n * (1.0f / len);
+            normals[i] = normals[i] * (1.0f / len);
         }
     }
 }
@@ -787,16 +992,21 @@ float NRICPDeformer::ComputeRMSDisplacement(const std::vector<Vector3>& posA,
                                               const std::vector<Vector3>& posB) {
     if (posA.size() != posB.size() || posA.empty()) return 0.0f;
 
+    int count = static_cast<int>(posA.size());
     double sum = 0.0;
-    for (size_t i = 0; i < posA.size(); ++i) {
+
+#ifdef _OPENMP
+    #pragma omp parallel for reduction(+:sum) schedule(static)
+#endif
+    for (int i = 0; i < count; ++i) {
         Vector3 diff = posA[i] - posB[i];
         sum += static_cast<double>(diff.Dot(diff));
     }
-    return static_cast<float>(std::sqrt(sum / posA.size()));
+    return static_cast<float>(std::sqrt(sum / count));
 }
 
 // ============================================================================
-// Main solve loop with all features
+// Main solve loop - optimized with solver reuse and parallelization
 // ============================================================================
 
 std::vector<Vector3> NRICPDeformer::Solve() {
@@ -828,7 +1038,7 @@ std::vector<Vector3> NRICPDeformer::Solve() {
     }
     DetectAndExcludeBoundaryVertices();
 
-    // Step 1c: Compute bounding box (used for correspondence distance and sampling normalization)
+    // Step 1c: Compute bounding box
     bboxMin_ = Vector3(std::numeric_limits<float>::max(),
                        std::numeric_limits<float>::max(),
                        std::numeric_limits<float>::max());
@@ -866,7 +1076,7 @@ std::vector<Vector3> NRICPDeformer::Solve() {
     int steps = std::max(1, params_.stiffnessSteps);
     int optIters = std::max(1, params_.optimizationIterations);
 
-    // Alpha schedule (logarithmic spacing from alphaInitial to alphaFinal)
+    // Alpha schedule (logarithmic spacing)
     std::vector<float> alphaSchedule;
     if (steps == 1) {
         alphaSchedule.push_back(params_.alphaFinal);
@@ -879,7 +1089,7 @@ std::vector<Vector3> NRICPDeformer::Solve() {
         }
     }
 
-    // Dp schedule (linear interpolation from dpInitial to dpFinal)
+    // Dp schedule (linear interpolation)
     std::vector<float> dpSchedule;
     if (steps == 1) {
         dpSchedule.push_back(params_.dpFinal);
@@ -890,7 +1100,7 @@ std::vector<Vector3> NRICPDeformer::Solve() {
         }
     }
 
-    // Gamma schedule (logarithmic spacing from gammaInitial to gammaFinal, or 0 if disabled)
+    // Gamma schedule
     std::vector<float> gammaSchedule;
     bool rigidityEnabled = (params_.gammaInitial > 0.0f || params_.gammaFinal > 0.0f);
     if (rigidityEnabled) {
@@ -910,14 +1120,13 @@ std::vector<Vector3> NRICPDeformer::Solve() {
         gammaSchedule.assign(steps, 0.0f);
     }
 
-    // Sampling schedule (linear interpolation from samplingInitial to samplingFinal)
+    // Sampling schedule
     std::vector<float> samplingSchedule;
     bool subsamplingEnabled = (params_.samplingInitial > 0.0f || params_.samplingFinal > 0.0f);
     if (subsamplingEnabled) {
         float sampInit = params_.samplingInitial;
         float sampFin = params_.samplingFinal;
 
-        // Convert normalized values to absolute using bbox diagonal
         if (params_.normalizeSampling && bboxDiagonal_ > 0.0f) {
             sampInit *= bboxDiagonal_;
             sampFin *= bboxDiagonal_;
@@ -934,7 +1143,6 @@ std::vector<Vector3> NRICPDeformer::Solve() {
     }
 
     // Step 3: Initialize X to identity transforms
-    // Start with all-vertex system; may be resized per step if subsampling
     int currentNodeCount = N;
     Eigen::MatrixXd X = Eigen::MatrixXd::Zero(4 * N, 3);
     for (int i = 0; i < N; ++i) {
@@ -946,6 +1154,8 @@ std::vector<Vector3> NRICPDeformer::Solve() {
     // Step 4: Main coarse-to-fine loop
     std::vector<Vector3> currentPositions = sourceVertices_;
     std::vector<Vector3> currentNormals = sourceNormals_;
+    // Pre-allocate buffers for swap-based convergence checking
+    std::vector<Vector3> prevPositions(vertexCount_);
 
     float normalThresholdCos = std::cos(params_.normalThreshold * 3.14159265359f / 180.0f);
     int totalIterations = steps * params_.icpIterations * optIters;
@@ -974,7 +1184,6 @@ std::vector<Vector3> NRICPDeformer::Solve() {
             ComputeInterpolationWeights(controlNodeData_);
             activeControlData = &controlNodeData_;
 
-            // Re-initialize X for new control node count
             int K = controlNodeData_.controlNodeCount;
             if (K != currentNodeCount) {
                 currentNodeCount = K;
@@ -984,13 +1193,11 @@ std::vector<Vector3> NRICPDeformer::Solve() {
                     X(4 * i + 1, 1) = 1.0;
                     X(4 * i + 2, 2) = 1.0;
                 }
-                // Clear rotation targets since node count changed
                 rotationTargets_.clear();
             }
         }
 
         for (int iter = 0; iter < params_.icpIterations; ++iter) {
-            // Check cancellation
             if (cancelled_ && cancelled_->load()) {
                 MV_LOG_INFO("NRICP: Cancelled by user");
                 return {};
@@ -999,7 +1206,7 @@ std::vector<Vector3> NRICPDeformer::Solve() {
             // Compute normals for current deformed positions
             ComputeNormals(currentPositions, currentNormals);
 
-            // Find ICP correspondences
+            // Find ICP correspondences (parallelized)
             std::vector<int> corrIndices;
             std::vector<Vector3> corrPoints;
             FindCorrespondences(currentPositions, currentNormals, normalThresholdCos,
@@ -1011,9 +1218,32 @@ std::vector<Vector3> NRICPDeformer::Solve() {
                 break;
             }
 
-            // Inner optimization loop (re-solve with same correspondences)
+            // ============================================================
+            // OPTIMIZATION: Build and factorize the system ONCE per ICP step.
+            // The system matrix A depends on: alpha, edges, correspondences, landmarks, gamma.
+            // All of these are constant within the inner optimization loop.
+            // When gamma=0: both A and B are constant, so X_solved is the same every iteration.
+            //   We solve ONCE, then run dp damping iterations using the cached solution (no re-solve).
+            // When gamma>0: A is constant but B changes (rotation targets), so we re-solve each
+            //   iteration but reuse the factorization (only recompute AtB, not AtA).
+            // ============================================================
+
+            int totalRows = BuildSystemMatrix(alpha, gamma, corrIndices, corrPoints,
+                                              activeControlData, currentNodeCount);
+
+            // When gamma=0, solve once and cache X_solved for dp damping iterations
+            Eigen::MatrixXd X_solved;
+            bool hasCachedSolution = false;
+
+            if (gamma <= 0.0f) {
+                BuildRHS(alpha, gamma, corrIndices, corrPoints,
+                         activeControlData, currentNodeCount, totalRows);
+                SolveFromFactorized(X_solved);
+                hasCachedSolution = true;
+            }
+
+            // Inner optimization loop
             for (int optIter = 0; optIter < optIters; ++optIter) {
-                // Check cancellation
                 if (cancelled_ && cancelled_->load()) {
                     MV_LOG_INFO("NRICP: Cancelled by user");
                     return {};
@@ -1033,24 +1263,35 @@ std::vector<Vector3> NRICPDeformer::Solve() {
                     progressCallback_(progress, msg);
                 }
 
-                // Update rotation targets for rigidity (skip on very first global iteration)
-                if (rigidityEnabled && gamma > 0.0f && iterationCount > 0) {
-                    ComputeRotationTargets(X, currentNodeCount);
+                // Save previous positions for convergence check (swap to avoid deep copy)
+                std::swap(prevPositions, currentPositions);
+
+                if (hasCachedSolution) {
+                    // gamma=0 path: reuse cached X_solved, just apply dp damping
+                    // X = X_prev + dp * (X_solved - X_prev)
+                    if (dp < 0.999f) {
+                        X = X + dp * (X_solved - X);
+                    } else {
+                        X = X_solved;
+                    }
+                } else {
+                    // gamma>0 path: need to re-solve because rotation targets change B
+                    if (rigidityEnabled && gamma > 0.0f && iterationCount > 0) {
+                        ComputeRotationTargets(X, currentNodeCount);
+                    }
+
+                    BuildRHS(alpha, gamma, corrIndices, corrPoints,
+                             activeControlData, currentNodeCount, totalRows);
+
+                    Eigen::MatrixXd X_prev = X;
+                    SolveFromFactorized(X);
+
+                    if (dp < 0.999f) {
+                        X = X_prev + dp * (X - X_prev);
+                    }
                 }
 
-                // Save state for dp damping and convergence check
-                Eigen::MatrixXd X_prev = X;
-                std::vector<Vector3> prevPositions = currentPositions;
-
-                // Solve the sparse linear system
-                SolveLinearSystem(alpha, gamma, corrIndices, corrPoints, activeControlData, X);
-
-                // Apply dp damping: X = X_prev + dp * (X_solved - X_prev)
-                if (dp < 0.999f) {
-                    X = X_prev + dp * (X - X_prev);
-                }
-
-                // Apply transformations to get new positions
+                // Apply transformations to get new positions (parallelized)
                 if (activeControlData && activeControlData->controlNodeCount < vertexCount_) {
                     ApplyTransformationsSubsampled(X, *activeControlData, currentPositions);
                 } else {
@@ -1074,7 +1315,6 @@ std::vector<Vector3> NRICPDeformer::Solve() {
         progressCallback_(0.96f, "NRICP: Enforcing UV seam constraints...");
     }
 
-    // Enforce exact position coincidence at UV seam vertices
     EnforceWeldConstraints(currentPositions);
 
     if (progressCallback_) {

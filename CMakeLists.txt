@@ -41,6 +41,14 @@ else()
     message(WARNING "Assimp not found - mesh loading will be disabled. Install with: vcpkg install assimp:x64-mingw-dynamic")
 endif()
 
+# Find OpenMP for parallel computation
+find_package(OpenMP)
+if(OpenMP_CXX_FOUND)
+    message(STATUS "OpenMP found - parallel NRICP enabled")
+else()
+    message(WARNING "OpenMP not found - NRICP will run single-threaded")
+endif()
+
 # Find Eigen3 (required for Sprint 6 deformation)
 find_package(Eigen3 CONFIG REQUIRED)
 
@@ -142,6 +150,11 @@ target_link_libraries(${PROJECT_NAME}
     OpenGL::GL
     Eigen3::Eigen
 )
+
+# Link OpenMP if found
+if(OpenMP_CXX_FOUND)
+    target_link_libraries(${PROJECT_NAME} OpenMP::OpenMP_CXX)
+endif()
 
 # Link Assimp if found
 if(assimp_FOUND)

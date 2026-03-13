@@ -15,7 +15,9 @@
       "Bash(xargs grep -l \"MeshExporter\\\\|Serializ\\\\|Export\")",
       "Bash(cmake --build build)",
       "Bash(xargs grep -l \"ICP\\\\|registration\\\\|point.*cloud\\\\|closest.*point\")",
-      "Bash(cmake --build build --config Release)"
+      "Bash(cmake --build build --config Release)",
+      "Bash(xargs grep -l \"affine\\\\|transform.*matrix\\\\|control.*node\\\\|subsampling\\\\|interpolation\")",
+      "Bash(cmake ..)"
     ]
   }
 }
