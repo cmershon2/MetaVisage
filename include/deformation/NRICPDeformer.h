@@ -48,15 +48,15 @@ struct NRICPParams {
     bool normalizeSampling;         // If true, sampling values are relative to bbox diagonal
 
     NRICPParams()
-        : stiffnessSteps(5), alphaInitial(100.0f), alphaFinal(1.0f),
-          icpIterations(3), normalThreshold(60.0f),
+        : stiffnessSteps(3), alphaInitial(100.0f), alphaFinal(20.0f),
+          icpIterations(7), normalThreshold(60.0f),
           landmarkWeight(10.0f), epsilon(1e-4f),
           enableBoundaryExclusion(true), boundaryExclusionHops(3),
           maxCorrespondenceDistance(-1.0f),
-          optimizationIterations(1),
-          dpInitial(1.0f), dpFinal(1.0f),
+          optimizationIterations(20),
+          dpInitial(1.0f), dpFinal(0.1f),
           gammaInitial(0.0f), gammaFinal(0.0f),
-          samplingInitial(0.0f), samplingFinal(0.0f),
+          samplingInitial(0.1f), samplingFinal(0.001f),
           normalizeSampling(true) {}
 };
 
@@ -152,6 +152,12 @@ private:
     float ComputeRMSDisplacement(const std::vector<Vector3>& posA,
                                  const std::vector<Vector3>& posB);
 
+    // Build weld map: find groups of vertices sharing the same position (UV seam duplicates)
+    void BuildWeldMap();
+
+    // After deformation, enforce exact position coincidence within each weld group
+    void EnforceWeldConstraints(std::vector<Vector3>& positions);
+
     // Source mesh data
     std::vector<Vector3> sourceVertices_;
     std::vector<Vector3> sourceNormals_;
@@ -186,6 +192,10 @@ private:
     // Cached bounding box for sampling normalization
     Vector3 bboxMin_, bboxMax_;
     float bboxDiagonal_;
+
+    // Weld map: groups of vertex indices sharing the same position (UV seam duplicates)
+    std::vector<std::vector<int>> weldGroups_;       // Each group has 2+ vertices at same position
+    std::vector<int> weldGroupIndex_;                // Per-vertex: index into weldGroups_ (-1 if not welded)
 };
 
 } // namespace MetaVisage

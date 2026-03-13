@@ -49,6 +49,8 @@ public:
     // Mesh info
     size_t GetVertexCount() const { return vertices_.size(); }
     size_t GetFaceCount() const { return faces_.size(); }
+    size_t GetUVCount() const { return uvs_.size(); }
+    bool HasSeparateUVIndices() const { return !faces_.empty() && !faces_[0].uvIndices.empty(); }
     size_t GetTriangleCount() const;
 
     // Acceleration structures (lazy-built, mutable for const access)

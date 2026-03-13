@@ -65,6 +65,11 @@ private:
 
     void ReportProgress(float progress, const QString& message);
 
+    // Direct OBJ writer: writes with separate v/vt/vn indices to preserve topology
+    ExportResult ExportOBJDirect(const Mesh& mesh, const QString& filepath,
+                                  const ExportOptions& options,
+                                  const Transform* transform);
+
 #ifdef HAVE_ASSIMP
     ExportResult ExportWithAssimp(const Mesh& mesh, const QString& filepath,
                                    const ExportOptions& options,

@@ -9,6 +9,7 @@
 #include <map>
 #include <queue>
 #include <tuple>
+#include <unordered_map>
 
 namespace MetaVisage {
 
@@ -49,6 +50,114 @@ void NRICPDeformer::SetCancellationFlag(std::atomic<bool>* cancelled) {
     cancelled_ = cancelled;
 }
 
+void NRICPDeformer::BuildWeldMap() {
+    weldGroups_.clear();
+    weldGroupIndex_.assign(vertexCount_, -1);
+
+    if (vertexCount_ == 0) return;
+
+    // Spatial hashing to find vertices at the same position.
+    // Use a cell size that's small enough to only group truly coincident vertices.
+    const float epsilon = 1e-5f;
+    const float cellSize = epsilon * 10.0f; // 1e-4 cells
+    const float invCell = 1.0f / cellSize;
+
+    // Hash: grid cell -> list of vertex indices
+    struct CellHash {
+        size_t operator()(const std::tuple<int, int, int>& key) const {
+            auto h1 = std::hash<int>{}(std::get<0>(key));
+            auto h2 = std::hash<int>{}(std::get<1>(key));
+            auto h3 = std::hash<int>{}(std::get<2>(key));
+            return h1 ^ (h2 * 2654435761u) ^ (h3 * 40503u);
+        }
+    };
+
+    std::unordered_map<std::tuple<int, int, int>, std::vector<int>, CellHash> grid;
+
+    for (int i = 0; i < vertexCount_; ++i) {
+        const Vector3& v = sourceVertices_[i];
+        int cx = static_cast<int>(std::floor(v.x * invCell));
+        int cy = static_cast<int>(std::floor(v.y * invCell));
+        int cz = static_cast<int>(std::floor(v.z * invCell));
+        grid[{cx, cy, cz}].push_back(i);
+    }
+
+    // For each vertex, check its cell and 26 neighbors for coincident vertices
+    float epsSq = epsilon * epsilon;
+    std::vector<bool> visited(vertexCount_, false);
+
+    for (int i = 0; i < vertexCount_; ++i) {
+        if (visited[i]) continue;
+
+        const Vector3& vi = sourceVertices_[i];
+        int cx = static_cast<int>(std::floor(vi.x * invCell));
+        int cy = static_cast<int>(std::floor(vi.y * invCell));
+        int cz = static_cast<int>(std::floor(vi.z * invCell));
+
+        std::vector<int> group;
+        group.push_back(i);
+
+        // Check 3x3x3 neighborhood
+        for (int dx = -1; dx <= 1; ++dx) {
+            for (int dy = -1; dy <= 1; ++dy) {
+                for (int dz = -1; dz <= 1; ++dz) {
+                    auto it = grid.find({cx + dx, cy + dy, cz + dz});
+                    if (it == grid.end()) continue;
+
+                    for (int j : it->second) {
+                        if (j <= i || visited[j]) continue;
+                        Vector3 diff = sourceVertices_[j] - vi;
+                        if (diff.Dot(diff) < epsSq) {
+                            group.push_back(j);
+                            visited[j] = true;
+                        }
+                    }
+                }
+            }
+        }
+
+        visited[i] = true;
+
+        // Only store groups with 2+ vertices (actual UV seam splits)
+        if (group.size() >= 2) {
+            int groupIdx = static_cast<int>(weldGroups_.size());
+            for (int idx : group) {
+                weldGroupIndex_[idx] = groupIdx;
+            }
+            weldGroups_.push_back(std::move(group));
+        }
+    }
+
+    int totalWeldedVerts = 0;
+    for (const auto& g : weldGroups_) {
+        totalWeldedVerts += static_cast<int>(g.size());
+    }
+
+    MV_LOG_INFO(QString("NRICP: Found %1 weld groups (%2 vertices at UV seams)")
+        .arg(weldGroups_.size()).arg(totalWeldedVerts));
+}
+
+void NRICPDeformer::EnforceWeldConstraints(std::vector<Vector3>& positions) {
+    for (const auto& group : weldGroups_) {
+        // Compute average position for the group
+        double ax = 0.0, ay = 0.0, az = 0.0;
+        for (int idx : group) {
+            ax += static_cast<double>(positions[idx].x);
+            ay += static_cast<double>(positions[idx].y);
+            az += static_cast<double>(positions[idx].z);
+        }
+        float invCount = 1.0f / static_cast<float>(group.size());
+        Vector3 avg(static_cast<float>(ax) * invCount,
+                    static_cast<float>(ay) * invCount,
+                    static_cast<float>(az) * invCount);
+
+        // Assign average to all vertices in group
+        for (int idx : group) {
+            positions[idx] = avg;
+        }
+    }
+}
+
 void NRICPDeformer::BuildEdges() {
     edges_.clear();
     std::set<std::pair<int, int>> edgeSet;
@@ -67,13 +176,28 @@ void NRICPDeformer::BuildEdges() {
         }
     }
 
+    // Add weld edges: connect all vertex pairs within each weld group
+    // so the stiffness term keeps UV seam duplicates moving together
+    int weldEdgeCount = 0;
+    for (const auto& group : weldGroups_) {
+        for (size_t i = 0; i < group.size(); ++i) {
+            for (size_t j = i + 1; j < group.size(); ++j) {
+                int lo = std::min(group[i], group[j]);
+                int hi = std::max(group[i], group[j]);
+                if (edgeSet.insert({lo, hi}).second) {
+                    weldEdgeCount++;
+                }
+            }
+        }
+    }
+
     edges_.reserve(edgeSet.size());
     for (const auto& [v0, v1] : edgeSet) {
         edges_.push_back({v0, v1});
     }
 
-    MV_LOG_INFO(QString("NRICP: Built %1 unique edges from %2 faces")
-        .arg(edges_.size()).arg(sourceFaces_.size()));
+    MV_LOG_INFO(QString("NRICP: Built %1 unique edges from %2 faces (%3 weld edges added)")
+        .arg(edges_.size()).arg(sourceFaces_.size()).arg(weldEdgeCount));
 }
 
 void NRICPDeformer::DetectAndExcludeBoundaryVertices() {
@@ -681,7 +805,13 @@ std::vector<Vector3> NRICPDeformer::Solve() {
         return {};
     }
 
-    // Step 1: Build edge graph
+    // Step 0: Build weld map to identify UV seam vertices sharing the same position
+    if (progressCallback_) {
+        progressCallback_(0.01f, "NRICP: Detecting UV seam vertices...");
+    }
+    BuildWeldMap();
+
+    // Step 1: Build edge graph (includes weld edges between UV seam duplicates)
     if (progressCallback_) {
         progressCallback_(0.02f, "NRICP: Building mesh edge graph...");
     }
@@ -939,6 +1069,13 @@ std::vector<Vector3> NRICPDeformer::Solve() {
             }
         }
     }
+
+    if (progressCallback_) {
+        progressCallback_(0.96f, "NRICP: Enforcing UV seam constraints...");
+    }
+
+    // Enforce exact position coincidence at UV seam vertices
+    EnforceWeldConstraints(currentPositions);
 
     if (progressCallback_) {
         progressCallback_(0.97f, "NRICP: Finalizing...");

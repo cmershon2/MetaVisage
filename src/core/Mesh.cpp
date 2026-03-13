@@ -4,6 +4,9 @@
 #include "utils/Logger.h"
 #include <algorithm>
 #include <cmath>
+#include <numeric>
+#include <tuple>
+#include <unordered_map>
 #ifdef HAVE_ASSIMP
 #include <assimp/Importer.hpp>
 #include <assimp/Exporter.hpp>
@@ -28,7 +31,6 @@ bool Mesh::Load(const QString& filepath) {
     Assimp::Importer importer;
     const aiScene* scene = importer.ReadFile(
         filepath.toStdString(),
-        aiProcess_Triangulate |
         aiProcess_JoinIdenticalVertices |
         aiProcess_GenSmoothNormals |
         aiProcess_FlipUVs
@@ -123,6 +125,109 @@ bool Mesh::Load(const QString& filepath) {
     MV_LOG_INFO(QString("Loaded mesh '%1': %2 vertices, %3 faces, %4 normals, %5 UVs, %6 materials")
         .arg(name_).arg(vertices_.size()).arg(faces_.size())
         .arg(normals_.size()).arg(uvs_.size()).arg(materials_.size()));
+
+    // --- Post-import: Merge vertices split at UV seams ---
+    // Assimp creates separate vertices for each unique (position, normal, UV) combination.
+    // MetaHuman requires the original vertex count (positions only), so we merge vertices
+    // that share the same position and store UVs with separate per-face-corner indices.
+    if (!vertices_.empty() && !uvs_.empty()) {
+        const float epsilon = 1e-5f;
+        const float cellSize = epsilon * 10.0f;
+        const float invCell = 1.0f / cellSize;
+        const float epsSq = epsilon * epsilon;
+
+        struct CellHash {
+            size_t operator()(const std::tuple<int,int,int>& k) const {
+                return std::hash<int>{}(std::get<0>(k)) ^
+                       (std::hash<int>{}(std::get<1>(k)) * 2654435761u) ^
+                       (std::hash<int>{}(std::get<2>(k)) * 40503u);
+            }
+        };
+
+        std::unordered_map<std::tuple<int,int,int>, std::vector<int>, CellHash> grid;
+        int vCount = static_cast<int>(vertices_.size());
+
+        for (int i = 0; i < vCount; ++i) {
+            const Vector3& v = vertices_[i];
+            grid[{static_cast<int>(std::floor(v.x * invCell)),
+                  static_cast<int>(std::floor(v.y * invCell)),
+                  static_cast<int>(std::floor(v.z * invCell))}].push_back(i);
+        }
+
+        // For each vertex, find coincident vertices and map them to the canonical (lowest index)
+        std::vector<int> canonicalMap(vCount);
+        std::iota(canonicalMap.begin(), canonicalMap.end(), 0);
+        std::vector<bool> visited(vCount, false);
+        int mergeCount = 0;
+
+        for (int i = 0; i < vCount; ++i) {
+            if (visited[i]) continue;
+            visited[i] = true;
+
+            const Vector3& vi = vertices_[i];
+            int cx = static_cast<int>(std::floor(vi.x * invCell));
+            int cy = static_cast<int>(std::floor(vi.y * invCell));
+            int cz = static_cast<int>(std::floor(vi.z * invCell));
+
+            for (int dx = -1; dx <= 1; ++dx) {
+                for (int dy = -1; dy <= 1; ++dy) {
+                    for (int dz = -1; dz <= 1; ++dz) {
+                        auto it = grid.find({cx + dx, cy + dy, cz + dz});
+                        if (it == grid.end()) continue;
+                        for (int j : it->second) {
+                            if (j <= i || visited[j]) continue;
+                            Vector3 diff = vertices_[j] - vi;
+                            if (diff.Dot(diff) < epsSq) {
+                                canonicalMap[j] = i;
+                                visited[j] = true;
+                                mergeCount++;
+                            }
+                        }
+                    }
+                }
+            }
+        }
+
+        if (mergeCount > 0) {
+            // Build compaction map: old index → new sequential index
+            std::vector<int> compactMap(vCount, -1);
+            std::vector<Vector3> mergedVertices;
+            std::vector<Vector3> mergedNormals;
+
+            for (int i = 0; i < vCount; ++i) {
+                if (canonicalMap[i] == i) {
+                    compactMap[i] = static_cast<int>(mergedVertices.size());
+                    mergedVertices.push_back(vertices_[i]);
+                    if (i < static_cast<int>(normals_.size())) {
+                        mergedNormals.push_back(normals_[i]);
+                    }
+                }
+            }
+
+            for (int i = 0; i < vCount; ++i) {
+                if (canonicalMap[i] != i) {
+                    compactMap[i] = compactMap[canonicalMap[i]];
+                }
+            }
+
+            // Update faces: save original indices as uvIndices, remap vertexIndices
+            for (auto& face : faces_) {
+                face.uvIndices = face.vertexIndices; // Preserve for UV lookup
+                for (auto& idx : face.vertexIndices) {
+                    idx = static_cast<unsigned int>(compactMap[idx]);
+                }
+            }
+
+            MV_LOG_INFO(QString("Mesh '%1': Merged %2 UV-seam vertices (%3 -> %4 vertices)")
+                .arg(name_).arg(mergeCount).arg(vCount).arg(mergedVertices.size()));
+
+            vertices_ = std::move(mergedVertices);
+            normals_ = std::move(mergedNormals);
+            // uvs_ stays at original size, indexed by face uvIndices
+        }
+    }
+
+    CalculateBounds();
 
     return Validate();
 #else
