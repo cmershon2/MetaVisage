@@ -97,6 +97,7 @@ set(SOURCES
     src/utils/BVH.cpp
     src/utils/SpatialHash.cpp
     src/ui/ShortcutsDialog.cpp
+    src/ui/WelcomeDialog.cpp
 )
 
 # Header files
@@ -135,6 +136,7 @@ set(HEADERS
     include/utils/BVH.h
     include/utils/SpatialHash.h
     include/ui/ShortcutsDialog.h
+    include/ui/WelcomeDialog.h
 )
 
 # Create executable

@@ -88,6 +88,9 @@ private slots:
 
 signals:
     void NextStageRequested();
+    void PreviousStageRequested();
+    void ImportMorphMeshRequested();
+    void ImportTargetMeshRequested();
     void ResetTransformRequested();
     void TransformValuesChanged();
     void ClearAllPointsRequested();
@@ -125,6 +128,7 @@ private:
     QVBoxLayout* layout_;
     QLabel* stageLabel_;
     QPushButton* nextStageButton_;
+    QPushButton* prevStageButton_;
     QWidget* controlsWidget_;
 
     // Transform tool UI elements (only valid during Alignment stage)

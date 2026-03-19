@@ -56,6 +56,7 @@ private slots:
 
     // Sidebar actions
     void OnNextStage();
+    void OnPreviousStage();
     void OnResetTransform();
     void OnClearAllPoints();
 
@@ -93,6 +94,7 @@ private:
     void CreateToolBar();
     void CreateStatusBar();
     void CreateCentralWidget();
+    void ShowWelcomeDialog();
     void UpdateWindowTitle();
     void UpdateStatusBar();
     void ConnectViewportSignals();

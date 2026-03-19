@@ -3,6 +3,7 @@
 #include <QApplication>
 #include <QSurfaceFormat>
 #include <QStandardPaths>
+#include <QIcon>
 
 int main(int argc, char *argv[]) {
     // Set up OpenGL context format
@@ -18,6 +19,15 @@ int main(int argc, char *argv[]) {
     app.setApplicationName("MetaVisage");
     app.setApplicationVersion("1.0.0");
     app.setOrganizationName("MetaVisage");
+
+    // Set application icon
+    QIcon appIcon;
+    appIcon.addFile("assets/icons/Windows/Square44x44Logo.targetsize-16.png", QSize(16, 16));
+    appIcon.addFile("assets/icons/Windows/Square44x44Logo.targetsize-32.png", QSize(32, 32));
+    appIcon.addFile("assets/icons/Windows/Square44x44Logo.targetsize-48.png", QSize(48, 48));
+    appIcon.addFile("assets/icons/Windows/Square44x44Logo.targetsize-64.png", QSize(64, 64));
+    appIcon.addFile("assets/icons/Windows/Square44x44Logo.targetsize-256.png", QSize(256, 256));
+    app.setWindowIcon(appIcon);
 
     // Initialize logging system
     QString logDir = QStandardPaths::writableLocation(QStandardPaths::AppDataLocation) + "/logs";
