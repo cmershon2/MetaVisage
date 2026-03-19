@@ -130,6 +130,17 @@ MainWindow::MainWindow(QWidget *parent)
 }
 
 MainWindow::~MainWindow() {
+    // Ensure morph thread is properly shut down before destruction
+    if (morphThread_ && morphThread_->isRunning()) {
+        if (morphWorker_) {
+            morphWorker_->GetDeformer().Cancel();
+        }
+        morphThread_->quit();
+        if (!morphThread_->wait(5000)) {
+            morphThread_->terminate();
+            morphThread_->wait();
+        }
+    }
 }
 
 void MainWindow::CreateMenus() {
@@ -1275,8 +1286,10 @@ void MainWindow::OnMorphComplete(bool success, const QString& errorMessage,
         morphData.isAccepted = false;
 
         // Upload heat map colors for the deformed mesh
-        viewportContainer_->GetPrimaryViewport()->UploadHeatMapColors(
-            deformedMesh.get(), displacements, maxDisplacement);
+        ViewportWidget* vp = viewportContainer_->GetPrimaryViewport();
+        if (vp) {
+            vp->UploadHeatMapColors(deformedMesh.get(), displacements, maxDisplacement);
+        }
 
         // Capture after state and push undo
         MorphUndoAction::MorphState afterState;
@@ -1302,14 +1315,18 @@ void MainWindow::OnMorphComplete(bool success, const QString& errorMessage,
         statusLabel_->setText("Morph processing failed");
     }
 
-    viewportContainer_->GetPrimaryViewport()->update();
+    if (ViewportWidget* vp = viewportContainer_->GetPrimaryViewport()) {
+        vp->update();
+    }
 }
 
 void MainWindow::OnMorphPreviewModeChanged(MorphPreviewMode mode) {
     if (!project_) return;
     project_->GetMorphData().previewMode = mode;
-    viewportContainer_->GetPrimaryViewport()->SetMorphPreviewMode(mode);
-    viewportContainer_->GetPrimaryViewport()->update();
+    if (ViewportWidget* vp = viewportContainer_->GetPrimaryViewport()) {
+        vp->SetMorphPreviewMode(mode);
+        vp->update();
+    }
 }
 
 void MainWindow::OnMorphParameterChanged() {
