@@ -221,6 +221,14 @@ bool Mesh::Load(const QString& filepath) {
             MV_LOG_INFO(QString("Mesh '%1': Merged %2 UV-seam vertices (%3 -> %4 vertices)")
                 .arg(name_).arg(mergeCount).arg(vCount).arg(mergedVertices.size()));
 
+            // Store mapping data for MetaHuman-compatible export (must be done before overwriting normals_)
+            originalAssimpVertexCount_ = static_cast<size_t>(vCount);
+            assimpToMergedMap_.resize(vCount);
+            for (int i = 0; i < vCount; ++i) {
+                assimpToMergedMap_[i] = compactMap[i];
+            }
+            originalAssimpNormals_ = normals_;  // Save original N normals before merge overwrites them
+
             vertices_ = std::move(mergedVertices);
             normals_ = std::move(mergedNormals);
             // uvs_ stays at original size, indexed by face uvIndices
@@ -332,6 +340,12 @@ void Mesh::SetMaterials(const std::vector<Material>& materials) {
     materials_ = materials;
 }
 
+void Mesh::SetAssimpMapping(const std::vector<int>& map, const std::vector<Vector3>& normals, size_t originalCount) {
+    assimpToMergedMap_ = map;
+    originalAssimpNormals_ = normals;
+    originalAssimpVertexCount_ = originalCount;
+}
+
 void Mesh::CalculateNormals() {
     // Clear existing normals
     normals_.clear();
@@ -439,6 +453,9 @@ void Mesh::Clear() {
     faces_.clear();
     materials_.clear();
     bounds_ = BoundingBox();
+    assimpToMergedMap_.clear();
+    originalAssimpNormals_.clear();
+    originalAssimpVertexCount_ = 0;
 }
 
 size_t Mesh::GetTriangleCount() const {

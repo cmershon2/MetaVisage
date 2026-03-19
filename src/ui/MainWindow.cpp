@@ -649,7 +649,16 @@ void MainWindow::OnExportMesh() {
         progress.setLabelText(msg);
     });
 
-    ExportResult result = exporter.Export(*meshToExport, filepath, options, exportTransform);
+    // For MetaHuman-compatible export, pass the original morph mesh so the exporter
+    // can read its file and preserve the exact original topology
+    const Mesh* originalMorphMesh = nullptr;
+    if (options.metaHumanCompatible && morphData.deformedMorphMesh &&
+        project_->GetMorphMesh().isLoaded && project_->GetMorphMesh().mesh) {
+        originalMorphMesh = project_->GetMorphMesh().mesh.get();
+    }
+
+    ExportResult result = exporter.Export(*meshToExport, filepath, options,
+                                           exportTransform, originalMorphMesh);
 
     progress.setValue(100);
 

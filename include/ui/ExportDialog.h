@@ -40,6 +40,7 @@ private:
     QCheckBox* materialsCheck_;
     QCheckBox* applyTransformCheck_;
     QCheckBox* yUpCheck_;
+    QCheckBox* metaHumanCheck_;
     QDoubleSpinBox* scaleSpinBox_;
     QLineEdit* prefixEdit_;
     QPushButton* exportButton_;

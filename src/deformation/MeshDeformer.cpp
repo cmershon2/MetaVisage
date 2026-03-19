@@ -162,6 +162,14 @@ std::shared_ptr<Mesh> MeshDeformer::CopyMesh(const std::shared_ptr<Mesh>& source
     copy->SetFaces(source->GetFaces());
     copy->SetMaterials(source->GetMaterials());
     copy->SetName(source->GetName());
+
+    // Propagate MetaHuman-compatible export mapping
+    if (source->HasAssimpMapping()) {
+        copy->SetAssimpMapping(source->GetAssimpToMergedMap(),
+                               source->GetOriginalAssimpNormals(),
+                               source->GetOriginalAssimpVertexCount());
+    }
+
     return copy;
 }
 

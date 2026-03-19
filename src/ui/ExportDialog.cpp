@@ -57,6 +57,13 @@ void ExportDialog::CreateUI() {
     yUpCheck_->setChecked(true);
     optionsLayout->addRow("", yUpCheck_);
 
+    metaHumanCheck_ = new QCheckBox("MetaHuman compatible (preserves original mesh topology)");
+    metaHumanCheck_->setChecked(false);
+    metaHumanCheck_->setToolTip("Rewrites the original morph mesh file with deformed positions,\n"
+                                 "preserving the exact vertex count and face connectivity required\n"
+                                 "by UE5 MetaHuman Conform. Format is auto-detected from the original file.");
+    optionsLayout->addRow("", metaHumanCheck_);
+
     scaleSpinBox_ = new QDoubleSpinBox();
     scaleSpinBox_->setRange(0.001, 1000.0);
     scaleSpinBox_->setValue(1.0);
@@ -157,6 +164,8 @@ ExportOptions ExportDialog::GetOptions() const {
     options.convertToYUp = yUpCheck_->isChecked();
     options.scaleFactor = static_cast<float>(scaleSpinBox_->value());
     options.ueNamingPrefix = prefixEdit_->text();
+    options.metaHumanCompatible = metaHumanCheck_->isChecked();
+    options.undoUVFlip = metaHumanCheck_->isChecked();  // Auto-enable UV un-flip for MetaHuman
     return options;
 }
 
