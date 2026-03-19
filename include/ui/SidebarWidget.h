@@ -61,7 +61,26 @@ private slots:
     void OnStiffnessChanged(int value);
     void OnSmoothnessChanged(int value);
     void OnKernelTypeChanged(int index);
+    void OnAlgorithmChanged(int index);
     void OnPreviewModeChanged(int index);
+    // NRICP parameter changes
+    void OnNRICPAlphaInitialChanged(int value);
+    void OnNRICPAlphaFinalChanged(int value);
+    void OnNRICPStiffnessStepsChanged(int value);
+    void OnNRICPIcpIterationsChanged(int value);
+    void OnNRICPNormalThresholdChanged(int value);
+    void OnNRICPLandmarkWeightChanged(int value);
+    void OnNRICPBoundaryExclusionToggled(bool enabled);
+    void OnNRICPBoundaryHopsChanged(int value);
+    // NRICP new feature parameters
+    void OnNRICPOptimizationIterationsChanged(int value);
+    void OnNRICPDpInitialChanged(int value);
+    void OnNRICPDpFinalChanged(int value);
+    void OnNRICPGammaInitialChanged(int value);
+    void OnNRICPGammaFinalChanged(int value);
+    void OnNRICPSamplingInitialChanged(int value);
+    void OnNRICPSamplingFinalChanged(int value);
+    void OnNRICPNormalizeSamplingToggled(bool enabled);
     // Handle sculpting parameter changes
     void OnBrushRadiusChanged(int value);
     void OnBrushStrengthChanged(int value);
@@ -133,11 +152,46 @@ private:
     QComboBox* symmetryAxisCombo_;
 
     // Morph stage UI elements (only valid during Morph stage)
+    QComboBox* algorithmCombo_;
+    QWidget* rbfParamsWidget_;
+    QWidget* nricpParamsWidget_;
     QSlider* stiffnessSlider_;
     QSlider* smoothnessSlider_;
     QLabel* stiffnessValueLabel_;
     QLabel* smoothnessValueLabel_;
     QComboBox* kernelTypeCombo_;
+    // NRICP parameter sliders
+    QSlider* nricpAlphaInitialSlider_;
+    QSlider* nricpAlphaFinalSlider_;
+    QSlider* nricpStiffnessStepsSlider_;
+    QSlider* nricpIcpIterationsSlider_;
+    QSlider* nricpNormalThresholdSlider_;
+    QSlider* nricpLandmarkWeightSlider_;
+    QLabel* nricpAlphaInitialLabel_;
+    QLabel* nricpAlphaFinalLabel_;
+    QLabel* nricpStiffnessStepsLabel_;
+    QLabel* nricpIcpIterationsLabel_;
+    QLabel* nricpNormalThresholdLabel_;
+    QLabel* nricpLandmarkWeightLabel_;
+    QCheckBox* nricpBoundaryExclusionCheckBox_;
+    QSlider* nricpBoundaryHopsSlider_;
+    QLabel* nricpBoundaryHopsLabel_;
+    // NRICP new feature sliders
+    QSlider* nricpOptimizationIterationsSlider_;
+    QLabel* nricpOptimizationIterationsLabel_;
+    QSlider* nricpDpInitialSlider_;
+    QLabel* nricpDpInitialLabel_;
+    QSlider* nricpDpFinalSlider_;
+    QLabel* nricpDpFinalLabel_;
+    QSlider* nricpGammaInitialSlider_;
+    QLabel* nricpGammaInitialLabel_;
+    QSlider* nricpGammaFinalSlider_;
+    QLabel* nricpGammaFinalLabel_;
+    QSlider* nricpSamplingInitialSlider_;
+    QLabel* nricpSamplingInitialLabel_;
+    QSlider* nricpSamplingFinalSlider_;
+    QLabel* nricpSamplingFinalLabel_;
+    QCheckBox* nricpNormalizeSamplingCheckBox_;
     QPushButton* processButton_;
     QPushButton* cancelButton_;
     QProgressBar* progressBar_;

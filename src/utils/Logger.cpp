@@ -95,7 +95,7 @@ void Logger::RotateIfNeeded() {
         QFile::remove(oldPath);
         QFile::rename(logFilePath_, oldPath);
         logFile_.setFileName(logFilePath_);
-        logFile_.open(QIODevice::WriteOnly | QIODevice::Append | QIODevice::Text);
+        (void)logFile_.open(QIODevice::WriteOnly | QIODevice::Append | QIODevice::Text);
     }
 }
 

@@ -8,6 +8,7 @@
 #include "utils/Logger.h"
 #include "utils/ErrorHelper.h"
 #include "deformation/MeshDeformer.h"
+#include "deformation/NRICPDeformer.h"
 #include "io/MeshExporter.h"
 #include "io/ProjectSerializer.h"
 #include "core/UndoActions.h"
@@ -35,11 +36,13 @@ public:
                 const Transform& morphTransform,
                 const Transform& targetTransform,
                 const std::vector<PointCorrespondence>& correspondences,
-                DeformationAlgorithm kernel, float stiffness, float smoothness)
+                DeformationAlgorithm kernel, float stiffness, float smoothness,
+                const NRICPParams& nricpParams = NRICPParams())
         : sourceMesh_(sourceMesh), targetMesh_(targetMesh),
           morphTransform_(morphTransform), targetTransform_(targetTransform),
           correspondences_(correspondences),
-          kernel_(kernel), stiffness_(stiffness), smoothness_(smoothness) {}
+          kernel_(kernel), stiffness_(stiffness), smoothness_(smoothness),
+          nricpParams_(nricpParams) {}
 
     MeshDeformer& GetDeformer() { return deformer_; }
 
@@ -53,6 +56,7 @@ public slots:
         deformer_.SetKernelType(kernel_);
         deformer_.SetStiffness(stiffness_);
         deformer_.SetSmoothness(smoothness_);
+        deformer_.SetNRICPParams(nricpParams_);
         deformer_.SetProgressCallback([this](float progress, const std::string& message) {
             emit progressUpdated(progress, QString::fromStdString(message));
         });
@@ -84,6 +88,7 @@ private:
     DeformationAlgorithm kernel_;
     float stiffness_;
     float smoothness_;
+    NRICPParams nricpParams_;
 };
 
 MainWindow::MainWindow(QWidget *parent)
@@ -644,7 +649,16 @@ void MainWindow::OnExportMesh() {
         progress.setLabelText(msg);
     });
 
-    ExportResult result = exporter.Export(*meshToExport, filepath, options, exportTransform);
+    // For MetaHuman-compatible export, pass the original morph mesh so the exporter
+    // can read its file and preserve the exact original topology
+    const Mesh* originalMorphMesh = nullptr;
+    if (options.metaHumanCompatible && morphData.deformedMorphMesh &&
+        project_->GetMorphMesh().isLoaded && project_->GetMorphMesh().mesh) {
+        originalMorphMesh = project_->GetMorphMesh().mesh.get();
+    }
+
+    ExportResult result = exporter.Export(*meshToExport, filepath, options,
+                                           exportTransform, originalMorphMesh);
 
     progress.setValue(100);
 
@@ -1162,6 +1176,26 @@ void MainWindow::OnProcessMorph() {
         return;
     }
 
+    // Build NRICP parameters from project data
+    NRICPParams nricpParams;
+    nricpParams.stiffnessSteps = morphData.nricpStiffnessSteps;
+    nricpParams.alphaInitial = morphData.nricpAlphaInitial;
+    nricpParams.alphaFinal = morphData.nricpAlphaFinal;
+    nricpParams.icpIterations = morphData.nricpIcpIterations;
+    nricpParams.normalThreshold = morphData.nricpNormalThreshold;
+    nricpParams.landmarkWeight = morphData.nricpLandmarkWeight;
+    nricpParams.epsilon = morphData.nricpEpsilon;
+    nricpParams.enableBoundaryExclusion = morphData.nricpEnableBoundaryExclusion;
+    nricpParams.boundaryExclusionHops = morphData.nricpBoundaryExclusionHops;
+    nricpParams.optimizationIterations = morphData.nricpOptimizationIterations;
+    nricpParams.dpInitial = morphData.nricpDpInitial;
+    nricpParams.dpFinal = morphData.nricpDpFinal;
+    nricpParams.gammaInitial = morphData.nricpGammaInitial;
+    nricpParams.gammaFinal = morphData.nricpGammaFinal;
+    nricpParams.samplingInitial = morphData.nricpSamplingInitial;
+    nricpParams.samplingFinal = morphData.nricpSamplingFinal;
+    nricpParams.normalizeSampling = morphData.nricpNormalizeSampling;
+
     // Create worker and thread, passing transforms for coordinate space conversion
     morphThread_ = new QThread(this);
     morphWorker_ = new MorphWorker(
@@ -1172,7 +1206,8 @@ void MainWindow::OnProcessMorph() {
         project_->GetPointReferenceData().correspondences,
         morphData.algorithm,
         morphData.stiffness,
-        morphData.smoothness
+        morphData.smoothness,
+        nricpParams
     );
     morphWorker_->moveToThread(morphThread_);
 

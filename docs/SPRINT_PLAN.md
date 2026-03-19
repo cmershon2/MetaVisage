@@ -1000,6 +1000,81 @@ Visual transform gizmos would improve UX but the current keyboard + mouse drag a
 
 ---
 
+## Sprint 11.5: NRICP Surface Registration
+
+**Duration:** 1 week
+**Goals:** Replace default deformation algorithm with Non-Rigid ICP (NRICP) for superior face wrapping results, inspired by commercial tools like Faceform Wrap 3D
+
+### Background
+
+User feedback identified that RBF/TPS deformation is insufficient for wrapping MetaHuman faces to custom head models. NRICP (Amberg et al. 2007) provides coarse-to-fine multi-resolution fitting with controllable rigidity, producing results comparable to commercial solutions.
+
+### Stories
+
+#### Story 11.5.1: NRICP Algorithm Implementation
+**Tasks:**
+- [x] Add `NRICP` to `DeformationAlgorithm` enum in Project.h
+- [x] Extend `MorphData` with NRICP parameters (stiffness steps, alpha initial/final, ICP iterations, normal threshold, landmark weight, epsilon)
+- [x] Change default algorithm from RBF_TPS to NRICP
+- [x] Add BVH closest-point-on-surface query (FindClosestPoint, ClosestPointOnTriangle, PointAABBDistanceSq)
+- [x] Create `NRICPDeformer.h` with NRICPParams struct and NRICPDeformer class
+- [x] Implement NRICP solver: edge graph building, ICP correspondence finding with normal filtering, sparse linear system assembly (stiffness + data + landmark terms), Cholesky solve via Eigen SimplicialLDLT, per-vertex affine transform application
+- [x] Implement coarse-to-fine main loop with logarithmic stiffness schedule and convergence checking
+- [x] Add progress reporting and cancellation support
+
+#### Story 11.5.2: MeshDeformer & MorphWorker Integration
+**Tasks:**
+- [x] Add `SetNRICPParams()` and `DeformNRICP()` to MeshDeformer
+- [x] Add `CreateTargetMeshInMorphSpace()` helper for coordinate space conversion
+- [x] Add `FindClosestVertex()` helper for mapping correspondences to vertex indices
+- [x] Dispatch to NRICP path when algorithm is NRICP in `Deform()`
+- [x] Relax minimum point count from 4 to 1 for NRICP (ICP finds its own correspondences)
+- [x] Update `MorphWorker` in MainWindow to accept and pass NRICPParams
+- [x] Construct NRICPParams from MorphData in `OnProcessMorph()`
+
+#### Story 11.5.3: Sidebar UI for Algorithm Selection
+**Tasks:**
+- [x] Add Algorithm dropdown: NRICP (Recommended), RBF-TPS, RBF-Gaussian, RBF-Multiquadric
+- [x] Create NRICP parameter panel with sliders: Stiffness Initial, Stiffness Final, Stiffness Steps, ICP Iterations, Normal Threshold, Landmark Weight
+- [x] Keep RBF parameter panel with existing Stiffness/Smoothness/Kernel controls
+- [x] Show/hide parameter panels based on selected algorithm
+- [x] Implement slot handlers for all NRICP parameter changes
+- [x] Update SetMorphProcessing to disable NRICP controls during processing
+- [x] Update ClearControls for new member pointers
+- [x] Reset Defaults handles both NRICP and RBF panels
+
+#### Story 11.5.4: Serialization & Build
+**Tasks:**
+- [x] Serialize NRICP parameters in ProjectSerializer (save)
+- [x] Deserialize NRICP parameters with backward-compatible defaults (load)
+- [x] Copy NRICP fields in project load path
+- [x] Update CMakeLists.txt with NRICPDeformer source and header
+- [x] Verify project compiles with no errors
+
+### Acceptance Criteria
+- [x] NRICP is the default algorithm when creating new projects
+- [x] Algorithm dropdown switches between NRICP and RBF parameter panels
+- [x] NRICP processing: loads meshes, places landmarks, deforms morph mesh toward target
+- [x] RBF backward compatibility: selecting RBF works identically to before
+- [x] All preview modes (deformed, original, overlay, heat map) work with NRICP results
+- [x] Cancellation during NRICP processing works cleanly
+- [x] NRICP parameters persist in project files; old projects load with sensible defaults
+- [x] No new external dependencies (uses existing Eigen3 Sparse module)
+
+#### Story 11.5.5: Boundary Vertex Exclusion (Interior Geometry Fix)
+**Background:** MetaHuman morph meshes contain interior geometry (mouth box, eye sockets, ear canals) that does not exist on target scan meshes. During NRICP, these interior vertices found bad correspondences on the target exterior, causing them to cut through the face surface.
+
+**Tasks:**
+- [x] Implement boundary edge detection (edges with only 1 adjacent face)
+- [x] BFS propagation from boundary vertices to mark exclusion zone (configurable hops)
+- [x] Skip excluded vertices in FindCorrespondences() (stiffness term interpolates their transforms)
+- [x] Add max correspondence distance threshold (auto-computed from bounding box diagonal)
+- [x] Add UI: "Exclude Boundary Regions" checkbox + "Boundary Depth" slider (1-10 hops)
+- [x] Serialize boundary exclusion params in ProjectSerializer with backward-compatible defaults
+- [x] Wire params through MorphData, NRICPParams, and MorphWorker
+
+---
+
 ## Sprint 12: Testing & Release Prep
 
 **Duration:** 2 weeks  

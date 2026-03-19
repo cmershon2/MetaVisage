@@ -36,9 +36,15 @@ private:
     unsigned int vbo_;
     unsigned int ibo_;
     unsigned int colorVBO_;
-    size_t indexCount_;
+    GLsizei indexCount_;
     size_t vertexCount_;
     bool hasVertexColors_;
+
+    // GPU-to-mesh mapping for separate UV indices (UV seam handling)
+    bool hasSeparateUVs_ = false;
+    size_t gpuVertexCount_ = 0;
+    std::vector<unsigned int> gpuToMeshVertex_;  // GPU vertex idx → mesh vertex idx (position/normal)
+    std::vector<unsigned int> gpuToMeshUV_;      // GPU vertex idx → mesh UV idx
 };
 
 } // namespace MetaVisage

@@ -205,4 +205,125 @@ bool BVH::RayIntersect(const Ray& ray, const std::vector<Vector3>& vertices,
     return outTriangleIndex >= 0;
 }
 
+Vector3 BVH::ClosestPointOnTriangle(const Vector3& p,
+                                     const Vector3& a, const Vector3& b, const Vector3& c) {
+    // Voronoi region method (Real-Time Collision Detection, Ericson)
+    Vector3 ab = b - a;
+    Vector3 ac = c - a;
+    Vector3 ap = p - a;
+
+    float d1 = ab.Dot(ap);
+    float d2 = ac.Dot(ap);
+    if (d1 <= 0.0f && d2 <= 0.0f) return a; // Vertex A region
+
+    Vector3 bp = p - b;
+    float d3 = ab.Dot(bp);
+    float d4 = ac.Dot(bp);
+    if (d3 >= 0.0f && d4 <= d3) return b; // Vertex B region
+
+    float vc = d1 * d4 - d3 * d2;
+    if (vc <= 0.0f && d1 >= 0.0f && d3 <= 0.0f) {
+        float v = d1 / (d1 - d3);
+        return a + ab * v; // Edge AB region
+    }
+
+    Vector3 cp = p - c;
+    float d5 = ab.Dot(cp);
+    float d6 = ac.Dot(cp);
+    if (d6 >= 0.0f && d5 <= d6) return c; // Vertex C region
+
+    float vb = d5 * d2 - d1 * d6;
+    if (vb <= 0.0f && d2 >= 0.0f && d6 <= 0.0f) {
+        float w = d2 / (d2 - d6);
+        return a + ac * w; // Edge AC region
+    }
+
+    float va = d3 * d6 - d5 * d4;
+    if (va <= 0.0f && (d4 - d3) >= 0.0f && (d5 - d6) >= 0.0f) {
+        float w = (d4 - d3) / ((d4 - d3) + (d5 - d6));
+        return b + (c - b) * w; // Edge BC region
+    }
+
+    // Inside triangle
+    float denom = 1.0f / (va + vb + vc);
+    float v = vb * denom;
+    float w = vc * denom;
+    return a + ab * v + ac * w;
+}
+
+float BVH::PointAABBDistanceSq(const Vector3& point, const BoundingBox& box) {
+    float distSq = 0.0f;
+
+    // X axis
+    if (point.x < box.min.x) { float d = box.min.x - point.x; distSq += d * d; }
+    else if (point.x > box.max.x) { float d = point.x - box.max.x; distSq += d * d; }
+
+    // Y axis
+    if (point.y < box.min.y) { float d = box.min.y - point.y; distSq += d * d; }
+    else if (point.y > box.max.y) { float d = point.y - box.max.y; distSq += d * d; }
+
+    // Z axis
+    if (point.z < box.min.z) { float d = box.min.z - point.z; distSq += d * d; }
+    else if (point.z > box.max.z) { float d = point.z - box.max.z; distSq += d * d; }
+
+    return distSq;
+}
+
+void BVH::FindClosestPointNode(const BVHNode* node, const Vector3& queryPoint,
+                                const std::vector<Vector3>& vertices,
+                                BVHClosestPointResult& best) const {
+    if (!node) return;
+
+    // Prune: if minimum distance to this AABB is worse than current best, skip
+    float aabbDistSq = PointAABBDistanceSq(queryPoint, node->bounds);
+    if (aabbDistSq >= best.distanceSq) return;
+
+    if (node->IsLeaf()) {
+        for (const auto& tri : node->triangles) {
+            const Vector3& v0 = vertices[tri.i0];
+            const Vector3& v1 = vertices[tri.i1];
+            const Vector3& v2 = vertices[tri.i2];
+
+            Vector3 closest = ClosestPointOnTriangle(queryPoint, v0, v1, v2);
+            Vector3 diff = queryPoint - closest;
+            float distSq = diff.Dot(diff);
+
+            if (distSq < best.distanceSq) {
+                best.point = closest;
+                best.distanceSq = distSq;
+                best.triangleIndex = tri.triangleIndex;
+                best.found = true;
+
+                // Compute face normal
+                Vector3 edge1 = v1 - v0;
+                Vector3 edge2 = v2 - v0;
+                best.normal = edge1.Cross(edge2).Normalized();
+            }
+        }
+        return;
+    }
+
+    // Visit the closer child first for better pruning
+    float leftDistSq = node->left ? PointAABBDistanceSq(queryPoint, node->left->bounds)
+                                  : std::numeric_limits<float>::max();
+    float rightDistSq = node->right ? PointAABBDistanceSq(queryPoint, node->right->bounds)
+                                    : std::numeric_limits<float>::max();
+
+    if (leftDistSq <= rightDistSq) {
+        FindClosestPointNode(node->left.get(), queryPoint, vertices, best);
+        FindClosestPointNode(node->right.get(), queryPoint, vertices, best);
+    } else {
+        FindClosestPointNode(node->right.get(), queryPoint, vertices, best);
+        FindClosestPointNode(node->left.get(), queryPoint, vertices, best);
+    }
+}
+
+BVHClosestPointResult BVH::FindClosestPoint(const Vector3& queryPoint,
+                                              const std::vector<Vector3>& vertices) const {
+    BVHClosestPointResult result;
+    if (!root_) return result;
+    FindClosestPointNode(root_.get(), queryPoint, vertices, result);
+    return result;
+}
+
 } // namespace MetaVisage

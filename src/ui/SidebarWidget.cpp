@@ -39,11 +39,29 @@ SidebarWidget::SidebarWidget(QWidget *parent)
       pointSizeSlider_(nullptr),
       symmetryCheckBox_(nullptr),
       symmetryAxisCombo_(nullptr),
+      algorithmCombo_(nullptr),
+      rbfParamsWidget_(nullptr),
+      nricpParamsWidget_(nullptr),
       stiffnessSlider_(nullptr),
       smoothnessSlider_(nullptr),
       stiffnessValueLabel_(nullptr),
       smoothnessValueLabel_(nullptr),
       kernelTypeCombo_(nullptr),
+      nricpAlphaInitialSlider_(nullptr),
+      nricpAlphaFinalSlider_(nullptr),
+      nricpStiffnessStepsSlider_(nullptr),
+      nricpIcpIterationsSlider_(nullptr),
+      nricpNormalThresholdSlider_(nullptr),
+      nricpLandmarkWeightSlider_(nullptr),
+      nricpAlphaInitialLabel_(nullptr),
+      nricpAlphaFinalLabel_(nullptr),
+      nricpStiffnessStepsLabel_(nullptr),
+      nricpIcpIterationsLabel_(nullptr),
+      nricpNormalThresholdLabel_(nullptr),
+      nricpLandmarkWeightLabel_(nullptr),
+      nricpBoundaryExclusionCheckBox_(nullptr),
+      nricpBoundaryHopsSlider_(nullptr),
+      nricpBoundaryHopsLabel_(nullptr),
       processButton_(nullptr),
       cancelButton_(nullptr),
       progressBar_(nullptr),
@@ -577,8 +595,8 @@ void SidebarWidget::CreateMorphControls() {
 
     // Info label
     QLabel* info = new QLabel(
-        "Adjust deformation parameters and process the morph. "
-        "After processing, preview the result and accept or re-process."
+        "Select algorithm and adjust parameters. "
+        "NRICP provides best results for face wrapping."
     );
     info->setWordWrap(true);
     info->setStyleSheet("QLabel { color: #BDC3C7; }");
@@ -596,10 +614,221 @@ void SidebarWidget::CreateMorphControls() {
         "QComboBox::drop-down { border: none; }"
         "QComboBox QAbstractItemView { background-color: #34495E; color: white; selection-background-color: #3498DB; }";
 
-    // --- Parameters Group ---
-    QGroupBox* paramsGroup = new QGroupBox("Deformation Parameters");
-    paramsGroup->setStyleSheet(groupBoxStyle);
-    QVBoxLayout* paramsLayout = new QVBoxLayout(paramsGroup);
+    // --- Algorithm Selection ---
+    QGroupBox* algoGroup = new QGroupBox("Algorithm");
+    algoGroup->setStyleSheet(groupBoxStyle);
+    QVBoxLayout* algoLayout = new QVBoxLayout(algoGroup);
+
+    algorithmCombo_ = new QComboBox();
+    algorithmCombo_->setToolTip("Select the deformation algorithm");
+    algorithmCombo_->addItem("NRICP (Recommended)", static_cast<int>(DeformationAlgorithm::NRICP));
+    algorithmCombo_->addItem("RBF - Thin-Plate Spline", static_cast<int>(DeformationAlgorithm::RBF_TPS));
+    algorithmCombo_->addItem("RBF - Gaussian", static_cast<int>(DeformationAlgorithm::RBF_GAUSSIAN));
+    algorithmCombo_->addItem("RBF - Multiquadric", static_cast<int>(DeformationAlgorithm::RBF_MULTIQUADRIC));
+    algorithmCombo_->setCurrentIndex(0);
+    algorithmCombo_->setStyleSheet(comboStyle);
+    connect(algorithmCombo_, QOverload<int>::of(&QComboBox::currentIndexChanged),
+            this, &SidebarWidget::OnAlgorithmChanged);
+    algoLayout->addWidget(algorithmCombo_);
+
+    controlsLayout->addWidget(algoGroup);
+
+    // --- NRICP Parameters Group ---
+    nricpParamsWidget_ = new QWidget();
+    QVBoxLayout* nricpOuterLayout = new QVBoxLayout(nricpParamsWidget_);
+    nricpOuterLayout->setContentsMargins(0, 0, 0, 0);
+
+    QGroupBox* nricpGroup = new QGroupBox("NRICP Parameters");
+    nricpGroup->setStyleSheet(groupBoxStyle);
+    QVBoxLayout* nricpLayout = new QVBoxLayout(nricpGroup);
+
+    auto addNRICPSlider = [&](const QString& label, const QString& tooltip,
+                              QSlider*& slider, QLabel*& valueLabel,
+                              int min, int max, int defaultVal) {
+        QHBoxLayout* row = new QHBoxLayout();
+        QLabel* lbl = new QLabel(label);
+        lbl->setMinimumWidth(95);
+        row->addWidget(lbl);
+        slider = new QSlider(Qt::Horizontal);
+        slider->setToolTip(tooltip);
+        slider->setRange(min, max);
+        slider->setValue(defaultVal);
+        slider->setStyleSheet(sliderStyle);
+        row->addWidget(slider);
+        valueLabel = new QLabel();
+        valueLabel->setMinimumWidth(40);
+        valueLabel->setAlignment(Qt::AlignRight | Qt::AlignVCenter);
+        row->addWidget(valueLabel);
+        nricpLayout->addLayout(row);
+    };
+
+    addNRICPSlider("Stiffness Init:", "Initial stiffness (high=rigid start)",
+                   nricpAlphaInitialSlider_, nricpAlphaInitialLabel_, 1, 500, 100);
+    nricpAlphaInitialLabel_->setText("100");
+
+    addNRICPSlider("Stiffness Final:", "Final stiffness (low=flexible end)",
+                   nricpAlphaFinalSlider_, nricpAlphaFinalLabel_, 1, 100, 1);
+    nricpAlphaFinalLabel_->setText("1");
+
+    addNRICPSlider("Stiffness Steps:", "Number of coarse-to-fine levels",
+                   nricpStiffnessStepsSlider_, nricpStiffnessStepsLabel_, 1, 20, 5);
+    nricpStiffnessStepsLabel_->setText("5");
+
+    addNRICPSlider("ICP Iterations:", "ICP iterations per stiffness level",
+                   nricpIcpIterationsSlider_, nricpIcpIterationsLabel_, 1, 10, 3);
+    nricpIcpIterationsLabel_->setText("3");
+
+    addNRICPSlider("Normal Thresh:", "Max normal angle for correspondence (degrees)",
+                   nricpNormalThresholdSlider_, nricpNormalThresholdLabel_, 10, 180, 60);
+    nricpNormalThresholdLabel_->setText(QString::fromUtf8("60\u00B0"));
+
+    addNRICPSlider("Landmark Wt:", "Weight for user-defined landmark points",
+                   nricpLandmarkWeightSlider_, nricpLandmarkWeightLabel_, 1, 200, 10);
+    nricpLandmarkWeightLabel_->setText("10.0");
+
+    // Connect NRICP slider signals
+    connect(nricpAlphaInitialSlider_, &QSlider::valueChanged, this, &SidebarWidget::OnNRICPAlphaInitialChanged);
+    connect(nricpAlphaFinalSlider_, &QSlider::valueChanged, this, &SidebarWidget::OnNRICPAlphaFinalChanged);
+    connect(nricpStiffnessStepsSlider_, &QSlider::valueChanged, this, &SidebarWidget::OnNRICPStiffnessStepsChanged);
+    connect(nricpIcpIterationsSlider_, &QSlider::valueChanged, this, &SidebarWidget::OnNRICPIcpIterationsChanged);
+    connect(nricpNormalThresholdSlider_, &QSlider::valueChanged, this, &SidebarWidget::OnNRICPNormalThresholdChanged);
+    connect(nricpLandmarkWeightSlider_, &QSlider::valueChanged, this, &SidebarWidget::OnNRICPLandmarkWeightChanged);
+
+    // --- Interior Geometry Exclusion ---
+    QFrame* nricpSeparator = new QFrame();
+    nricpSeparator->setFrameShape(QFrame::HLine);
+    nricpSeparator->setStyleSheet("QFrame { color: #555; }");
+    nricpLayout->addWidget(nricpSeparator);
+
+    QLabel* boundaryTitle = new QLabel("Interior Geometry");
+    boundaryTitle->setStyleSheet("QLabel { font-weight: bold; color: #BDC3C7; }");
+    nricpLayout->addWidget(boundaryTitle);
+
+    nricpBoundaryExclusionCheckBox_ = new QCheckBox("Exclude Boundary Regions");
+    nricpBoundaryExclusionCheckBox_->setToolTip(
+        "Exclude interior geometry (mouth box, eye sockets, ear canals) "
+        "from ICP correspondence finding. Prevents interior vertices from "
+        "being pulled through the face surface.");
+    nricpBoundaryExclusionCheckBox_->setChecked(true);
+    nricpLayout->addWidget(nricpBoundaryExclusionCheckBox_);
+
+    QHBoxLayout* hopsRow = new QHBoxLayout();
+    QLabel* hopsLbl = new QLabel("Boundary Depth:");
+    hopsLbl->setMinimumWidth(95);
+    hopsRow->addWidget(hopsLbl);
+    nricpBoundaryHopsSlider_ = new QSlider(Qt::Horizontal);
+    nricpBoundaryHopsSlider_->setToolTip(
+        "Number of edge hops from mesh boundaries to exclude (higher = larger exclusion zone)");
+    nricpBoundaryHopsSlider_->setRange(1, 10);
+    nricpBoundaryHopsSlider_->setValue(3);
+    nricpBoundaryHopsSlider_->setStyleSheet(sliderStyle);
+    hopsRow->addWidget(nricpBoundaryHopsSlider_);
+    nricpBoundaryHopsLabel_ = new QLabel("3");
+    nricpBoundaryHopsLabel_->setMinimumWidth(40);
+    nricpBoundaryHopsLabel_->setAlignment(Qt::AlignRight | Qt::AlignVCenter);
+    hopsRow->addWidget(nricpBoundaryHopsLabel_);
+    nricpLayout->addLayout(hopsRow);
+
+    connect(nricpBoundaryExclusionCheckBox_, &QCheckBox::toggled,
+            this, &SidebarWidget::OnNRICPBoundaryExclusionToggled);
+    connect(nricpBoundaryHopsSlider_, &QSlider::valueChanged,
+            this, &SidebarWidget::OnNRICPBoundaryHopsChanged);
+
+    // --- Optimization Parameters ---
+    QFrame* optSeparator = new QFrame();
+    optSeparator->setFrameShape(QFrame::HLine);
+    optSeparator->setStyleSheet("QFrame { color: #555; }");
+    nricpLayout->addWidget(optSeparator);
+
+    QLabel* optTitle = new QLabel("Optimization");
+    optTitle->setStyleSheet("QLabel { font-weight: bold; color: #BDC3C7; }");
+    nricpLayout->addWidget(optTitle);
+
+    addNRICPSlider("Opt Iterations:", "Inner optimization iterations per ICP step (1=disabled)",
+                   nricpOptimizationIterationsSlider_, nricpOptimizationIterationsLabel_, 1, 20, 1);
+    nricpOptimizationIterationsLabel_->setText("1");
+
+    addNRICPSlider("Dp Initial:", "Initial step-size damping (1.0=no damping, lower=more conservative)",
+                   nricpDpInitialSlider_, nricpDpInitialLabel_, 1, 100, 100);
+    nricpDpInitialLabel_->setText("1.00");
+
+    addNRICPSlider("Dp Final:", "Final step-size damping",
+                   nricpDpFinalSlider_, nricpDpFinalLabel_, 1, 100, 100);
+    nricpDpFinalLabel_->setText("1.00");
+
+    connect(nricpOptimizationIterationsSlider_, &QSlider::valueChanged,
+            this, &SidebarWidget::OnNRICPOptimizationIterationsChanged);
+    connect(nricpDpInitialSlider_, &QSlider::valueChanged,
+            this, &SidebarWidget::OnNRICPDpInitialChanged);
+    connect(nricpDpFinalSlider_, &QSlider::valueChanged,
+            this, &SidebarWidget::OnNRICPDpFinalChanged);
+
+    // --- Rigidity Parameters ---
+    QFrame* rigidSeparator = new QFrame();
+    rigidSeparator->setFrameShape(QFrame::HLine);
+    rigidSeparator->setStyleSheet("QFrame { color: #555; }");
+    nricpLayout->addWidget(rigidSeparator);
+
+    QLabel* rigidTitle = new QLabel("Rigidity (ARAP)");
+    rigidTitle->setStyleSheet("QLabel { font-weight: bold; color: #BDC3C7; }");
+    nricpLayout->addWidget(rigidTitle);
+
+    addNRICPSlider("Rigidity Init:", "Initial ARAP rigidity weight (0=disabled, higher=more rigid)",
+                   nricpGammaInitialSlider_, nricpGammaInitialLabel_, 0, 100, 0);
+    nricpGammaInitialLabel_->setText("0.0");
+
+    addNRICPSlider("Rigidity Final:", "Final ARAP rigidity weight (0=disabled)",
+                   nricpGammaFinalSlider_, nricpGammaFinalLabel_, 0, 100, 0);
+    nricpGammaFinalLabel_->setText("0.0");
+
+    connect(nricpGammaInitialSlider_, &QSlider::valueChanged,
+            this, &SidebarWidget::OnNRICPGammaInitialChanged);
+    connect(nricpGammaFinalSlider_, &QSlider::valueChanged,
+            this, &SidebarWidget::OnNRICPGammaFinalChanged);
+
+    // --- Control Node Subsampling ---
+    QFrame* sampSeparator = new QFrame();
+    sampSeparator->setFrameShape(QFrame::HLine);
+    sampSeparator->setStyleSheet("QFrame { color: #555; }");
+    nricpLayout->addWidget(sampSeparator);
+
+    QLabel* sampTitle = new QLabel("Control Node Sampling");
+    sampTitle->setStyleSheet("QLabel { font-weight: bold; color: #BDC3C7; }");
+    nricpLayout->addWidget(sampTitle);
+
+    addNRICPSlider("Sampling Init:", "Initial control node density (0=all vertices, higher=fewer nodes)",
+                   nricpSamplingInitialSlider_, nricpSamplingInitialLabel_, 0, 100, 0);
+    nricpSamplingInitialLabel_->setText("All");
+
+    addNRICPSlider("Sampling Final:", "Final control node density (0=all vertices)",
+                   nricpSamplingFinalSlider_, nricpSamplingFinalLabel_, 0, 100, 0);
+    nricpSamplingFinalLabel_->setText("All");
+
+    nricpNormalizeSamplingCheckBox_ = new QCheckBox("Normalize Sampling");
+    nricpNormalizeSamplingCheckBox_->setToolTip(
+        "Interpret sampling values relative to mesh bounding box diagonal. "
+        "If unchecked, values are absolute distances.");
+    nricpNormalizeSamplingCheckBox_->setChecked(true);
+    nricpLayout->addWidget(nricpNormalizeSamplingCheckBox_);
+
+    connect(nricpSamplingInitialSlider_, &QSlider::valueChanged,
+            this, &SidebarWidget::OnNRICPSamplingInitialChanged);
+    connect(nricpSamplingFinalSlider_, &QSlider::valueChanged,
+            this, &SidebarWidget::OnNRICPSamplingFinalChanged);
+    connect(nricpNormalizeSamplingCheckBox_, &QCheckBox::toggled,
+            this, &SidebarWidget::OnNRICPNormalizeSamplingToggled);
+
+    nricpOuterLayout->addWidget(nricpGroup);
+    controlsLayout->addWidget(nricpParamsWidget_);
+
+    // --- RBF Parameters Group (hidden by default) ---
+    rbfParamsWidget_ = new QWidget();
+    QVBoxLayout* rbfOuterLayout = new QVBoxLayout(rbfParamsWidget_);
+    rbfOuterLayout->setContentsMargins(0, 0, 0, 0);
+
+    QGroupBox* rbfGroup = new QGroupBox("RBF Parameters");
+    rbfGroup->setStyleSheet(groupBoxStyle);
+    QVBoxLayout* rbfLayout = new QVBoxLayout(rbfGroup);
 
     // Stiffness slider
     QHBoxLayout* stiffLayout = new QHBoxLayout();
@@ -616,7 +845,7 @@ void SidebarWidget::CreateMorphControls() {
     stiffnessValueLabel_->setMinimumWidth(35);
     stiffnessValueLabel_->setAlignment(Qt::AlignRight | Qt::AlignVCenter);
     stiffLayout->addWidget(stiffnessValueLabel_);
-    paramsLayout->addLayout(stiffLayout);
+    rbfLayout->addLayout(stiffLayout);
 
     // Smoothness slider
     QHBoxLayout* smoothLayout = new QHBoxLayout();
@@ -633,30 +862,31 @@ void SidebarWidget::CreateMorphControls() {
     smoothnessValueLabel_->setMinimumWidth(35);
     smoothnessValueLabel_->setAlignment(Qt::AlignRight | Qt::AlignVCenter);
     smoothLayout->addWidget(smoothnessValueLabel_);
-    paramsLayout->addLayout(smoothLayout);
+    rbfLayout->addLayout(smoothLayout);
 
-    // Kernel type dropdown
+    // RBF Kernel type dropdown
     QHBoxLayout* kernelLayout = new QHBoxLayout();
     QLabel* kernelLabel = new QLabel("Kernel:");
     kernelLabel->setMinimumWidth(75);
     kernelLayout->addWidget(kernelLabel);
     kernelTypeCombo_ = new QComboBox();
-    kernelTypeCombo_->setToolTip("RBF interpolation kernel (TPS recommended for most cases)");
+    kernelTypeCombo_->setToolTip("RBF interpolation kernel");
     kernelTypeCombo_->addItem("Thin-Plate Spline", static_cast<int>(DeformationAlgorithm::RBF_TPS));
     kernelTypeCombo_->addItem("Gaussian", static_cast<int>(DeformationAlgorithm::RBF_GAUSSIAN));
     kernelTypeCombo_->addItem("Multiquadric", static_cast<int>(DeformationAlgorithm::RBF_MULTIQUADRIC));
     kernelTypeCombo_->setCurrentIndex(0);
     kernelTypeCombo_->setStyleSheet(comboStyle);
     kernelLayout->addWidget(kernelTypeCombo_);
-    paramsLayout->addLayout(kernelLayout);
+    rbfLayout->addLayout(kernelLayout);
 
-    // Connect parameter change signals
     connect(stiffnessSlider_, &QSlider::valueChanged, this, &SidebarWidget::OnStiffnessChanged);
     connect(smoothnessSlider_, &QSlider::valueChanged, this, &SidebarWidget::OnSmoothnessChanged);
     connect(kernelTypeCombo_, QOverload<int>::of(&QComboBox::currentIndexChanged),
             this, &SidebarWidget::OnKernelTypeChanged);
 
-    controlsLayout->addWidget(paramsGroup);
+    rbfOuterLayout->addWidget(rbfGroup);
+    rbfParamsWidget_->setVisible(false); // Hidden by default (NRICP is default)
+    controlsLayout->addWidget(rbfParamsWidget_);
 
     // --- Processing Group ---
     QGroupBox* processGroup = new QGroupBox("Processing");
@@ -681,7 +911,7 @@ void SidebarWidget::CreateMorphControls() {
         "    background-color: #555;"
         "}"
     );
-    processButton_->setToolTip("Run RBF deformation to morph the mesh");
+    processButton_->setToolTip("Run deformation to morph the mesh");
     connect(processButton_, &QPushButton::clicked, this, &SidebarWidget::ProcessMorphRequested);
     processLayout->addWidget(processButton_);
 
@@ -814,9 +1044,29 @@ void SidebarWidget::CreateMorphControls() {
         "}"
     );
     connect(resetDefaultsButton_, &QPushButton::clicked, this, [this]() {
-        if (stiffnessSlider_) stiffnessSlider_->setValue(50);
-        if (smoothnessSlider_) smoothnessSlider_->setValue(50);
-        if (kernelTypeCombo_) kernelTypeCombo_->setCurrentIndex(0);
+        // Reset based on currently visible algorithm panel
+        if (nricpParamsWidget_ && nricpParamsWidget_->isVisible()) {
+            if (nricpAlphaInitialSlider_) nricpAlphaInitialSlider_->setValue(100);
+            if (nricpAlphaFinalSlider_) nricpAlphaFinalSlider_->setValue(1);
+            if (nricpStiffnessStepsSlider_) nricpStiffnessStepsSlider_->setValue(5);
+            if (nricpIcpIterationsSlider_) nricpIcpIterationsSlider_->setValue(3);
+            if (nricpNormalThresholdSlider_) nricpNormalThresholdSlider_->setValue(60);
+            if (nricpLandmarkWeightSlider_) nricpLandmarkWeightSlider_->setValue(10);
+            if (nricpBoundaryExclusionCheckBox_) nricpBoundaryExclusionCheckBox_->setChecked(true);
+            if (nricpBoundaryHopsSlider_) nricpBoundaryHopsSlider_->setValue(3);
+            if (nricpOptimizationIterationsSlider_) nricpOptimizationIterationsSlider_->setValue(1);
+            if (nricpDpInitialSlider_) nricpDpInitialSlider_->setValue(100);
+            if (nricpDpFinalSlider_) nricpDpFinalSlider_->setValue(100);
+            if (nricpGammaInitialSlider_) nricpGammaInitialSlider_->setValue(0);
+            if (nricpGammaFinalSlider_) nricpGammaFinalSlider_->setValue(0);
+            if (nricpSamplingInitialSlider_) nricpSamplingInitialSlider_->setValue(0);
+            if (nricpSamplingFinalSlider_) nricpSamplingFinalSlider_->setValue(0);
+            if (nricpNormalizeSamplingCheckBox_) nricpNormalizeSamplingCheckBox_->setChecked(true);
+        } else {
+            if (stiffnessSlider_) stiffnessSlider_->setValue(50);
+            if (smoothnessSlider_) smoothnessSlider_->setValue(50);
+            if (kernelTypeCombo_) kernelTypeCombo_->setCurrentIndex(0);
+        }
     });
     actionsLayout->addWidget(resetDefaultsButton_);
 
@@ -1082,9 +1332,20 @@ void SidebarWidget::ClearControls() {
     matchStatusLabel_ = nullptr; pointListScroll_ = nullptr; pointListContent_ = nullptr;
     clearAllPointsButton_ = nullptr; pointSizeSlider_ = nullptr;
     symmetryCheckBox_ = nullptr; symmetryAxisCombo_ = nullptr;
+    algorithmCombo_ = nullptr;
+    rbfParamsWidget_ = nullptr; nricpParamsWidget_ = nullptr;
     stiffnessSlider_ = nullptr; smoothnessSlider_ = nullptr;
     stiffnessValueLabel_ = nullptr; smoothnessValueLabel_ = nullptr;
-    kernelTypeCombo_ = nullptr; processButton_ = nullptr; cancelButton_ = nullptr;
+    kernelTypeCombo_ = nullptr;
+    nricpAlphaInitialSlider_ = nullptr; nricpAlphaFinalSlider_ = nullptr;
+    nricpStiffnessStepsSlider_ = nullptr; nricpIcpIterationsSlider_ = nullptr;
+    nricpNormalThresholdSlider_ = nullptr; nricpLandmarkWeightSlider_ = nullptr;
+    nricpAlphaInitialLabel_ = nullptr; nricpAlphaFinalLabel_ = nullptr;
+    nricpStiffnessStepsLabel_ = nullptr; nricpIcpIterationsLabel_ = nullptr;
+    nricpNormalThresholdLabel_ = nullptr; nricpLandmarkWeightLabel_ = nullptr;
+    nricpBoundaryExclusionCheckBox_ = nullptr;
+    nricpBoundaryHopsSlider_ = nullptr; nricpBoundaryHopsLabel_ = nullptr;
+    processButton_ = nullptr; cancelButton_ = nullptr;
     progressBar_ = nullptr; progressLabel_ = nullptr; previewModeCombo_ = nullptr;
     acceptButton_ = nullptr; reprocessButton_ = nullptr; resetDefaultsButton_ = nullptr;
     brushButtonGroup_ = nullptr; smoothBrushButton_ = nullptr; grabBrushButton_ = nullptr;
@@ -1343,9 +1604,29 @@ void SidebarWidget::SetMorphProcessing(bool processing) {
         progressBar_->setVisible(processing);
         if (processing) progressBar_->setValue(0);
     }
+    if (algorithmCombo_) algorithmCombo_->setEnabled(!processing);
+    // RBF controls
     if (stiffnessSlider_) stiffnessSlider_->setEnabled(!processing);
     if (smoothnessSlider_) smoothnessSlider_->setEnabled(!processing);
     if (kernelTypeCombo_) kernelTypeCombo_->setEnabled(!processing);
+    // NRICP controls
+    if (nricpAlphaInitialSlider_) nricpAlphaInitialSlider_->setEnabled(!processing);
+    if (nricpAlphaFinalSlider_) nricpAlphaFinalSlider_->setEnabled(!processing);
+    if (nricpStiffnessStepsSlider_) nricpStiffnessStepsSlider_->setEnabled(!processing);
+    if (nricpIcpIterationsSlider_) nricpIcpIterationsSlider_->setEnabled(!processing);
+    if (nricpNormalThresholdSlider_) nricpNormalThresholdSlider_->setEnabled(!processing);
+    if (nricpLandmarkWeightSlider_) nricpLandmarkWeightSlider_->setEnabled(!processing);
+    if (nricpBoundaryExclusionCheckBox_) nricpBoundaryExclusionCheckBox_->setEnabled(!processing);
+    if (nricpBoundaryHopsSlider_) nricpBoundaryHopsSlider_->setEnabled(!processing &&
+        (nricpBoundaryExclusionCheckBox_ ? nricpBoundaryExclusionCheckBox_->isChecked() : true));
+    if (nricpOptimizationIterationsSlider_) nricpOptimizationIterationsSlider_->setEnabled(!processing);
+    if (nricpDpInitialSlider_) nricpDpInitialSlider_->setEnabled(!processing);
+    if (nricpDpFinalSlider_) nricpDpFinalSlider_->setEnabled(!processing);
+    if (nricpGammaInitialSlider_) nricpGammaInitialSlider_->setEnabled(!processing);
+    if (nricpGammaFinalSlider_) nricpGammaFinalSlider_->setEnabled(!processing);
+    if (nricpSamplingInitialSlider_) nricpSamplingInitialSlider_->setEnabled(!processing);
+    if (nricpSamplingFinalSlider_) nricpSamplingFinalSlider_->setEnabled(!processing);
+    if (nricpNormalizeSamplingCheckBox_) nricpNormalizeSamplingCheckBox_->setEnabled(!processing);
     if (resetDefaultsButton_) resetDefaultsButton_->setEnabled(!processing);
     if (acceptButton_) acceptButton_->setEnabled(false);
     if (reprocessButton_) reprocessButton_->setEnabled(false);
@@ -1380,6 +1661,184 @@ void SidebarWidget::OnSpinBoxValueChanged() {
     transform.SetScale(newScale);
 
     emit TransformValuesChanged();
+}
+
+void SidebarWidget::OnAlgorithmChanged(int index) {
+    if (!algorithmCombo_) return;
+
+    DeformationAlgorithm algo = static_cast<DeformationAlgorithm>(algorithmCombo_->itemData(index).toInt());
+    bool isNRICP = (algo == DeformationAlgorithm::NRICP);
+
+    if (nricpParamsWidget_) nricpParamsWidget_->setVisible(isNRICP);
+    if (rbfParamsWidget_) rbfParamsWidget_->setVisible(!isNRICP);
+
+    if (project_) {
+        project_->GetMorphData().algorithm = algo;
+    }
+    emit MorphParameterChanged();
+}
+
+void SidebarWidget::OnNRICPAlphaInitialChanged(int value) {
+    if (nricpAlphaInitialLabel_) {
+        nricpAlphaInitialLabel_->setText(QString::number(value));
+    }
+    if (project_) {
+        project_->GetMorphData().nricpAlphaInitial = static_cast<float>(value);
+    }
+    emit MorphParameterChanged();
+}
+
+void SidebarWidget::OnNRICPAlphaFinalChanged(int value) {
+    if (nricpAlphaFinalLabel_) {
+        nricpAlphaFinalLabel_->setText(QString::number(value));
+    }
+    if (project_) {
+        project_->GetMorphData().nricpAlphaFinal = static_cast<float>(value);
+    }
+    emit MorphParameterChanged();
+}
+
+void SidebarWidget::OnNRICPStiffnessStepsChanged(int value) {
+    if (nricpStiffnessStepsLabel_) {
+        nricpStiffnessStepsLabel_->setText(QString::number(value));
+    }
+    if (project_) {
+        project_->GetMorphData().nricpStiffnessSteps = value;
+    }
+    emit MorphParameterChanged();
+}
+
+void SidebarWidget::OnNRICPIcpIterationsChanged(int value) {
+    if (nricpIcpIterationsLabel_) {
+        nricpIcpIterationsLabel_->setText(QString::number(value));
+    }
+    if (project_) {
+        project_->GetMorphData().nricpIcpIterations = value;
+    }
+    emit MorphParameterChanged();
+}
+
+void SidebarWidget::OnNRICPNormalThresholdChanged(int value) {
+    if (nricpNormalThresholdLabel_) {
+        nricpNormalThresholdLabel_->setText(QString::number(value) + QString::fromUtf8("\u00B0"));
+    }
+    if (project_) {
+        project_->GetMorphData().nricpNormalThreshold = static_cast<float>(value);
+    }
+    emit MorphParameterChanged();
+}
+
+void SidebarWidget::OnNRICPLandmarkWeightChanged(int value) {
+    if (nricpLandmarkWeightLabel_) {
+        nricpLandmarkWeightLabel_->setText(QString::number(static_cast<float>(value), 'f', 1));
+    }
+    if (project_) {
+        project_->GetMorphData().nricpLandmarkWeight = static_cast<float>(value);
+    }
+    emit MorphParameterChanged();
+}
+
+void SidebarWidget::OnNRICPBoundaryExclusionToggled(bool enabled) {
+    if (nricpBoundaryHopsSlider_) {
+        nricpBoundaryHopsSlider_->setEnabled(enabled);
+    }
+    if (project_) {
+        project_->GetMorphData().nricpEnableBoundaryExclusion = enabled;
+    }
+    emit MorphParameterChanged();
+}
+
+void SidebarWidget::OnNRICPBoundaryHopsChanged(int value) {
+    if (nricpBoundaryHopsLabel_) {
+        nricpBoundaryHopsLabel_->setText(QString::number(value));
+    }
+    if (project_) {
+        project_->GetMorphData().nricpBoundaryExclusionHops = value;
+    }
+    emit MorphParameterChanged();
+}
+
+void SidebarWidget::OnNRICPOptimizationIterationsChanged(int value) {
+    if (nricpOptimizationIterationsLabel_) {
+        nricpOptimizationIterationsLabel_->setText(QString::number(value));
+    }
+    if (project_) {
+        project_->GetMorphData().nricpOptimizationIterations = value;
+    }
+    emit MorphParameterChanged();
+}
+
+void SidebarWidget::OnNRICPDpInitialChanged(int value) {
+    float dpVal = static_cast<float>(value) / 100.0f;
+    if (nricpDpInitialLabel_) {
+        nricpDpInitialLabel_->setText(QString::number(dpVal, 'f', 2));
+    }
+    if (project_) {
+        project_->GetMorphData().nricpDpInitial = dpVal;
+    }
+    emit MorphParameterChanged();
+}
+
+void SidebarWidget::OnNRICPDpFinalChanged(int value) {
+    float dpVal = static_cast<float>(value) / 100.0f;
+    if (nricpDpFinalLabel_) {
+        nricpDpFinalLabel_->setText(QString::number(dpVal, 'f', 2));
+    }
+    if (project_) {
+        project_->GetMorphData().nricpDpFinal = dpVal;
+    }
+    emit MorphParameterChanged();
+}
+
+void SidebarWidget::OnNRICPGammaInitialChanged(int value) {
+    float gammaVal = static_cast<float>(value) / 10.0f;
+    if (nricpGammaInitialLabel_) {
+        nricpGammaInitialLabel_->setText(QString::number(gammaVal, 'f', 1));
+    }
+    if (project_) {
+        project_->GetMorphData().nricpGammaInitial = gammaVal;
+    }
+    emit MorphParameterChanged();
+}
+
+void SidebarWidget::OnNRICPGammaFinalChanged(int value) {
+    float gammaVal = static_cast<float>(value) / 10.0f;
+    if (nricpGammaFinalLabel_) {
+        nricpGammaFinalLabel_->setText(QString::number(gammaVal, 'f', 1));
+    }
+    if (project_) {
+        project_->GetMorphData().nricpGammaFinal = gammaVal;
+    }
+    emit MorphParameterChanged();
+}
+
+void SidebarWidget::OnNRICPSamplingInitialChanged(int value) {
+    float sampVal = static_cast<float>(value) / 1000.0f;
+    if (nricpSamplingInitialLabel_) {
+        nricpSamplingInitialLabel_->setText(value == 0 ? "All" : QString::number(sampVal, 'f', 3));
+    }
+    if (project_) {
+        project_->GetMorphData().nricpSamplingInitial = sampVal;
+    }
+    emit MorphParameterChanged();
+}
+
+void SidebarWidget::OnNRICPSamplingFinalChanged(int value) {
+    float sampVal = static_cast<float>(value) / 1000.0f;
+    if (nricpSamplingFinalLabel_) {
+        nricpSamplingFinalLabel_->setText(value == 0 ? "All" : QString::number(sampVal, 'f', 3));
+    }
+    if (project_) {
+        project_->GetMorphData().nricpSamplingFinal = sampVal;
+    }
+    emit MorphParameterChanged();
+}
+
+void SidebarWidget::OnNRICPNormalizeSamplingToggled(bool enabled) {
+    if (project_) {
+        project_->GetMorphData().nricpNormalizeSampling = enabled;
+    }
+    emit MorphParameterChanged();
 }
 
 } // namespace MetaVisage

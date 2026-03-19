@@ -22,6 +22,8 @@ struct ExportOptions {
     bool convertToYUp;          // Convert coordinate system to Y-up for UE
     float scaleFactor;
     QString ueNamingPrefix;     // e.g. "SK_" for skeletal mesh naming
+    bool metaHumanCompatible;   // Reconstruct original vertex layout for MetaHuman Conform
+    bool undoUVFlip;            // Undo aiProcess_FlipUVs Y-flip from import
 
     ExportOptions()
         : format(ExportFormat::FBX),
@@ -30,7 +32,9 @@ struct ExportOptions {
           applyTransform(true),
           convertToYUp(true),
           scaleFactor(1.0f),
-          ueNamingPrefix("") {}
+          ueNamingPrefix(""),
+          metaHumanCompatible(false),
+          undoUVFlip(false) {}
 };
 
 struct ExportResult {
@@ -52,7 +56,8 @@ public:
 
     ExportResult Export(const Mesh& mesh, const QString& filepath,
                         const ExportOptions& options,
-                        const Transform* transform = nullptr);
+                        const Transform* transform = nullptr,
+                        const Mesh* originalMorphMesh = nullptr);
 
     void SetProgressCallback(ExportProgressCallback callback) { progressCallback_ = callback; }
 
@@ -65,11 +70,27 @@ private:
 
     void ReportProgress(float progress, const QString& message);
 
+    // Direct OBJ writer: writes with separate v/vt/vn indices to preserve topology
+    ExportResult ExportOBJDirect(const Mesh& mesh, const QString& filepath,
+                                  const ExportOptions& options,
+                                  const Transform* transform);
+
 #ifdef HAVE_ASSIMP
     ExportResult ExportWithAssimp(const Mesh& mesh, const QString& filepath,
                                    const ExportOptions& options,
                                    const Transform* transform);
+
+    ExportResult ExportFBXMetaHuman(const Mesh& mesh, const QString& filepath,
+                                     const ExportOptions& options,
+                                     const Transform* transform);
 #endif
+
+    // MetaHuman OBJ export: rewrites the original OBJ file with deformed positions
+    ExportResult ExportOBJMetaHuman(const Mesh& deformedMesh,
+                                     const Mesh& originalMesh,
+                                     const QString& filepath,
+                                     const ExportOptions& options,
+                                     const Transform* transform);
 };
 
 } // namespace MetaVisage

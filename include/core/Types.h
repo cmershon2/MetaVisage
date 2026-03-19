@@ -10,7 +10,7 @@ namespace MetaVisage {
 
 // Forward declarations
 class Mesh;
-class Material;
+struct Material;
 struct Matrix4x4;
 
 // Basic vector types

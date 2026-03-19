@@ -335,7 +335,7 @@ void ViewportWidget::HandleSculptPress(QMouseEvent *event) {
     }
 }
 
-void ViewportWidget::HandleSculptMove(QMouseEvent *event, const QPoint& delta) {
+void ViewportWidget::HandleSculptMove(QMouseEvent *event, const QPoint& /*delta*/) {
     SculptBrush* brush = GetActiveBrush();
     Mesh* mesh = GetSculptMesh();
     if (!brush || !mesh || !project_) return;

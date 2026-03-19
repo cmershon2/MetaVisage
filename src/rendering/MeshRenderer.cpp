@@ -1,5 +1,6 @@
 #include "rendering/MeshRenderer.h"
 #include <vector>
+#include <map>
 
 namespace MetaVisage {
 
@@ -30,53 +31,109 @@ void MeshRenderer::UploadMesh(const Mesh& mesh) {
         return;
     }
 
-    vertexCount_ = vertices.size();
+    hasSeparateUVs_ = mesh.HasSeparateUVIndices();
 
-    // Interleave vertex data: position(3) + normal(3) + uv(2)
     std::vector<float> vertexData;
-    vertexData.reserve(vertices.size() * 8);
-
-    for (size_t i = 0; i < vertices.size(); ++i) {
-        // Position
-        vertexData.push_back(vertices[i].x);
-        vertexData.push_back(vertices[i].y);
-        vertexData.push_back(vertices[i].z);
-
-        // Normal
-        if (i < normals.size()) {
-            vertexData.push_back(normals[i].x);
-            vertexData.push_back(normals[i].y);
-            vertexData.push_back(normals[i].z);
-        } else {
-            vertexData.push_back(0.0f);
-            vertexData.push_back(1.0f);
-            vertexData.push_back(0.0f);
-        }
-
-        // UV
-        if (i < uvs.size()) {
-            vertexData.push_back(uvs[i].x);
-            vertexData.push_back(uvs[i].y);
-        } else {
-            vertexData.push_back(0.0f);
-            vertexData.push_back(0.0f);
-        }
-    }
-
-    // Create index buffer
     std::vector<unsigned int> indices;
-    for (const auto& face : faces) {
-        if (face.vertexIndices.size() >= 3) {
-            // Triangulate face (simple fan triangulation)
+
+    if (hasSeparateUVs_) {
+        // Separate UV index path: build GPU vertices from unique (vertexIdx, uvIdx) pairs
+        // This re-splits at UV seams for the GPU while the mesh data stays merged
+        gpuToMeshVertex_.clear();
+        gpuToMeshUV_.clear();
+        std::map<std::pair<unsigned int, unsigned int>, unsigned int> cornerMap;
+
+        for (const auto& face : faces) {
+            if (face.vertexIndices.size() < 3 || face.uvIndices.size() != face.vertexIndices.size()) continue;
+
+            // Fan triangulation
             for (size_t i = 1; i < face.vertexIndices.size() - 1; ++i) {
-                indices.push_back(face.vertexIndices[0]);
-                indices.push_back(face.vertexIndices[i]);
-                indices.push_back(face.vertexIndices[i + 1]);
+                size_t corners[] = {0, i, i + 1};
+                for (size_t c : corners) {
+                    unsigned int vi = face.vertexIndices[c];
+                    unsigned int ti = face.uvIndices[c];
+                    auto key = std::make_pair(vi, ti);
+
+                    auto it = cornerMap.find(key);
+                    if (it != cornerMap.end()) {
+                        indices.push_back(it->second);
+                    } else {
+                        unsigned int gpuIdx = static_cast<unsigned int>(gpuToMeshVertex_.size());
+                        cornerMap[key] = gpuIdx;
+                        gpuToMeshVertex_.push_back(vi);
+                        gpuToMeshUV_.push_back(ti);
+
+                        vertexData.push_back(vertices[vi].x);
+                        vertexData.push_back(vertices[vi].y);
+                        vertexData.push_back(vertices[vi].z);
+
+                        if (vi < normals.size()) {
+                            vertexData.push_back(normals[vi].x);
+                            vertexData.push_back(normals[vi].y);
+                            vertexData.push_back(normals[vi].z);
+                        } else {
+                            vertexData.push_back(0.0f);
+                            vertexData.push_back(1.0f);
+                            vertexData.push_back(0.0f);
+                        }
+
+                        if (ti < uvs.size()) {
+                            vertexData.push_back(uvs[ti].x);
+                            vertexData.push_back(uvs[ti].y);
+                        } else {
+                            vertexData.push_back(0.0f);
+                            vertexData.push_back(0.0f);
+                        }
+
+                        indices.push_back(gpuIdx);
+                    }
+                }
+            }
+        }
+
+        gpuVertexCount_ = gpuToMeshVertex_.size();
+        vertexCount_ = gpuVertexCount_;
+    } else {
+        // Original path: vertices and UVs share the same index
+        vertexCount_ = vertices.size();
+        vertexData.reserve(vertices.size() * 8);
+
+        for (size_t i = 0; i < vertices.size(); ++i) {
+            vertexData.push_back(vertices[i].x);
+            vertexData.push_back(vertices[i].y);
+            vertexData.push_back(vertices[i].z);
+
+            if (i < normals.size()) {
+                vertexData.push_back(normals[i].x);
+                vertexData.push_back(normals[i].y);
+                vertexData.push_back(normals[i].z);
+            } else {
+                vertexData.push_back(0.0f);
+                vertexData.push_back(1.0f);
+                vertexData.push_back(0.0f);
+            }
+
+            if (i < uvs.size()) {
+                vertexData.push_back(uvs[i].x);
+                vertexData.push_back(uvs[i].y);
+            } else {
+                vertexData.push_back(0.0f);
+                vertexData.push_back(0.0f);
+            }
+        }
+
+        for (const auto& face : faces) {
+            if (face.vertexIndices.size() >= 3) {
+                for (size_t i = 1; i < face.vertexIndices.size() - 1; ++i) {
+                    indices.push_back(face.vertexIndices[0]);
+                    indices.push_back(face.vertexIndices[i]);
+                    indices.push_back(face.vertexIndices[i + 1]);
+                }
             }
         }
     }
 
-    indexCount_ = indices.size();
+    indexCount_ = static_cast<GLsizei>(indices.size());
 
     // Create VAO
     glGenVertexArrays(1, &vao_);
@@ -171,7 +228,7 @@ void MeshRenderer::Render(unsigned int shaderProgram, const Matrix4x4& viewProje
 }
 
 void MeshRenderer::RenderWithAlpha(unsigned int shaderProgram, const Matrix4x4& viewProjection,
-                                    const Transform& transform, ShadingMode mode,
+                                    const Transform& transform, ShadingMode /*mode*/,
                                     const Vector3& color, float alpha) {
     if (vao_ == 0 || indexCount_ == 0) return;
 
@@ -225,31 +282,64 @@ void MeshRenderer::UpdateVertexData(const Mesh& mesh) {
 
     if (vertices.empty()) return;
 
-    // Rebuild interleaved vertex data: position(3) + normal(3) + uv(2)
     std::vector<float> vertexData;
-    vertexData.reserve(vertices.size() * 8);
 
-    for (size_t i = 0; i < vertices.size(); ++i) {
-        vertexData.push_back(vertices[i].x);
-        vertexData.push_back(vertices[i].y);
-        vertexData.push_back(vertices[i].z);
+    if (hasSeparateUVs_ && !gpuToMeshVertex_.empty()) {
+        // Separate UV path: use stored mapping to rebuild GPU buffer
+        vertexData.reserve(gpuVertexCount_ * 8);
 
-        if (i < normals.size()) {
-            vertexData.push_back(normals[i].x);
-            vertexData.push_back(normals[i].y);
-            vertexData.push_back(normals[i].z);
-        } else {
-            vertexData.push_back(0.0f);
-            vertexData.push_back(1.0f);
-            vertexData.push_back(0.0f);
+        for (size_t i = 0; i < gpuVertexCount_; ++i) {
+            unsigned int vi = gpuToMeshVertex_[i];
+            unsigned int ti = gpuToMeshUV_[i];
+
+            vertexData.push_back(vertices[vi].x);
+            vertexData.push_back(vertices[vi].y);
+            vertexData.push_back(vertices[vi].z);
+
+            if (vi < normals.size()) {
+                vertexData.push_back(normals[vi].x);
+                vertexData.push_back(normals[vi].y);
+                vertexData.push_back(normals[vi].z);
+            } else {
+                vertexData.push_back(0.0f);
+                vertexData.push_back(1.0f);
+                vertexData.push_back(0.0f);
+            }
+
+            if (ti < uvs.size()) {
+                vertexData.push_back(uvs[ti].x);
+                vertexData.push_back(uvs[ti].y);
+            } else {
+                vertexData.push_back(0.0f);
+                vertexData.push_back(0.0f);
+            }
         }
+    } else {
+        // Original path: vertices and UVs share same index
+        vertexData.reserve(vertices.size() * 8);
 
-        if (i < uvs.size()) {
-            vertexData.push_back(uvs[i].x);
-            vertexData.push_back(uvs[i].y);
-        } else {
-            vertexData.push_back(0.0f);
-            vertexData.push_back(0.0f);
+        for (size_t i = 0; i < vertices.size(); ++i) {
+            vertexData.push_back(vertices[i].x);
+            vertexData.push_back(vertices[i].y);
+            vertexData.push_back(vertices[i].z);
+
+            if (i < normals.size()) {
+                vertexData.push_back(normals[i].x);
+                vertexData.push_back(normals[i].y);
+                vertexData.push_back(normals[i].z);
+            } else {
+                vertexData.push_back(0.0f);
+                vertexData.push_back(1.0f);
+                vertexData.push_back(0.0f);
+            }
+
+            if (i < uvs.size()) {
+                vertexData.push_back(uvs[i].x);
+                vertexData.push_back(uvs[i].y);
+            } else {
+                vertexData.push_back(0.0f);
+                vertexData.push_back(0.0f);
+            }
         }
     }
 
@@ -260,15 +350,34 @@ void MeshRenderer::UpdateVertexData(const Mesh& mesh) {
 }
 
 void MeshRenderer::UploadVertexColors(const std::vector<Vector3>& colors) {
-    if (vao_ == 0 || colors.size() != vertexCount_) return;
+    if (vao_ == 0) return;
 
-    // Pack color data
+    // Pack color data, mapping mesh vertex colors to GPU vertices
     std::vector<float> colorData;
-    colorData.reserve(colors.size() * 3);
-    for (const auto& c : colors) {
-        colorData.push_back(c.x);
-        colorData.push_back(c.y);
-        colorData.push_back(c.z);
+
+    if (hasSeparateUVs_ && !gpuToMeshVertex_.empty()) {
+        // Map mesh vertex colors to GPU vertices using stored mapping
+        colorData.reserve(gpuVertexCount_ * 3);
+        for (size_t i = 0; i < gpuVertexCount_; ++i) {
+            unsigned int vi = gpuToMeshVertex_[i];
+            if (vi < colors.size()) {
+                colorData.push_back(colors[vi].x);
+                colorData.push_back(colors[vi].y);
+                colorData.push_back(colors[vi].z);
+            } else {
+                colorData.push_back(0.0f);
+                colorData.push_back(0.0f);
+                colorData.push_back(0.0f);
+            }
+        }
+    } else {
+        if (colors.size() != vertexCount_) return;
+        colorData.reserve(colors.size() * 3);
+        for (const auto& c : colors) {
+            colorData.push_back(c.x);
+            colorData.push_back(c.y);
+            colorData.push_back(c.z);
+        }
     }
 
     glBindVertexArray(vao_);
@@ -361,6 +470,10 @@ void MeshRenderer::Clear() {
     indexCount_ = 0;
     vertexCount_ = 0;
     hasVertexColors_ = false;
+    hasSeparateUVs_ = false;
+    gpuVertexCount_ = 0;
+    gpuToMeshVertex_.clear();
+    gpuToMeshUV_.clear();
 }
 
 } // namespace MetaVisage
