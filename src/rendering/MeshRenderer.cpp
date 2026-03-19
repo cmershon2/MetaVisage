@@ -133,7 +133,7 @@ void MeshRenderer::UploadMesh(const Mesh& mesh) {
         }
     }
 
-    indexCount_ = indices.size();
+    indexCount_ = static_cast<GLsizei>(indices.size());
 
     // Create VAO
     glGenVertexArrays(1, &vao_);
@@ -228,7 +228,7 @@ void MeshRenderer::Render(unsigned int shaderProgram, const Matrix4x4& viewProje
 }
 
 void MeshRenderer::RenderWithAlpha(unsigned int shaderProgram, const Matrix4x4& viewProjection,
-                                    const Transform& transform, ShadingMode mode,
+                                    const Transform& transform, ShadingMode /*mode*/,
                                     const Vector3& color, float alpha) {
     if (vao_ == 0 || indexCount_ == 0) return;
 

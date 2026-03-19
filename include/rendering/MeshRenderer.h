@@ -36,7 +36,7 @@ private:
     unsigned int vbo_;
     unsigned int ibo_;
     unsigned int colorVBO_;
-    size_t indexCount_;
+    GLsizei indexCount_;
     size_t vertexCount_;
     bool hasVertexColors_;
 

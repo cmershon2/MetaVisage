@@ -185,7 +185,7 @@ void Renderer::Render(const Camera& camera, int width, int height, Project* proj
     }
 }
 
-void Renderer::RenderMorphStage(const Camera& camera, int width, int height, Project* project,
+void Renderer::RenderMorphStage(const Camera& /*camera*/, int /*width*/, int /*height*/, Project* project,
                                  const Matrix4x4& viewProjection) {
     const MorphData& morphData = project->GetMorphData();
     const MeshReference& morphMeshRef = project->GetMorphMesh();
@@ -232,7 +232,7 @@ void Renderer::RenderMorphStage(const Camera& camera, int width, int height, Pro
     }
 }
 
-void Renderer::RenderTouchUpStage(const Camera& camera, int /*width*/, int /*height*/,
+void Renderer::RenderTouchUpStage(const Camera& /*camera*/, int /*width*/, int /*height*/,
                                    Project* project, const Matrix4x4& viewProjection) {
     const MorphData& morphData = project->GetMorphData();
     const MeshReference& morphMeshRef = project->GetMorphMesh();
