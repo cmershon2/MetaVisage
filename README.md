@@ -26,7 +26,7 @@ An open-source desktop application for automated MetaHuman mesh morphing. Wrap M
 ### Build
 - Qt 6.x (6.5+)
 - CMake 3.16+
-- C++17 compiler — MSVC 2019+ or MinGW
+- C++17 compiler - MSVC 2019+ or MinGW
 - Assimp (recommended via vcpkg)
 - Eigen3
 - OpenGL 4.3+
@@ -62,11 +62,11 @@ See [BUILD.md](BUILD.md) for detailed instructions (MinGW, Qt Creator, vcpkg set
 
 ## Workflow
 
-1. **Alignment** — Load your MetaHuman head mesh and custom target mesh, then align them using move (G), rotate (R), and scale (S) tools
-2. **Point Reference** — Place corresponding landmark points on both meshes in synchronized dual viewports
-3. **Morph** — Run the NRICP deformation algorithm to automatically wrap the MetaHuman mesh to your target shape
-4. **Touch Up** — Refine the result with sculpting brushes (smooth, grab, push/pull, inflate)
-5. **Export** — Save the morphed mesh as FBX or OBJ, ready for Unreal Engine
+1. **Alignment** - Load your MetaHuman head mesh and custom target mesh, then align them using move (G), rotate (R), and scale (S) tools
+2. **Point Reference** - Place corresponding landmark points on both meshes in synchronized dual viewports
+3. **Morph** - Run the NRICP deformation algorithm to automatically wrap the MetaHuman mesh to your target shape
+4. **Touch Up** - Refine the result with sculpting brushes (smooth, grab, push/pull, inflate)
+5. **Export** - Save the morphed mesh as FBX or OBJ, ready for Unreal Engine
 
 ## Included Assets
 
@@ -97,7 +97,7 @@ See [docs/KNOWN_ISSUES.md](docs/KNOWN_ISSUES.md) for a list of known issues and 
 
 ## License
 
-MIT License — see [LICENSE](LICENSE) for details.
+MIT License - see [LICENSE](LICENSE) for details.
 
 ## Author
 
