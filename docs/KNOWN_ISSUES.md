@@ -26,7 +26,7 @@
 
 ## Unreal Engine Compatibility Notes
 
-- Tested with Unreal Engine 5.x
+- Tested with Unreal Engine 5.6
 - Exported meshes use Y-up coordinate system
 - Material slot names are preserved from the original MetaHuman mesh
 - UV seam vertices are properly handled during export via vertex splitting
