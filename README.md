@@ -1,6 +1,6 @@
-# MetaVisage - MetaHuman Mesh Morphing Tool
+![MetaVisage Banner](https://github.com/cmershon2/MetaVisage/blob/master/docs/MetaVisage_Banner.png?raw=true)
 
-An open-source desktop application for automated MetaHuman mesh morphing. Wrap MetaHuman head meshes to custom head models for use in Unreal Engine — a free alternative to commercial solutions like Faceform Wrap.
+An open-source desktop application for automated MetaHuman mesh morphing. Wrap MetaHuman head meshes to custom head models for use in Unreal Engine.
 
 ## Features
 
