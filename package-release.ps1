@@ -53,12 +53,14 @@ if (Test-Path $WinDeployQt) {
     Write-Host "Qt DLLs will need to be copied manually." -ForegroundColor Yellow
 }
 
-# Copy Assimp DLL if present
-$AssimpDll = Join-Path $ExeDir "assimp-vc*.dll"
-$AssimpDlls = Get-ChildItem -Path $ExeDir -Filter "assimp*.dll" -ErrorAction SilentlyContinue
-foreach ($dll in $AssimpDlls) {
-    Write-Host "Copying $($dll.Name)..." -ForegroundColor Green
-    Copy-Item $dll.FullName $PackageDir
+# Copy third-party DLLs (Assimp and its dependencies)
+$ThirdPartyDlls = @("assimp*.dll", "minizip.dll", "poly2tri.dll", "kubazip.dll", "pugixml.dll", "zlib1.dll")
+foreach ($pattern in $ThirdPartyDlls) {
+    $dlls = Get-ChildItem -Path $ExeDir -Filter $pattern -ErrorAction SilentlyContinue
+    foreach ($dll in $dlls) {
+        Write-Host "Copying $($dll.Name)..." -ForegroundColor Green
+        Copy-Item $dll.FullName $PackageDir
+    }
 }
 
 # Copy assets
