@@ -87,6 +87,9 @@ struct MorphData {
     float nricpSamplingFinal;           // Final control node sampling (0 = all vertices)
     bool nricpNormalizeSampling;        // Sampling values relative to bbox diagonal
 
+    // User-painted vertex mask: true = excluded from NRICP correspondence
+    std::vector<bool> vertexMask;
+
     std::shared_ptr<Mesh> originalMorphMesh;
     std::shared_ptr<Mesh> deformedMorphMesh;
     bool isProcessed;

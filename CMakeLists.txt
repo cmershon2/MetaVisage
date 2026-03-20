@@ -88,6 +88,7 @@ set(SOURCES
     src/sculpting/GrabBrush.cpp
     src/sculpting/PushPullBrush.cpp
     src/sculpting/InflateBrush.cpp
+    src/sculpting/MaskBrush.cpp
     src/io/MeshExporter.cpp
     src/io/ProjectSerializer.cpp
     src/ui/ExportDialog.cpp
@@ -124,6 +125,7 @@ set(HEADERS
     include/sculpting/GrabBrush.h
     include/sculpting/PushPullBrush.h
     include/sculpting/InflateBrush.h
+    include/sculpting/MaskBrush.h
     include/sculpting/BrushStroke.h
     include/io/MeshExporter.h
     include/io/ProjectSerializer.h

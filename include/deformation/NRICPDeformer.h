@@ -104,6 +104,9 @@ public:
     // Set cancellation flag reference
     void SetCancellationFlag(std::atomic<bool>* cancelled);
 
+    // Set user-painted vertex mask (true = exclude from ICP correspondence)
+    void SetUserExcludedVertices(const std::vector<bool>& userMask);
+
     // Execute NRICP - returns deformed vertex positions (empty on failure/cancel)
     std::vector<Vector3> Solve();
 
@@ -203,6 +206,7 @@ private:
 
     // Boundary exclusion state
     std::vector<bool> excludedVertices_;
+    std::vector<bool> userExcludedVertices_;
     std::vector<std::vector<int>> vertexAdjacency_;
     float resolvedMaxCorrespondenceDistance_;
 

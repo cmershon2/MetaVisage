@@ -61,6 +61,10 @@ void MeshDeformer::SetNRICPParams(const NRICPParams& params) {
     nricpParams_ = params;
 }
 
+void MeshDeformer::SetUserExcludedVertices(const std::vector<bool>& mask) {
+    userExcludedVertices_ = mask;
+}
+
 void MeshDeformer::SetProgressCallback(ProgressCallback callback) {
     progressCallback_ = callback;
 }
@@ -394,6 +398,9 @@ DeformationResult MeshDeformer::DeformNRICP() {
     nricp.SetTargetMesh(targetInMorphSpace);
     nricp.SetLandmarks(landmarks);
     nricp.SetParams(nricpParams_);
+    if (!userExcludedVertices_.empty()) {
+        nricp.SetUserExcludedVertices(userExcludedVertices_);
+    }
     nricp.SetCancellationFlag(&cancelled_);
     nricp.SetProgressCallback(progressCallback_);
 

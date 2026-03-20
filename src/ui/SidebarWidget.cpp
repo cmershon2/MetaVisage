@@ -815,6 +815,87 @@ void SidebarWidget::CreateMorphControls() {
     connect(nricpBoundaryHopsSlider_, &QSlider::valueChanged,
             this, &SidebarWidget::OnNRICPBoundaryHopsChanged);
 
+    // --- Vertex Mask Painting ---
+    QFrame* maskSeparator = new QFrame();
+    maskSeparator->setFrameShape(QFrame::HLine);
+    maskSeparator->setStyleSheet("QFrame { color: #555; }");
+    nricpLayout->addWidget(maskSeparator);
+
+    QLabel* maskTitle = new QLabel("Vertex Mask");
+    maskTitle->setStyleSheet("QLabel { font-weight: bold; color: #BDC3C7; }");
+    nricpLayout->addWidget(maskTitle);
+
+    QLabel* maskInfo = new QLabel(
+        "Paint regions to exclude from wrapping (e.g. mouth box interior)."
+    );
+    maskInfo->setWordWrap(true);
+    maskInfo->setStyleSheet("QLabel { color: #888; font-size: 8pt; }");
+    nricpLayout->addWidget(maskInfo);
+
+    maskBrushButton_ = new QPushButton("Paint Mask");
+    maskBrushButton_->setCheckable(true);
+    maskBrushButton_->setToolTip("Toggle mask painting mode. Click to paint masked regions on the mesh.");
+    maskBrushButton_->setStyleSheet(
+        "QPushButton { background-color: #34495E; color: white; border: 1px solid #555; padding: 6px; border-radius: 3px; }"
+        "QPushButton:checked { background-color: #E74C3C; border-color: #E74C3C; }"
+        "QPushButton:hover { background-color: #3d566e; }");
+    nricpLayout->addWidget(maskBrushButton_);
+    connect(maskBrushButton_, &QPushButton::toggled, this, [this](bool checked) {
+        emit MaskBrushToggled(checked);
+    });
+
+    maskEraseModeCheckBox_ = new QCheckBox("Erase Mode");
+    maskEraseModeCheckBox_->setToolTip("When checked, painting removes mask instead of adding it.");
+    nricpLayout->addWidget(maskEraseModeCheckBox_);
+    connect(maskEraseModeCheckBox_, &QCheckBox::toggled, this, [this](bool checked) {
+        emit MaskBrushEraseModeChanged(checked);
+    });
+
+    QHBoxLayout* maskRadiusRow = new QHBoxLayout();
+    QLabel* maskRadiusLbl = new QLabel("Brush Radius:");
+    maskRadiusLbl->setMinimumWidth(80);
+    maskRadiusLbl->setStyleSheet("QLabel { font-size: 8pt; }");
+    maskRadiusRow->addWidget(maskRadiusLbl);
+    maskBrushRadiusSlider_ = new QSlider(Qt::Horizontal);
+    maskBrushRadiusSlider_->setToolTip("Mask brush radius");
+    maskBrushRadiusSlider_->setRange(1, 100);
+    maskBrushRadiusSlider_->setValue(20);
+    maskBrushRadiusSlider_->setStyleSheet(sliderStyle);
+    maskRadiusRow->addWidget(maskBrushRadiusSlider_);
+    maskBrushRadiusLabel_ = new QLabel("0.20");
+    maskBrushRadiusLabel_->setMinimumWidth(35);
+    maskBrushRadiusLabel_->setAlignment(Qt::AlignRight | Qt::AlignVCenter);
+    maskBrushRadiusLabel_->setStyleSheet("QLabel { font-size: 8pt; }");
+    maskRadiusRow->addWidget(maskBrushRadiusLabel_);
+    nricpLayout->addLayout(maskRadiusRow);
+    connect(maskBrushRadiusSlider_, &QSlider::valueChanged, this, [this](int value) {
+        float radius = value / 100.0f;
+        maskBrushRadiusLabel_->setText(QString::number(radius, 'f', 2));
+        emit MaskBrushRadiusChanged(radius);
+    });
+
+    QHBoxLayout* maskButtonRow = new QHBoxLayout();
+    clearMaskButton_ = new QPushButton("Clear");
+    clearMaskButton_->setToolTip("Clear all masked vertices");
+    clearMaskButton_->setStyleSheet(
+        "QPushButton { background-color: #34495E; color: white; border: 1px solid #555; padding: 4px; border-radius: 3px; }"
+        "QPushButton:hover { background-color: #3d566e; }");
+    maskButtonRow->addWidget(clearMaskButton_);
+    connect(clearMaskButton_, &QPushButton::clicked, this, [this]() {
+        emit ClearMaskRequested();
+    });
+
+    invertMaskButton_ = new QPushButton("Invert");
+    invertMaskButton_->setToolTip("Invert the mask (swap masked and unmasked regions)");
+    invertMaskButton_->setStyleSheet(
+        "QPushButton { background-color: #34495E; color: white; border: 1px solid #555; padding: 4px; border-radius: 3px; }"
+        "QPushButton:hover { background-color: #3d566e; }");
+    maskButtonRow->addWidget(invertMaskButton_);
+    connect(invertMaskButton_, &QPushButton::clicked, this, [this]() {
+        emit InvertMaskRequested();
+    });
+    nricpLayout->addLayout(maskButtonRow);
+
     // --- Optimization Parameters ---
     QFrame* optSeparator = new QFrame();
     optSeparator->setFrameShape(QFrame::HLine);
@@ -899,7 +980,18 @@ void SidebarWidget::CreateMorphControls() {
     connect(nricpNormalizeSamplingCheckBox_, &QCheckBox::toggled,
             this, &SidebarWidget::OnNRICPNormalizeSamplingToggled);
 
-    nricpOuterLayout->addWidget(nricpGroup);
+    QScrollArea* nricpScrollArea = new QScrollArea();
+    nricpScrollArea->setWidgetResizable(true);
+    nricpScrollArea->setWidget(nricpGroup);
+    nricpScrollArea->setFrameShape(QFrame::NoFrame);
+    nricpScrollArea->setStyleSheet(
+        "QScrollArea { background: transparent; }"
+        "QScrollBar:vertical { background: #2C3E50; width: 8px; border-radius: 4px; }"
+        "QScrollBar::handle:vertical { background: #3498DB; border-radius: 4px; min-height: 20px; }"
+        "QScrollBar::add-line:vertical, QScrollBar::sub-line:vertical { height: 0px; }"
+    );
+    nricpOuterLayout->addWidget(nricpScrollArea);
+    nricpParamsWidget_->setSizePolicy(QSizePolicy::Preferred, QSizePolicy::Expanding);
     controlsLayout->addWidget(nricpParamsWidget_);
 
     // --- RBF Parameters Group (hidden by default) ---

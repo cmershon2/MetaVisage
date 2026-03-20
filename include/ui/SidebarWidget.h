@@ -106,6 +106,13 @@ signals:
     void MorphParameterChanged();
     void MorphPreviewModeChanged(MorphPreviewMode mode);
 
+    // Mask painting signals (Morph stage)
+    void MaskBrushToggled(bool active);
+    void MaskBrushEraseModeChanged(bool erase);
+    void MaskBrushRadiusChanged(float radius);
+    void ClearMaskRequested();
+    void InvertMaskRequested();
+
     // Touch Up stage signals
     void BrushTypeChanged(BrushType type);
     void BrushRadiusChangedSignal(float radius);
@@ -197,6 +204,14 @@ private:
     QSlider* nricpSamplingFinalSlider_;
     QLabel* nricpSamplingFinalLabel_;
     QCheckBox* nricpNormalizeSamplingCheckBox_;
+    // Mask painting UI elements
+    QPushButton* maskBrushButton_;
+    QCheckBox* maskEraseModeCheckBox_;
+    QSlider* maskBrushRadiusSlider_;
+    QLabel* maskBrushRadiusLabel_;
+    QPushButton* clearMaskButton_;
+    QPushButton* invertMaskButton_;
+
     QPushButton* processButton_;
     QPushButton* cancelButton_;
     QProgressBar* progressBar_;

@@ -26,7 +26,8 @@ Renderer::Renderer()
       brushCursorDirty_(false),
       brushCursorRadius_(0.0f),
       brushCursorInnerRadius_(0.0f),
-      showTargetOverlay_(false) {
+      showTargetOverlay_(false),
+      showMask_(false) {
 }
 
 Renderer::~Renderer() {
@@ -193,6 +194,19 @@ void Renderer::RenderMorphStage(const Camera& /*camera*/, int /*width*/, int /*h
     if (!morphMeshRef.isLoaded || !morphMeshRef.mesh) return;
 
     Vector3 morphColor(0.3f, 0.5f, 0.9f);
+
+    // If mask is being shown, render with mask colors using heat map shader
+    if (showMask_ && !morphData.vertexMask.empty()) {
+        // Render the morph mesh (original or deformed) with mask vertex colors
+        const Mesh* meshToRender = morphMeshRef.mesh.get();
+        if (morphData.isProcessed && morphData.deformedMorphMesh) {
+            meshToRender = morphData.deformedMorphMesh.get();
+        }
+        RenderMeshHeatMap(*meshToRender, morphMeshRef.transform, viewProjection);
+        // Also render brush cursor for mask painting
+        RenderBrushCursor(viewProjection);
+        return;
+    }
 
     switch (morphPreviewMode_) {
         case MorphPreviewMode::Deformed:
@@ -481,6 +495,24 @@ void Renderer::UploadHeatMapColors(const Mesh* mesh, const std::vector<float>& d
         }
 
         colors.push_back(color);
+    }
+
+    renderer->UploadVertexColors(colors);
+}
+
+void Renderer::UploadMaskColors(const Mesh* mesh, const std::vector<bool>& mask) {
+    MeshRenderer* renderer = GetOrCreateMeshRenderer(*mesh);
+    if (!renderer->HasMesh()) return;
+
+    std::vector<Vector3> colors;
+    colors.reserve(mask.size());
+
+    for (size_t i = 0; i < mask.size(); ++i) {
+        if (mask[i]) {
+            colors.push_back(Vector3(0.9f, 0.2f, 0.2f));  // Red for masked
+        } else {
+            colors.push_back(Vector3(0.3f, 0.5f, 0.9f));  // Default mesh blue
+        }
     }
 
     renderer->UploadVertexColors(colors);

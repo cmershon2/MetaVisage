@@ -4,6 +4,7 @@
 #include <QJsonDocument>
 #include <QDir>
 #include <QFileInfo>
+#include <cstdlib>
 
 namespace MetaVisage {
 
@@ -238,6 +239,25 @@ QJsonObject ProjectSerializer::SerializeMorphData(const MorphData& data) const {
     obj["nricpSamplingFinal"] = static_cast<double>(data.nricpSamplingFinal);
     obj["nricpNormalizeSampling"] = data.nricpNormalizeSampling;
 
+    // Save vertex mask (run-length encoded for compactness)
+    if (!data.vertexMask.empty()) {
+        QJsonArray maskRLE;
+        bool current = data.vertexMask[0];
+        int count = 1;
+        for (size_t i = 1; i < data.vertexMask.size(); ++i) {
+            if (data.vertexMask[i] == current) {
+                count++;
+            } else {
+                maskRLE.append(current ? count : -count);
+                current = data.vertexMask[i];
+                count = 1;
+            }
+        }
+        maskRLE.append(current ? count : -count);
+        obj["vertexMaskRLE"] = maskRLE;
+        obj["vertexMaskSize"] = static_cast<int>(data.vertexMask.size());
+    }
+
     // Save deformed mesh vertex data if it exists
     if (data.deformedMorphMesh && data.isProcessed) {
         const auto& vertices = data.deformedMorphMesh->GetVertices();
@@ -391,6 +411,22 @@ MorphData ProjectSerializer::DeserializeMorphData(const QJsonObject& obj) const 
     data.nricpSamplingInitial = static_cast<float>(obj["nricpSamplingInitial"].toDouble(0.0));
     data.nricpSamplingFinal = static_cast<float>(obj["nricpSamplingFinal"].toDouble(0.0));
     data.nricpNormalizeSampling = obj["nricpNormalizeSampling"].toBool(true);
+
+    // Restore vertex mask (run-length encoded)
+    if (obj.contains("vertexMaskRLE") && obj.contains("vertexMaskSize")) {
+        int maskSize = obj["vertexMaskSize"].toInt(0);
+        QJsonArray maskRLE = obj["vertexMaskRLE"].toArray();
+        data.vertexMask.resize(maskSize, false);
+        int idx = 0;
+        for (int i = 0; i < maskRLE.size() && idx < maskSize; ++i) {
+            int run = maskRLE[i].toInt(0);
+            bool value = (run > 0);
+            int runLength = std::abs(run);
+            for (int j = 0; j < runLength && idx < maskSize; ++j) {
+                data.vertexMask[idx++] = value;
+            }
+        }
+    }
 
     // Restore deformed mesh vertex data if present
     if (obj.contains("deformedVertices") && obj.contains("deformedNormals")) {

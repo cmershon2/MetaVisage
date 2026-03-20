@@ -39,12 +39,13 @@ public:
                 const Transform& targetTransform,
                 const std::vector<PointCorrespondence>& correspondences,
                 DeformationAlgorithm kernel, float stiffness, float smoothness,
-                const NRICPParams& nricpParams = NRICPParams())
+                const NRICPParams& nricpParams = NRICPParams(),
+                const std::vector<bool>& vertexMask = std::vector<bool>())
         : sourceMesh_(sourceMesh), targetMesh_(targetMesh),
           morphTransform_(morphTransform), targetTransform_(targetTransform),
           correspondences_(correspondences),
           kernel_(kernel), stiffness_(stiffness), smoothness_(smoothness),
-          nricpParams_(nricpParams) {}
+          nricpParams_(nricpParams), vertexMask_(vertexMask) {}
 
     MeshDeformer& GetDeformer() { return deformer_; }
 
@@ -59,6 +60,9 @@ public slots:
         deformer_.SetStiffness(stiffness_);
         deformer_.SetSmoothness(smoothness_);
         deformer_.SetNRICPParams(nricpParams_);
+        if (!vertexMask_.empty()) {
+            deformer_.SetUserExcludedVertices(vertexMask_);
+        }
         deformer_.SetProgressCallback([this](float progress, const std::string& message) {
             emit progressUpdated(progress, QString::fromStdString(message));
         });
@@ -91,6 +95,7 @@ private:
     float stiffness_;
     float smoothness_;
     NRICPParams nricpParams_;
+    std::vector<bool> vertexMask_;
 };
 
 MainWindow::MainWindow(QWidget *parent)
@@ -353,6 +358,54 @@ void MainWindow::ConnectViewportSignals() {
             this, &MainWindow::OnMorphParameterChanged);
     connect(sidebarWidget_, &SidebarWidget::MorphPreviewModeChanged,
             this, &MainWindow::OnMorphPreviewModeChanged);
+
+    // Connect mask painting signals
+    connect(sidebarWidget_, &SidebarWidget::MaskBrushToggled, this, [this](bool active) {
+        auto* viewport = viewportContainer_->GetPrimaryViewport();
+        if (active && project_) {
+            MorphData& morphData = project_->GetMorphData();
+            const MeshReference& morphRef = project_->GetMorphMesh();
+            if (morphRef.isLoaded && morphRef.mesh) {
+                // Initialize mask if empty
+                size_t vertCount = morphRef.mesh->GetVertexCount();
+                if (morphData.vertexMask.size() != vertCount) {
+                    morphData.vertexMask.assign(vertCount, false);
+                }
+                viewport->SetMaskData(&morphData.vertexMask);
+                // Upload initial mask colors
+                viewport->UploadMaskColors(morphRef.mesh.get(), morphData.vertexMask);
+            }
+        }
+        viewport->SetMaskPaintingMode(active);
+    });
+    connect(sidebarWidget_, &SidebarWidget::MaskBrushEraseModeChanged,
+            viewportContainer_->GetPrimaryViewport(), &ViewportWidget::SetMaskEraseMode);
+    connect(sidebarWidget_, &SidebarWidget::MaskBrushRadiusChanged,
+            viewportContainer_->GetPrimaryViewport(), &ViewportWidget::SetMaskBrushRadius);
+    connect(sidebarWidget_, &SidebarWidget::ClearMaskRequested, this, [this]() {
+        if (!project_) return;
+        MorphData& morphData = project_->GetMorphData();
+        std::fill(morphData.vertexMask.begin(), morphData.vertexMask.end(), false);
+        auto* viewport = viewportContainer_->GetPrimaryViewport();
+        const MeshReference& morphRef = project_->GetMorphMesh();
+        if (morphRef.isLoaded && morphRef.mesh) {
+            viewport->UploadMaskColors(morphRef.mesh.get(), morphData.vertexMask);
+        }
+    });
+    connect(sidebarWidget_, &SidebarWidget::InvertMaskRequested, this, [this]() {
+        if (!project_) return;
+        MorphData& morphData = project_->GetMorphData();
+        const MeshReference& morphRef = project_->GetMorphMesh();
+        if (morphRef.isLoaded && morphRef.mesh) {
+            size_t vertCount = morphRef.mesh->GetVertexCount();
+            if (morphData.vertexMask.size() != vertCount) {
+                morphData.vertexMask.assign(vertCount, false);
+            }
+            morphData.vertexMask.flip();
+            auto* viewport = viewportContainer_->GetPrimaryViewport();
+            viewport->UploadMaskColors(morphRef.mesh.get(), morphData.vertexMask);
+        }
+    });
 
     // Connect Touch Up sculpting signals
     connect(sidebarWidget_, &SidebarWidget::BrushTypeChanged,
@@ -1347,7 +1400,8 @@ void MainWindow::OnProcessMorph() {
         morphData.algorithm,
         morphData.stiffness,
         morphData.smoothness,
-        nricpParams
+        nricpParams,
+        morphData.vertexMask
     );
     morphWorker_->moveToThread(morphThread_);
 
