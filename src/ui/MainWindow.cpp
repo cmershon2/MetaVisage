@@ -25,6 +25,7 @@
 #include <QDesktopServices>
 #include <QUrl>
 #include <QFileInfo>
+#include <QCoreApplication>
 
 namespace MetaVisage {
 
@@ -307,6 +308,7 @@ void MainWindow::ConnectViewportSignals() {
     // Connect sidebar import mesh buttons
     connect(sidebarWidget_, &SidebarWidget::ImportMorphMeshRequested, this, &MainWindow::OnImportMorphMesh);
     connect(sidebarWidget_, &SidebarWidget::ImportTargetMeshRequested, this, &MainWindow::OnImportTargetMesh);
+    connect(sidebarWidget_, &SidebarWidget::UseDefaultMorphMeshRequested, this, &MainWindow::OnUseDefaultMorphMesh);
 
     // Connect sidebar reset transform button
     connect(sidebarWidget_, &SidebarWidget::ResetTransformRequested, this, &MainWindow::OnResetTransform);
@@ -585,6 +587,46 @@ void MainWindow::OnImportMorphMesh() {
             ErrorHelper::ShowError(this, tr("Import Failed"),
                 tr("Failed to load morph mesh."), filepath);
         }
+    }
+}
+
+void MainWindow::OnUseDefaultMorphMesh() {
+    // Load the default MetaHuman head model from assets
+    QString filepath = QCoreApplication::applicationDirPath() + "/assets/models/MetaHumanHeadLod0.obj";
+
+    if (!QFileInfo::exists(filepath)) {
+        ErrorHelper::ShowError(this, tr("File Not Found"),
+            tr("Default MetaHuman head model not found."), filepath);
+        return;
+    }
+
+    MeshReference& morphMesh = project_->GetMorphMesh();
+    morphMesh.mesh = std::make_shared<Mesh>();
+
+    if (morphMesh.mesh->Load(filepath)) {
+        morphMesh.filepath = filepath;
+        morphMesh.isLoaded = true;
+        Transform initialTransform;
+        Quaternion xRotation = Quaternion::FromAxisAngle(Vector3(1.0f, 0.0f, 0.0f), -90.0f);
+        initialTransform.SetRotation(xRotation);
+        morphMesh.transform = initialTransform;
+
+        statusLabel_->setText("Default morph mesh loaded: " + morphMesh.mesh->GetName());
+
+        QLabel* morphStatus = sidebarWidget_->findChild<QLabel*>("morphStatus");
+        if (morphStatus) {
+            morphStatus->setText("Morph Mesh: " + morphMesh.mesh->GetName() + " (Default)");
+            morphStatus->setStyleSheet("QLabel { color: #2ECC71; }");
+        }
+
+        sidebarWidget_->SetNextStageEnabled(project_->CanProceedToNextStage());
+
+        const BoundingBox& bounds = morphMesh.mesh->GetBounds();
+        viewportContainer_->GetPrimaryViewport()->GetCamera()->FocusOnBounds(bounds);
+        viewportContainer_->GetPrimaryViewport()->update();
+    } else {
+        ErrorHelper::ShowError(this, tr("Import Failed"),
+            tr("Failed to load default morph mesh."), filepath);
     }
 }
 

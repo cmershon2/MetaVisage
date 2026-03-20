@@ -984,8 +984,52 @@ void ViewportWidget::keyPressEvent(QKeyEvent *event) {
             break;
 
         case Qt::Key_F:
-            // Focus on selection - for now just reset camera
-            camera_->Reset();
+            // Focus camera on model bounds (accounting for transform)
+            if (project_) {
+                BoundingBox combinedBounds;
+                bool hasBounds = false;
+
+                auto addMeshBounds = [&](const MeshReference& meshRef) {
+                    if (meshRef.isLoaded && meshRef.mesh) {
+                        const BoundingBox& localBounds = meshRef.mesh->GetBounds();
+                        Vector3 center = localBounds.Center();
+                        // Apply transform position offset to the bounds center
+                        Vector3 pos = meshRef.transform.GetPosition();
+                        Vector3 transformedCenter(center.x + pos.x, center.y + pos.y, center.z + pos.z);
+                        Vector3 halfSize(
+                            (localBounds.max.x - localBounds.min.x) * 0.5f,
+                            (localBounds.max.y - localBounds.min.y) * 0.5f,
+                            (localBounds.max.z - localBounds.min.z) * 0.5f
+                        );
+                        BoundingBox transformedBounds;
+                        transformedBounds.min = Vector3(transformedCenter.x - halfSize.x, transformedCenter.y - halfSize.y, transformedCenter.z - halfSize.z);
+                        transformedBounds.max = Vector3(transformedCenter.x + halfSize.x, transformedCenter.y + halfSize.y, transformedCenter.z + halfSize.z);
+
+                        if (!hasBounds) {
+                            combinedBounds = transformedBounds;
+                            hasBounds = true;
+                        } else {
+                            combinedBounds.min.x = std::min(combinedBounds.min.x, transformedBounds.min.x);
+                            combinedBounds.min.y = std::min(combinedBounds.min.y, transformedBounds.min.y);
+                            combinedBounds.min.z = std::min(combinedBounds.min.z, transformedBounds.min.z);
+                            combinedBounds.max.x = std::max(combinedBounds.max.x, transformedBounds.max.x);
+                            combinedBounds.max.y = std::max(combinedBounds.max.y, transformedBounds.max.y);
+                            combinedBounds.max.z = std::max(combinedBounds.max.z, transformedBounds.max.z);
+                        }
+                    }
+                };
+
+                addMeshBounds(project_->GetMorphMesh());
+                addMeshBounds(project_->GetTargetMesh());
+
+                if (hasBounds) {
+                    camera_->FocusOnBounds(combinedBounds);
+                } else {
+                    camera_->Reset();
+                }
+            } else {
+                camera_->Reset();
+            }
             update();
             emit CameraChanged();
             break;

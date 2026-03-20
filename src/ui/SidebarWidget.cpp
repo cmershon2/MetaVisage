@@ -211,6 +211,23 @@ void SidebarWidget::CreateAlignmentControls() {
     connect(importMorphButton, &QPushButton::clicked, this, &SidebarWidget::ImportMorphMeshRequested);
     importLayout->addWidget(importMorphButton);
 
+    QPushButton* useDefaultButton = new QPushButton("Use Default MetaHuman Head");
+    useDefaultButton->setStyleSheet(
+        "QPushButton {"
+        "    background-color: #2ECC71;"
+        "    color: white;"
+        "    border: none;"
+        "    padding: 6px 12px;"
+        "    font-size: 9pt;"
+        "    border-radius: 4px;"
+        "}"
+        "QPushButton:hover {"
+        "    background-color: #27AE60;"
+        "}"
+    );
+    connect(useDefaultButton, &QPushButton::clicked, this, &SidebarWidget::UseDefaultMorphMeshRequested);
+    importLayout->addWidget(useDefaultButton);
+
     QPushButton* importTargetButton = new QPushButton("Import Target Mesh (Custom)");
     importTargetButton->setStyleSheet(
         "QPushButton {"

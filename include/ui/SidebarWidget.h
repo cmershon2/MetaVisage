@@ -91,6 +91,7 @@ signals:
     void PreviousStageRequested();
     void ImportMorphMeshRequested();
     void ImportTargetMeshRequested();
+    void UseDefaultMorphMeshRequested();
     void ResetTransformRequested();
     void TransformValuesChanged();
     void ClearAllPointsRequested();

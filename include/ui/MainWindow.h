@@ -36,6 +36,7 @@ private slots:
     void OnSaveProjectAs();
     void OnImportMorphMesh();
     void OnImportTargetMesh();
+    void OnUseDefaultMorphMesh();
     void OnExportMesh();
     void OnExit();
 
