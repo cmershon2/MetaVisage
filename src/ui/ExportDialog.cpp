@@ -41,10 +41,6 @@ void ExportDialog::CreateUI() {
     formatCombo_->addItem("GLTF", static_cast<int>(ExportFormat::GLTF));
     optionsLayout->addRow("Format:", formatCombo_);
 
-    triangulateCheck_ = new QCheckBox("Triangulate mesh");
-    triangulateCheck_->setChecked(true);
-    optionsLayout->addRow("", triangulateCheck_);
-
     materialsCheck_ = new QCheckBox("Include materials");
     materialsCheck_->setChecked(true);
     optionsLayout->addRow("", materialsCheck_);
@@ -58,7 +54,7 @@ void ExportDialog::CreateUI() {
     optionsLayout->addRow("", yUpCheck_);
 
     metaHumanCheck_ = new QCheckBox("MetaHuman compatible (preserves original mesh topology)");
-    metaHumanCheck_->setChecked(false);
+    metaHumanCheck_->setChecked(true);
     metaHumanCheck_->setToolTip("Rewrites the original morph mesh file with deformed positions,\n"
                                  "preserving the exact vertex count and face connectivity required\n"
                                  "by UE5 MetaHuman Conform. Format is auto-detected from the original file.");
@@ -108,8 +104,9 @@ void ExportDialog::OnBrowse() {
     QString filter = MeshExporter::GetFormatFilter(format);
     QString ext = MeshExporter::GetFormatExtension(format);
 
+    QString defaultName = "export" + ext;
     QString filepath = QFileDialog::getSaveFileName(
-        this, "Export Mesh", QString(), MeshExporter::GetAllFormatsFilter());
+        this, "Export Mesh", defaultName, filter);
 
     if (!filepath.isEmpty()) {
         // Ensure correct extension
@@ -158,7 +155,7 @@ void ExportDialog::UpdateFileExtension() {
 ExportOptions ExportDialog::GetOptions() const {
     ExportOptions options;
     options.format = static_cast<ExportFormat>(formatCombo_->currentData().toInt());
-    options.triangulate = triangulateCheck_->isChecked();
+    options.triangulate = false;  // Never triangulate - breaks MetaHuman topology
     options.includeMaterials = materialsCheck_->isChecked();
     options.applyTransform = applyTransformCheck_->isChecked();
     options.convertToYUp = yUpCheck_->isChecked();

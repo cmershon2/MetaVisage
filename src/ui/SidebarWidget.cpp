@@ -18,6 +18,7 @@ SidebarWidget::SidebarWidget(QWidget *parent)
       layout_(nullptr),
       stageLabel_(nullptr),
       nextStageButton_(nullptr),
+      prevStageButton_(nullptr),
       controlsWidget_(nullptr),
       transformModeLabel_(nullptr),
       posXSpinBox_(nullptr),
@@ -87,7 +88,7 @@ SidebarWidget::SidebarWidget(QWidget *parent)
       updatingTransformDisplay_(false),
       selectedPointIndex_(-1) {
 
-    setStyleSheet("QWidget { background-color: #2C3E50; color: white; }");
+    setStyleSheet("QWidget { background-color: #1E1E1E; color: white; }");
 
     layout_ = new QVBoxLayout(this);
     layout_->setContentsMargins(16, 16, 16, 16);
@@ -105,7 +106,28 @@ SidebarWidget::SidebarWidget(QWidget *parent)
     // Spacer
     layout_->addStretch();
 
-    // Next stage button
+    // Stage navigation buttons
+    QHBoxLayout* navLayout = new QHBoxLayout();
+    navLayout->setSpacing(8);
+
+    prevStageButton_ = new QPushButton("Previous");
+    prevStageButton_->setStyleSheet(
+        "QPushButton {"
+        "    background-color: #7F8C8D;"
+        "    color: white;"
+        "    border: none;"
+        "    padding: 8px 16px;"
+        "    font-size: 11pt;"
+        "    border-radius: 4px;"
+        "}"
+        "QPushButton:hover {"
+        "    background-color: #95A5A6;"
+        "}"
+    );
+    prevStageButton_->setVisible(false); // Hidden on Stage 1
+    connect(prevStageButton_, &QPushButton::clicked, this, &SidebarWidget::PreviousStageRequested);
+    navLayout->addWidget(prevStageButton_);
+
     nextStageButton_ = new QPushButton("Next Stage");
     nextStageButton_->setStyleSheet(
         "QPushButton {"
@@ -125,7 +147,9 @@ SidebarWidget::SidebarWidget(QWidget *parent)
     );
     nextStageButton_->setEnabled(false);
     connect(nextStageButton_, &QPushButton::clicked, this, &SidebarWidget::NextStageRequested);
-    layout_->addWidget(nextStageButton_);
+    navLayout->addWidget(nextStageButton_);
+
+    layout_->addLayout(navLayout);
 
     SetStage(WorkflowStage::Alignment);
 }
@@ -136,6 +160,7 @@ SidebarWidget::~SidebarWidget() {
 void SidebarWidget::SetStage(WorkflowStage stage) {
     ClearControls();
     nextStageButton_->setVisible(true); // Re-show; TouchUp hides it
+    prevStageButton_->setVisible(stage != WorkflowStage::Alignment);
 
     switch (stage) {
         case WorkflowStage::Alignment:
@@ -165,9 +190,62 @@ void SidebarWidget::CreateAlignmentControls() {
     controlsLayout->setContentsMargins(0, 0, 0, 0);
     controlsLayout->setSpacing(16);
 
-    QLabel* info = new QLabel("Load both meshes using File menu (Ctrl+M for Morph, Ctrl+T for Target)");
-    info->setWordWrap(true);
-    controlsLayout->addWidget(info);
+    // Import Buttons
+    QGroupBox* importGroup = new QGroupBox("Import Meshes");
+    QVBoxLayout* importLayout = new QVBoxLayout(importGroup);
+
+    QPushButton* importMorphButton = new QPushButton("Import Morph Mesh (MetaHuman)");
+    importMorphButton->setStyleSheet(
+        "QPushButton {"
+        "    background-color: #3498DB;"
+        "    color: white;"
+        "    border: none;"
+        "    padding: 8px 12px;"
+        "    font-size: 10pt;"
+        "    border-radius: 4px;"
+        "}"
+        "QPushButton:hover {"
+        "    background-color: #2980B9;"
+        "}"
+    );
+    connect(importMorphButton, &QPushButton::clicked, this, &SidebarWidget::ImportMorphMeshRequested);
+    importLayout->addWidget(importMorphButton);
+
+    QPushButton* useDefaultButton = new QPushButton("Use Default MetaHuman Head");
+    useDefaultButton->setStyleSheet(
+        "QPushButton {"
+        "    background-color: #2ECC71;"
+        "    color: white;"
+        "    border: none;"
+        "    padding: 6px 12px;"
+        "    font-size: 9pt;"
+        "    border-radius: 4px;"
+        "}"
+        "QPushButton:hover {"
+        "    background-color: #27AE60;"
+        "}"
+    );
+    connect(useDefaultButton, &QPushButton::clicked, this, &SidebarWidget::UseDefaultMorphMeshRequested);
+    importLayout->addWidget(useDefaultButton);
+
+    QPushButton* importTargetButton = new QPushButton("Import Target Mesh (Custom)");
+    importTargetButton->setStyleSheet(
+        "QPushButton {"
+        "    background-color: #3498DB;"
+        "    color: white;"
+        "    border: none;"
+        "    padding: 8px 12px;"
+        "    font-size: 10pt;"
+        "    border-radius: 4px;"
+        "}"
+        "QPushButton:hover {"
+        "    background-color: #2980B9;"
+        "}"
+    );
+    connect(importTargetButton, &QPushButton::clicked, this, &SidebarWidget::ImportTargetMeshRequested);
+    importLayout->addWidget(importTargetButton);
+
+    controlsLayout->addWidget(importGroup);
 
     // Mesh Status Group
     QGroupBox* meshStatusGroup = new QGroupBox("Mesh Status");
@@ -647,7 +725,9 @@ void SidebarWidget::CreateMorphControls() {
                               int min, int max, int defaultVal) {
         QHBoxLayout* row = new QHBoxLayout();
         QLabel* lbl = new QLabel(label);
-        lbl->setMinimumWidth(95);
+        lbl->setMinimumWidth(80);
+        lbl->setMaximumWidth(85);
+        lbl->setStyleSheet("QLabel { font-size: 8pt; }");
         row->addWidget(lbl);
         slider = new QSlider(Qt::Horizontal);
         slider->setToolTip(tooltip);
@@ -656,7 +736,8 @@ void SidebarWidget::CreateMorphControls() {
         slider->setStyleSheet(sliderStyle);
         row->addWidget(slider);
         valueLabel = new QLabel();
-        valueLabel->setMinimumWidth(40);
+        valueLabel->setMinimumWidth(35);
+        valueLabel->setStyleSheet("QLabel { font-size: 8pt; }");
         valueLabel->setAlignment(Qt::AlignRight | Qt::AlignVCenter);
         row->addWidget(valueLabel);
         nricpLayout->addLayout(row);
@@ -667,16 +748,16 @@ void SidebarWidget::CreateMorphControls() {
     nricpAlphaInitialLabel_->setText("100");
 
     addNRICPSlider("Stiffness Final:", "Final stiffness (low=flexible end)",
-                   nricpAlphaFinalSlider_, nricpAlphaFinalLabel_, 1, 100, 1);
-    nricpAlphaFinalLabel_->setText("1");
+                   nricpAlphaFinalSlider_, nricpAlphaFinalLabel_, 1, 100, 50);
+    nricpAlphaFinalLabel_->setText("50");
 
     addNRICPSlider("Stiffness Steps:", "Number of coarse-to-fine levels",
                    nricpStiffnessStepsSlider_, nricpStiffnessStepsLabel_, 1, 20, 5);
     nricpStiffnessStepsLabel_->setText("5");
 
     addNRICPSlider("ICP Iterations:", "ICP iterations per stiffness level",
-                   nricpIcpIterationsSlider_, nricpIcpIterationsLabel_, 1, 10, 3);
-    nricpIcpIterationsLabel_->setText("3");
+                   nricpIcpIterationsSlider_, nricpIcpIterationsLabel_, 1, 10, 7);
+    nricpIcpIterationsLabel_->setText("7");
 
     addNRICPSlider("Normal Thresh:", "Max normal angle for correspondence (degrees)",
                    nricpNormalThresholdSlider_, nricpNormalThresholdLabel_, 10, 180, 60);
@@ -797,12 +878,12 @@ void SidebarWidget::CreateMorphControls() {
     nricpLayout->addWidget(sampTitle);
 
     addNRICPSlider("Sampling Init:", "Initial control node density (0=all vertices, higher=fewer nodes)",
-                   nricpSamplingInitialSlider_, nricpSamplingInitialLabel_, 0, 100, 0);
-    nricpSamplingInitialLabel_->setText("All");
+                   nricpSamplingInitialSlider_, nricpSamplingInitialLabel_, 0, 100, 100);
+    nricpSamplingInitialLabel_->setText("0.100");
 
     addNRICPSlider("Sampling Final:", "Final control node density (0=all vertices)",
-                   nricpSamplingFinalSlider_, nricpSamplingFinalLabel_, 0, 100, 0);
-    nricpSamplingFinalLabel_->setText("All");
+                   nricpSamplingFinalSlider_, nricpSamplingFinalLabel_, 0, 100, 10);
+    nricpSamplingFinalLabel_->setText("0.010");
 
     nricpNormalizeSamplingCheckBox_ = new QCheckBox("Normalize Sampling");
     nricpNormalizeSamplingCheckBox_->setToolTip(
@@ -1047,9 +1128,9 @@ void SidebarWidget::CreateMorphControls() {
         // Reset based on currently visible algorithm panel
         if (nricpParamsWidget_ && nricpParamsWidget_->isVisible()) {
             if (nricpAlphaInitialSlider_) nricpAlphaInitialSlider_->setValue(100);
-            if (nricpAlphaFinalSlider_) nricpAlphaFinalSlider_->setValue(1);
+            if (nricpAlphaFinalSlider_) nricpAlphaFinalSlider_->setValue(50);
             if (nricpStiffnessStepsSlider_) nricpStiffnessStepsSlider_->setValue(5);
-            if (nricpIcpIterationsSlider_) nricpIcpIterationsSlider_->setValue(3);
+            if (nricpIcpIterationsSlider_) nricpIcpIterationsSlider_->setValue(7);
             if (nricpNormalThresholdSlider_) nricpNormalThresholdSlider_->setValue(60);
             if (nricpLandmarkWeightSlider_) nricpLandmarkWeightSlider_->setValue(10);
             if (nricpBoundaryExclusionCheckBox_) nricpBoundaryExclusionCheckBox_->setChecked(true);
@@ -1059,8 +1140,8 @@ void SidebarWidget::CreateMorphControls() {
             if (nricpDpFinalSlider_) nricpDpFinalSlider_->setValue(100);
             if (nricpGammaInitialSlider_) nricpGammaInitialSlider_->setValue(0);
             if (nricpGammaFinalSlider_) nricpGammaFinalSlider_->setValue(0);
-            if (nricpSamplingInitialSlider_) nricpSamplingInitialSlider_->setValue(0);
-            if (nricpSamplingFinalSlider_) nricpSamplingFinalSlider_->setValue(0);
+            if (nricpSamplingInitialSlider_) nricpSamplingInitialSlider_->setValue(100);
+            if (nricpSamplingFinalSlider_) nricpSamplingFinalSlider_->setValue(10);
             if (nricpNormalizeSamplingCheckBox_) nricpNormalizeSamplingCheckBox_->setChecked(true);
         } else {
             if (stiffnessSlider_) stiffnessSlider_->setValue(50);

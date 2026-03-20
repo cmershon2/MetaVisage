@@ -4,6 +4,7 @@
 #include "ui/SidebarWidget.h"
 #include "ui/ExportDialog.h"
 #include "ui/ShortcutsDialog.h"
+#include "ui/WelcomeDialog.h"
 #include "utils/RayCaster.h"
 #include "utils/Logger.h"
 #include "utils/ErrorHelper.h"
@@ -24,6 +25,7 @@
 #include <QDesktopServices>
 #include <QUrl>
 #include <QFileInfo>
+#include <QCoreApplication>
 
 namespace MetaVisage {
 
@@ -127,9 +129,23 @@ MainWindow::MainWindow(QWidget *parent)
     UpdateWindowTitle();
     UpdateStatusBar();
     UpdateUndoRedoState();
+
+    // Show welcome dialog after window is fully constructed
+    QTimer::singleShot(0, this, &MainWindow::ShowWelcomeDialog);
 }
 
 MainWindow::~MainWindow() {
+    // Ensure morph thread is properly shut down before destruction
+    if (morphThread_ && morphThread_->isRunning()) {
+        if (morphWorker_) {
+            morphWorker_->GetDeformer().Cancel();
+        }
+        morphThread_->quit();
+        if (!morphThread_->wait(5000)) {
+            morphThread_->terminate();
+            morphThread_->wait();
+        }
+    }
 }
 
 void MainWindow::CreateMenus() {
@@ -155,16 +171,6 @@ void MainWindow::CreateMenus() {
     QAction* saveAsAction = fileMenu->addAction(tr("Save Project &As..."));
     saveAsAction->setShortcut(QKeySequence::SaveAs);
     connect(saveAsAction, &QAction::triggered, this, &MainWindow::OnSaveProjectAs);
-
-    fileMenu->addSeparator();
-
-    QAction* importMorphAction = fileMenu->addAction(tr("Import &Morph Mesh (MetaHuman)"));
-    importMorphAction->setShortcut(QKeySequence(Qt::CTRL | Qt::Key_M));
-    connect(importMorphAction, &QAction::triggered, this, &MainWindow::OnImportMorphMesh);
-
-    QAction* importTargetAction = fileMenu->addAction(tr("Import &Target Mesh (Custom)"));
-    importTargetAction->setShortcut(QKeySequence(Qt::CTRL | Qt::Key_T));
-    connect(importTargetAction, &QAction::triggered, this, &MainWindow::OnImportTargetMesh);
 
     fileMenu->addSeparator();
 
@@ -295,6 +301,14 @@ void MainWindow::CreateCentralWidget() {
 void MainWindow::ConnectViewportSignals() {
     // Connect sidebar next stage button
     connect(sidebarWidget_, &SidebarWidget::NextStageRequested, this, &MainWindow::OnNextStage);
+
+    // Connect sidebar previous stage button
+    connect(sidebarWidget_, &SidebarWidget::PreviousStageRequested, this, &MainWindow::OnPreviousStage);
+
+    // Connect sidebar import mesh buttons
+    connect(sidebarWidget_, &SidebarWidget::ImportMorphMeshRequested, this, &MainWindow::OnImportMorphMesh);
+    connect(sidebarWidget_, &SidebarWidget::ImportTargetMeshRequested, this, &MainWindow::OnImportTargetMesh);
+    connect(sidebarWidget_, &SidebarWidget::UseDefaultMorphMeshRequested, this, &MainWindow::OnUseDefaultMorphMesh);
 
     // Connect sidebar reset transform button
     connect(sidebarWidget_, &SidebarWidget::ResetTransformRequested, this, &MainWindow::OnResetTransform);
@@ -486,6 +500,7 @@ void MainWindow::OnOpenProject() {
                 }
             }
 
+            WelcomeDialog::AddRecentProject(filepath);
             UpdateWindowTitle();
             UpdateStatusBar();
             sidebarWidget_->SetNextStageEnabled(project_->CanProceedToNextStage());
@@ -506,6 +521,7 @@ void MainWindow::OnSaveProject() {
     }
 
     if (project_->Save(project_->GetPath())) {
+        WelcomeDialog::AddRecentProject(project_->GetPath());
         UpdateWindowTitle();
         statusLabel_->setText("Project saved: " + project_->GetPath());
     } else {
@@ -527,6 +543,7 @@ void MainWindow::OnSaveProjectAs() {
             // Update project name from filename
             QFileInfo info(filepath);
             project_->SetName(info.completeBaseName());
+            WelcomeDialog::AddRecentProject(filepath);
             UpdateWindowTitle();
             statusLabel_->setText("Project saved: " + filepath);
         } else {
@@ -570,6 +587,46 @@ void MainWindow::OnImportMorphMesh() {
             ErrorHelper::ShowError(this, tr("Import Failed"),
                 tr("Failed to load morph mesh."), filepath);
         }
+    }
+}
+
+void MainWindow::OnUseDefaultMorphMesh() {
+    // Load the default MetaHuman head model from assets
+    QString filepath = QCoreApplication::applicationDirPath() + "/assets/models/MetaHumanHeadLod0.obj";
+
+    if (!QFileInfo::exists(filepath)) {
+        ErrorHelper::ShowError(this, tr("File Not Found"),
+            tr("Default MetaHuman head model not found."), filepath);
+        return;
+    }
+
+    MeshReference& morphMesh = project_->GetMorphMesh();
+    morphMesh.mesh = std::make_shared<Mesh>();
+
+    if (morphMesh.mesh->Load(filepath)) {
+        morphMesh.filepath = filepath;
+        morphMesh.isLoaded = true;
+        Transform initialTransform;
+        Quaternion xRotation = Quaternion::FromAxisAngle(Vector3(1.0f, 0.0f, 0.0f), -90.0f);
+        initialTransform.SetRotation(xRotation);
+        morphMesh.transform = initialTransform;
+
+        statusLabel_->setText("Default morph mesh loaded: " + morphMesh.mesh->GetName());
+
+        QLabel* morphStatus = sidebarWidget_->findChild<QLabel*>("morphStatus");
+        if (morphStatus) {
+            morphStatus->setText("Morph Mesh: " + morphMesh.mesh->GetName() + " (Default)");
+            morphStatus->setStyleSheet("QLabel { color: #2ECC71; }");
+        }
+
+        sidebarWidget_->SetNextStageEnabled(project_->CanProceedToNextStage());
+
+        const BoundingBox& bounds = morphMesh.mesh->GetBounds();
+        viewportContainer_->GetPrimaryViewport()->GetCamera()->FocusOnBounds(bounds);
+        viewportContainer_->GetPrimaryViewport()->update();
+    } else {
+        ErrorHelper::ShowError(this, tr("Import Failed"),
+            tr("Failed to load default morph mesh."), filepath);
     }
 }
 
@@ -813,6 +870,89 @@ void MainWindow::BackupProject() {
     ProjectSerializer serializer;
     serializer.Save(*project_, backupPath);
     MV_LOG_INFO(QString("Project backed up to: %1").arg(backupPath));
+}
+
+void MainWindow::ShowWelcomeDialog() {
+    WelcomeDialog dialog(this);
+    if (dialog.exec() == QDialog::Accepted) {
+        switch (dialog.GetResult()) {
+            case WelcomeDialog::NewProject:
+                OnNewProject();
+                break;
+            case WelcomeDialog::OpenProject:
+            case WelcomeDialog::OpenRecent: {
+                QString filepath = dialog.GetSelectedProjectPath();
+                if (!filepath.isEmpty()) {
+                    auto newProject = std::make_unique<Project>();
+                    if (newProject->Load(filepath)) {
+                        project_ = std::move(newProject);
+                        viewportContainer_->SetProject(project_.get());
+                        sidebarWidget_->SetProject(project_.get());
+
+                        WorkflowStage stage = project_->GetCurrentStage();
+                        viewportContainer_->SetDualMode(stage == WorkflowStage::PointReference);
+                        sidebarWidget_->SetStage(stage);
+
+                        // Reconstruct deformed mesh from saved vertex data
+                        MorphData& morphData = project_->GetMorphData();
+                        if (morphData.hasDeformedData && morphData.isProcessed &&
+                            project_->GetMorphMesh().isLoaded && project_->GetMorphMesh().mesh) {
+                            morphData.originalMorphMesh = project_->GetMorphMesh().mesh;
+                            auto deformed = std::make_shared<Mesh>();
+                            const Mesh& original = *project_->GetMorphMesh().mesh;
+                            deformed->SetVertices(morphData.savedDeformedVertices);
+                            deformed->SetNormals(morphData.savedDeformedNormals);
+                            deformed->SetUVs(original.GetUVs());
+                            deformed->SetFaces(original.GetFaces());
+                            deformed->SetMaterials(original.GetMaterials());
+                            deformed->SetName(original.GetName());
+                            morphData.deformedMorphMesh = deformed;
+                            morphData.savedDeformedVertices.clear();
+                            morphData.savedDeformedNormals.clear();
+                            morphData.hasDeformedData = false;
+                        }
+
+                        if (stage == WorkflowStage::TouchUp) {
+                            viewportContainer_->GetPrimaryViewport()->SetViewportLabel("Touch Up");
+                        }
+
+                        if (project_->GetMorphMesh().isLoaded && project_->GetMorphMesh().mesh) {
+                            const BoundingBox& bounds = project_->GetMorphMesh().mesh->GetBounds();
+                            viewportContainer_->GetPrimaryViewport()->GetCamera()->FocusOnBounds(bounds);
+                        }
+
+                        if (project_->GetMorphMesh().isLoaded) {
+                            QLabel* morphStatus = sidebarWidget_->findChild<QLabel*>("morphStatus");
+                            if (morphStatus) {
+                                morphStatus->setText("Morph Mesh: " + project_->GetMorphMesh().mesh->GetName());
+                                morphStatus->setStyleSheet("QLabel { color: #2ECC71; }");
+                            }
+                        }
+                        if (project_->GetTargetMesh().isLoaded) {
+                            QLabel* targetStatus = sidebarWidget_->findChild<QLabel*>("targetStatus");
+                            if (targetStatus) {
+                                targetStatus->setText("Target Mesh: " + project_->GetTargetMesh().mesh->GetName());
+                                targetStatus->setStyleSheet("QLabel { color: #2ECC71; }");
+                            }
+                        }
+
+                        WelcomeDialog::AddRecentProject(filepath);
+                        UpdateWindowTitle();
+                        UpdateStatusBar();
+                        sidebarWidget_->SetNextStageEnabled(project_->CanProceedToNextStage());
+                        viewportContainer_->GetPrimaryViewport()->update();
+                        statusLabel_->setText("Project loaded: " + project_->GetName());
+                    } else {
+                        ErrorHelper::ShowError(this, tr("Load Failed"),
+                            tr("Failed to load project."), filepath);
+                    }
+                }
+                break;
+            }
+            default:
+                break;
+        }
+    }
 }
 
 void MainWindow::UpdateStatsDisplay() {
@@ -1275,8 +1415,10 @@ void MainWindow::OnMorphComplete(bool success, const QString& errorMessage,
         morphData.isAccepted = false;
 
         // Upload heat map colors for the deformed mesh
-        viewportContainer_->GetPrimaryViewport()->UploadHeatMapColors(
-            deformedMesh.get(), displacements, maxDisplacement);
+        ViewportWidget* vp = viewportContainer_->GetPrimaryViewport();
+        if (vp) {
+            vp->UploadHeatMapColors(deformedMesh.get(), displacements, maxDisplacement);
+        }
 
         // Capture after state and push undo
         MorphUndoAction::MorphState afterState;
@@ -1302,14 +1444,18 @@ void MainWindow::OnMorphComplete(bool success, const QString& errorMessage,
         statusLabel_->setText("Morph processing failed");
     }
 
-    viewportContainer_->GetPrimaryViewport()->update();
+    if (ViewportWidget* vp = viewportContainer_->GetPrimaryViewport()) {
+        vp->update();
+    }
 }
 
 void MainWindow::OnMorphPreviewModeChanged(MorphPreviewMode mode) {
     if (!project_) return;
     project_->GetMorphData().previewMode = mode;
-    viewportContainer_->GetPrimaryViewport()->SetMorphPreviewMode(mode);
-    viewportContainer_->GetPrimaryViewport()->update();
+    if (ViewportWidget* vp = viewportContainer_->GetPrimaryViewport()) {
+        vp->SetMorphPreviewMode(mode);
+        vp->update();
+    }
 }
 
 void MainWindow::OnMorphParameterChanged() {
@@ -1395,6 +1541,82 @@ void MainWindow::OnNextStage() {
     if (nextStage == WorkflowStage::TouchUp) {
         viewportContainer_->GetPrimaryViewport()->SetViewportLabel("Touch Up");
         statusLabel_->setText("Touch Up - Use sculpting brushes to refine the morph");
+    }
+
+    viewportContainer_->GetPrimaryViewport()->update();
+}
+
+void MainWindow::OnPreviousStage() {
+    WorkflowStage currentStage = project_->GetCurrentStage();
+    if (currentStage == WorkflowStage::Alignment) {
+        return; // Already at first stage
+    }
+
+    // Warn user about potential data loss
+    QString warning;
+    if (currentStage == WorkflowStage::TouchUp) {
+        warning = "Going back to the Morph stage will discard any sculpting changes. Continue?";
+    } else if (currentStage == WorkflowStage::Morph) {
+        warning = "Going back to Point Reference will discard morph results. Continue?";
+    }
+
+    if (!warning.isEmpty()) {
+        QMessageBox::StandardButton reply = QMessageBox::question(
+            this, tr("Go Back?"), warning,
+            QMessageBox::Yes | QMessageBox::No, QMessageBox::No);
+        if (reply != QMessageBox::Yes) {
+            return;
+        }
+    }
+
+    WorkflowStage prevStage = currentStage;
+    switch (currentStage) {
+        case WorkflowStage::PointReference:
+            prevStage = WorkflowStage::Alignment;
+            break;
+        case WorkflowStage::Morph:
+            prevStage = WorkflowStage::PointReference;
+            break;
+        case WorkflowStage::TouchUp:
+            prevStage = WorkflowStage::Morph;
+            break;
+        default:
+            return;
+    }
+
+    // Clear undo stack when transitioning stages
+    undoStack_->Clear();
+    UpdateUndoRedoState();
+
+    project_->SetCurrentStage(prevStage);
+    sidebarWidget_->SetStage(prevStage);
+    UpdateStatusBar();
+
+    // Update viewport layout based on stage
+    if (prevStage == WorkflowStage::PointReference) {
+        viewportContainer_->SetDualMode(true);
+    } else {
+        viewportContainer_->SetDualMode(false);
+    }
+
+    sidebarWidget_->SetNextStageEnabled(project_->CanProceedToNextStage());
+
+    // Update sidebar mesh labels if going back to Alignment
+    if (prevStage == WorkflowStage::Alignment) {
+        if (project_->GetMorphMesh().isLoaded) {
+            QLabel* morphStatus = sidebarWidget_->findChild<QLabel*>("morphStatus");
+            if (morphStatus) {
+                morphStatus->setText("Morph Mesh: " + project_->GetMorphMesh().mesh->GetName());
+                morphStatus->setStyleSheet("QLabel { color: #2ECC71; }");
+            }
+        }
+        if (project_->GetTargetMesh().isLoaded) {
+            QLabel* targetStatus = sidebarWidget_->findChild<QLabel*>("targetStatus");
+            if (targetStatus) {
+                targetStatus->setText("Target Mesh: " + project_->GetTargetMesh().mesh->GetName());
+                targetStatus->setStyleSheet("QLabel { color: #2ECC71; }");
+            }
+        }
     }
 
     viewportContainer_->GetPrimaryViewport()->update();

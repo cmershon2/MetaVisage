@@ -36,7 +36,6 @@ private:
     QLineEdit* filepathEdit_;
     QPushButton* browseButton_;
     QComboBox* formatCombo_;
-    QCheckBox* triangulateCheck_;
     QCheckBox* materialsCheck_;
     QCheckBox* applyTransformCheck_;
     QCheckBox* yUpCheck_;

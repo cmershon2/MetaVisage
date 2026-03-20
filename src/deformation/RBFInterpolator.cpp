@@ -209,6 +209,11 @@ bool RBFInterpolator::Solve() {
             A(i, i) += 1e-6;
         }
         solver.compute(A);
+
+        if (!solver.isInvertible()) {
+            qWarning() << "RBFInterpolator: System still singular after regularization";
+            return false;
+        }
     }
 
     weightsX_ = solver.solve(bx);
