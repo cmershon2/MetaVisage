@@ -9,6 +9,7 @@
 #include "sculpting/GrabBrush.h"
 #include "sculpting/PushPullBrush.h"
 #include "sculpting/InflateBrush.h"
+#include "sculpting/MaskBrush.h"
 #include <QDebug>
 #include <QPainter>
 #include <cmath>
@@ -39,6 +40,9 @@ ViewportWidget::ViewportWidget(QWidget *parent)
       brushOnMesh_(false),
       sculptSymmetryEnabled_(false),
       sculptSymmetryAxis_(Axis::X),
+      maskBrush_(std::make_unique<MaskBrush>()),
+      isMaskPainting_(false),
+      isMaskStroking_(false),
       showTargetOverlay_(false),
       frameCount_(0),
       currentFPS_(0.0f) {
@@ -503,6 +507,163 @@ void ViewportWidget::UpdateBrushCursor(float screenX, float screenY) {
     update();
 }
 
+// --- Mask painting ---
+
+void ViewportWidget::SetMaskPaintingMode(bool active) {
+    isMaskPainting_ = active;
+    if (!active && renderer_) {
+        renderer_->SetBrushCursor(Vector3(), Vector3(), 0.0f, 0.0f, false);
+        renderer_->SetShowMask(false);
+        update();
+    } else if (active && renderer_) {
+        renderer_->SetShowMask(true);
+        update();
+    }
+}
+
+void ViewportWidget::SetMaskBrushRadius(float radius) {
+    if (maskBrush_) maskBrush_->SetRadius(radius);
+}
+
+void ViewportWidget::SetMaskEraseMode(bool erase) {
+    if (maskBrush_) maskBrush_->SetEraseMode(erase);
+}
+
+void ViewportWidget::SetMaskData(std::vector<bool>* mask) {
+    if (maskBrush_) maskBrush_->SetMaskData(mask);
+}
+
+void ViewportWidget::UploadMaskColors(const Mesh* mesh, const std::vector<bool>& mask) {
+    if (!renderer_) return;
+    makeCurrent();
+    renderer_->UploadMaskColors(mesh, mask);
+    doneCurrent();
+    update();
+}
+
+void ViewportWidget::SetShowMask(bool show) {
+    if (renderer_) renderer_->SetShowMask(show);
+    update();
+}
+
+Mesh* ViewportWidget::GetMaskMesh() {
+    if (!project_) return nullptr;
+    const MorphData& morphData = project_->GetMorphData();
+    if (morphData.isProcessed && morphData.deformedMorphMesh) {
+        return morphData.deformedMorphMesh.get();
+    }
+    const MeshReference& morphRef = project_->GetMorphMesh();
+    if (morphRef.isLoaded && morphRef.mesh) {
+        return morphRef.mesh.get();
+    }
+    return nullptr;
+}
+
+Transform ViewportWidget::GetMaskTransform() const {
+    if (project_) return project_->GetMorphMesh().transform;
+    return Transform();
+}
+
+void ViewportWidget::HandleMaskPress(QMouseEvent *event) {
+    if (!maskBrush_ || !project_) return;
+
+    Mesh* mesh = GetMaskMesh();
+    if (!mesh) return;
+
+    float screenX = static_cast<float>(event->pos().x());
+    float screenY = static_cast<float>(event->pos().y());
+
+    Ray ray = RayCaster::ScreenToRay(screenX, screenY, width(), height(), *camera_);
+    Transform transform = GetMaskTransform();
+
+    BVH* bvh = mesh->GetBVH();
+    RaycastHit hit = bvh ? RayCaster::RayIntersectMeshBVH(ray, *mesh, transform, *bvh)
+                         : RayCaster::RayIntersectMesh(ray, *mesh, transform);
+
+    if (hit.hit) {
+        isMaskStroking_ = true;
+        maskBrush_->BeginStroke(*mesh, transform, hit.position);
+
+        if (maskBrush_->Apply(*mesh, transform, hit.position, Vector3(), Vector3(), 0.016f)) {
+            // Re-upload mask colors
+            MorphData& morphData = project_->GetMorphData();
+            const Mesh* renderMesh = GetMaskMesh();
+            if (renderMesh && renderer_) {
+                makeCurrent();
+                renderer_->UploadMaskColors(renderMesh, morphData.vertexMask);
+                doneCurrent();
+            }
+            update();
+        }
+    }
+}
+
+void ViewportWidget::HandleMaskMove(QMouseEvent *event) {
+    if (!maskBrush_ || !project_) return;
+
+    Mesh* mesh = GetMaskMesh();
+    if (!mesh) return;
+
+    float screenX = static_cast<float>(event->pos().x());
+    float screenY = static_cast<float>(event->pos().y());
+
+    // Always update cursor
+    UpdateMaskBrushCursor(screenX, screenY);
+
+    if (isMaskStroking_) {
+        Ray ray = RayCaster::ScreenToRay(screenX, screenY, width(), height(), *camera_);
+        Transform transform = GetMaskTransform();
+
+        BVH* bvh = mesh->GetBVH();
+        RaycastHit hit = bvh ? RayCaster::RayIntersectMeshBVH(ray, *mesh, transform, *bvh)
+                             : RayCaster::RayIntersectMesh(ray, *mesh, transform);
+
+        if (hit.hit) {
+            if (maskBrush_->Apply(*mesh, transform, hit.position, Vector3(), Vector3(), 0.016f)) {
+                MorphData& morphData = project_->GetMorphData();
+                const Mesh* renderMesh = GetMaskMesh();
+                if (renderMesh && renderer_) {
+                    makeCurrent();
+                    renderer_->UploadMaskColors(renderMesh, morphData.vertexMask);
+                    doneCurrent();
+                }
+                update();
+            }
+        }
+    }
+}
+
+void ViewportWidget::HandleMaskRelease() {
+    if (!isMaskStroking_) return;
+    if (maskBrush_) maskBrush_->EndStroke();
+    isMaskStroking_ = false;
+    emit MaskStrokeCompleted();
+}
+
+void ViewportWidget::UpdateMaskBrushCursor(float screenX, float screenY) {
+    Mesh* mesh = GetMaskMesh();
+    if (!maskBrush_ || !mesh || !renderer_) {
+        if (renderer_) renderer_->SetBrushCursor(Vector3(), Vector3(), 0.0f, 0.0f, false);
+        return;
+    }
+
+    Ray ray = RayCaster::ScreenToRay(screenX, screenY, width(), height(), *camera_);
+    Transform transform = GetMaskTransform();
+
+    BVH* bvh = mesh->GetBVH();
+    RaycastHit hit = bvh ? RayCaster::RayIntersectMeshBVH(ray, *mesh, transform, *bvh)
+                         : RayCaster::RayIntersectMesh(ray, *mesh, transform);
+
+    if (hit.hit) {
+        Vector3 worldNormal = ComputeWorldNormal(*mesh, transform, hit.vertexIndex);
+        renderer_->SetBrushCursor(hit.position, worldNormal, maskBrush_->GetRadius(), 0.0f, true);
+    } else {
+        renderer_->SetBrushCursor(Vector3(), Vector3(), 0.0f, 0.0f, false);
+    }
+
+    update();
+}
+
 // --- OpenGL ---
 
 void ViewportWidget::initializeGL() {
@@ -648,10 +809,14 @@ void ViewportWidget::mousePressEvent(QMouseEvent *event) {
 
     bool inPointReferenceStage = project_ && project_->GetCurrentStage() == WorkflowStage::PointReference;
     bool inTouchUpStage = project_ && project_->GetCurrentStage() == WorkflowStage::TouchUp;
+    bool inMorphStage = project_ && project_->GetCurrentStage() == WorkflowStage::Morph;
 
     // Left click behavior depends on stage
     if (event->button() == Qt::LeftButton) {
-        if (inTouchUpStage && activeBrushType_ != BrushType::None) {
+        if (inMorphStage && isMaskPainting_) {
+            // Morph stage: mask painting
+            HandleMaskPress(event);
+        } else if (inTouchUpStage && activeBrushType_ != BrushType::None) {
             // Touch Up stage: start sculpting
             HandleSculptPress(event);
         } else if (inPointReferenceStage) {
@@ -793,8 +958,11 @@ void ViewportWidget::mouseMoveEvent(QMouseEvent *event) {
     lastMousePos_ = event->pos();
 
     bool inTouchUpStage = project_ && project_->GetCurrentStage() == WorkflowStage::TouchUp;
+    bool inMorphStage = project_ && project_->GetCurrentStage() == WorkflowStage::Morph;
 
-    if (inTouchUpStage && (isSculpting_ || (!isOrbiting_ && !isPanning_))) {
+    if (inMorphStage && isMaskPainting_ && (isMaskStroking_ || (!isOrbiting_ && !isPanning_))) {
+        HandleMaskMove(event);
+    } else if (inTouchUpStage && (isSculpting_ || (!isOrbiting_ && !isPanning_))) {
         // In Touch Up: handle sculpting move or hover cursor update
         HandleSculptMove(event, delta);
     } else if (isTransforming_) {
@@ -813,7 +981,9 @@ void ViewportWidget::mouseMoveEvent(QMouseEvent *event) {
 
 void ViewportWidget::mouseReleaseEvent(QMouseEvent *event) {
     if (event->button() == Qt::LeftButton) {
-        if (isSculpting_) {
+        if (isMaskStroking_) {
+            HandleMaskRelease();
+        } else if (isSculpting_) {
             HandleSculptRelease();
         } else if (isTransforming_) {
             isTransforming_ = false;

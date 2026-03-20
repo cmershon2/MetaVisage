@@ -23,6 +23,7 @@ class SmoothBrush;
 class GrabBrush;
 class PushPullBrush;
 class InflateBrush;
+class MaskBrush;
 
 class ViewportWidget : public QOpenGLWidget, protected QOpenGLFunctions_4_3_Core {
     Q_OBJECT
@@ -81,6 +82,15 @@ public:
     // Sculpting symmetry
     void SetSculptSymmetry(bool enabled, Axis axis);
 
+    // Mask painting (Morph stage)
+    void SetMaskPaintingMode(bool active);
+    bool IsMaskPainting() const { return isMaskPainting_; }
+    void SetMaskBrushRadius(float radius);
+    void SetMaskEraseMode(bool erase);
+    void SetMaskData(std::vector<bool>* mask);
+    void UploadMaskColors(const Mesh* mesh, const std::vector<bool>& mask);
+    void SetShowMask(bool show);
+
     // Target overlay in Touch Up stage
     void SetShowTargetOverlay(bool show);
 
@@ -103,6 +113,8 @@ signals:
     void TransformApplied(Transform before, Transform after);
     // Signal emitted when a sculpt stroke is completed
     void SculptStrokeCompleted(BrushStroke stroke);
+    // Signal emitted when mask painting stroke completes
+    void MaskStrokeCompleted();
     // Signal emitted with FPS updates
     void FPSUpdated(float fps);
 
@@ -138,6 +150,14 @@ private:
     Mesh* GetSculptMesh();
     Transform GetSculptTransform() const;
     Vector3 ComputeWorldNormal(const Mesh& mesh, const Transform& transform, int vertexIndex);
+
+    // Mask painting helpers
+    void HandleMaskPress(QMouseEvent *event);
+    void HandleMaskMove(QMouseEvent *event);
+    void HandleMaskRelease();
+    void UpdateMaskBrushCursor(float screenX, float screenY);
+    Mesh* GetMaskMesh();
+    Transform GetMaskTransform() const;
 
     std::unique_ptr<Camera> camera_;
     std::unique_ptr<Renderer> renderer_;
@@ -178,6 +198,11 @@ private:
     // Sculpting symmetry state
     bool sculptSymmetryEnabled_;
     Axis sculptSymmetryAxis_;
+
+    // Mask painting state (Morph stage)
+    std::unique_ptr<MaskBrush> maskBrush_;
+    bool isMaskPainting_;
+    bool isMaskStroking_;
 
     // Target overlay in Touch Up
     bool showTargetOverlay_;

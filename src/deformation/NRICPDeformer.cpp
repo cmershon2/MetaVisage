@@ -51,6 +51,10 @@ void NRICPDeformer::SetCancellationFlag(std::atomic<bool>* cancelled) {
     cancelled_ = cancelled;
 }
 
+void NRICPDeformer::SetUserExcludedVertices(const std::vector<bool>& userMask) {
+    userExcludedVertices_ = userMask;
+}
+
 void NRICPDeformer::BuildWeldMap() {
     weldGroups_.clear();
     weldGroupIndex_.assign(vertexCount_, -1);
@@ -279,6 +283,21 @@ void NRICPDeformer::DetectAndExcludeBoundaryVertices() {
         .arg(excludedCount)
         .arg(static_cast<float>(excludedCount) / vertexCount_ * 100.0f, 0, 'f', 1)
         .arg(hops));
+
+    // Merge user-painted mask into exclusion set
+    if (!userExcludedVertices_.empty() &&
+        static_cast<int>(userExcludedVertices_.size()) == vertexCount_) {
+        int userMaskCount = 0;
+        for (int i = 0; i < vertexCount_; ++i) {
+            if (userExcludedVertices_[i] && !excludedVertices_[i]) {
+                excludedVertices_[i] = true;
+                userMaskCount++;
+            }
+        }
+        if (userMaskCount > 0) {
+            MV_LOG_INFO(QString("NRICP: User mask added %1 additional excluded vertices").arg(userMaskCount));
+        }
+    }
 }
 
 // ============================================================================

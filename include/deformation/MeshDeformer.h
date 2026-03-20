@@ -53,6 +53,9 @@ public:
     // Set NRICP-specific parameters
     void SetNRICPParams(const NRICPParams& params);
 
+    // Set user-painted vertex mask for NRICP exclusion
+    void SetUserExcludedVertices(const std::vector<bool>& mask);
+
     // Set progress callback
     void SetProgressCallback(ProgressCallback callback);
 
@@ -108,6 +111,9 @@ private:
     // Progress tracking
     ProgressCallback progressCallback_;
     std::atomic<bool> cancelled_;
+
+    // User-painted mask for NRICP
+    std::vector<bool> userExcludedVertices_;
 
     // Results
     std::vector<float> displacementMagnitudes_;

@@ -595,7 +595,8 @@ enum class BrushType {
     Smooth,     // Average vertex positions for smoothing
     Grab,       // Move vertices with mouse drag
     PushPull,   // Move vertices along surface normal (push outward / pull inward)
-    Inflate     // Move each vertex along its own normal (inflate/deflate)
+    Inflate,    // Move each vertex along its own normal (inflate/deflate)
+    Mask        // Paint vertex mask to exclude regions from NRICP deformation
 };
 
 // Brush falloff curve types

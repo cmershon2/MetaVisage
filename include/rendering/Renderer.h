@@ -44,6 +44,11 @@ public:
     void InvalidateMesh(const Mesh* mesh);
     void UploadHeatMapColors(const Mesh* mesh, const std::vector<float>& displacements, float maxDisplacement);
 
+    // Mask visualization (Morph stage)
+    void UploadMaskColors(const Mesh* mesh, const std::vector<bool>& mask);
+    void SetShowMask(bool show) { showMask_ = show; }
+    bool GetShowMask() const { return showMask_; }
+
     // Sculpting (Touch Up stage)
     void SetBrushCursor(const Vector3& position, const Vector3& normal, float radius, float innerRadius, bool visible);
     void UpdateMeshVertices(const Mesh* mesh);
@@ -95,6 +100,9 @@ private:
 
     // Target overlay in Touch Up stage
     bool showTargetOverlay_;
+
+    // Mask visualization
+    bool showMask_;
 };
 
 } // namespace MetaVisage
