@@ -15,6 +15,7 @@ namespace MetaVisage {
 class ShaderManager;
 class MeshRenderer;
 class Project;
+class TextureData;
 
 class Renderer : protected QOpenGLFunctions_4_3_Core {
 public:
@@ -48,6 +49,10 @@ public:
     void UploadMaskColors(const Mesh* mesh, const std::vector<bool>& mask);
     void SetShowMask(bool show) { showMask_ = show; }
     bool GetShowMask() const { return showMask_; }
+
+    // Texture support
+    void UploadMeshTexture(const Mesh* mesh, const TextureData& texture);
+    void ClearMeshTexture(const Mesh* mesh);
 
     // Sculpting (Touch Up stage)
     void SetBrushCursor(const Vector3& position, const Vector3& normal, float radius, float innerRadius, bool visible);

@@ -13,6 +13,9 @@
 #include "io/MeshExporter.h"
 #include "io/ProjectSerializer.h"
 #include "core/UndoActions.h"
+#include "core/TextureData.h"
+#include "baking/TextureBaker.h"
+#include "baking/TextureWriter.h"
 #include <QHBoxLayout>
 #include <QWidget>
 #include <QMenu>
@@ -314,6 +317,10 @@ void MainWindow::ConnectViewportSignals() {
     connect(sidebarWidget_, &SidebarWidget::ImportMorphMeshRequested, this, &MainWindow::OnImportMorphMesh);
     connect(sidebarWidget_, &SidebarWidget::ImportTargetMeshRequested, this, &MainWindow::OnImportTargetMesh);
     connect(sidebarWidget_, &SidebarWidget::UseDefaultMorphMeshRequested, this, &MainWindow::OnUseDefaultMorphMesh);
+
+    // Connect texture import signals
+    connect(sidebarWidget_, &SidebarWidget::ImportAlbedoTextureRequested, this, &MainWindow::OnImportAlbedoTexture);
+    connect(sidebarWidget_, &SidebarWidget::ImportNormalMapRequested, this, &MainWindow::OnImportNormalMap);
 
     // Connect sidebar reset transform button
     connect(sidebarWidget_, &SidebarWidget::ResetTransformRequested, this, &MainWindow::OnResetTransform);
@@ -717,6 +724,52 @@ void MainWindow::OnImportTargetMesh() {
     }
 }
 
+void MainWindow::OnImportAlbedoTexture() {
+    QString filepath = QFileDialog::getOpenFileName(
+        this, tr("Import Albedo Texture"), QString(),
+        tr("Images (*.png *.jpg *.jpeg *.tga *.bmp)"));
+
+    if (!filepath.isEmpty()) {
+        auto texture = TextureData::LoadFromFile(filepath);
+        if (texture) {
+            project_->GetTargetTextures().albedo = texture;
+            QFileInfo fi(filepath);
+            sidebarWidget_->SetAlbedoFileName(fi.fileName());
+            statusLabel_->setText("Albedo texture loaded: " + fi.fileName());
+
+            // Upload to renderer for preview
+            const MeshReference& targetRef = project_->GetTargetMesh();
+            if (targetRef.isLoaded && targetRef.mesh) {
+                viewportContainer_->GetPrimaryViewport()->UploadMeshTexture(
+                    targetRef.mesh.get(), *texture);
+                viewportContainer_->GetPrimaryViewport()->update();
+            }
+        } else {
+            ErrorHelper::ShowError(this, tr("Import Failed"),
+                tr("Failed to load albedo texture."), filepath);
+        }
+    }
+}
+
+void MainWindow::OnImportNormalMap() {
+    QString filepath = QFileDialog::getOpenFileName(
+        this, tr("Import Normal Map"), QString(),
+        tr("Images (*.png *.jpg *.jpeg *.tga *.bmp)"));
+
+    if (!filepath.isEmpty()) {
+        auto texture = TextureData::LoadFromFile(filepath);
+        if (texture) {
+            project_->GetTargetTextures().normalMap = texture;
+            QFileInfo fi(filepath);
+            sidebarWidget_->SetNormalMapFileName(fi.fileName());
+            statusLabel_->setText("Normal map loaded: " + fi.fileName());
+        } else {
+            ErrorHelper::ShowError(this, tr("Import Failed"),
+                tr("Failed to load normal map."), filepath);
+        }
+    }
+}
+
 void MainWindow::OnExportMesh() {
     // Determine which mesh to export (prefer deformed, fall back to morph)
     const MorphData& morphData = project_->GetMorphData();
@@ -739,6 +792,15 @@ void MainWindow::OnExportMesh() {
 
     // Show export dialog
     ExportDialog dialog(this);
+
+    // Enable texture baking if textures are loaded and morph is complete
+    const TextureSet& textures = project_->GetTargetTextures();
+    bool hasTextures = textures.HasAlbedo() || textures.HasNormalMap();
+    bool hasMorphedMesh = morphData.deformedMorphMesh != nullptr;
+    if (hasTextures && hasMorphedMesh) {
+        dialog.SetTexturesAvailable(true);
+    }
+
     if (dialog.exec() != QDialog::Accepted) {
         return;
     }
@@ -752,10 +814,68 @@ void MainWindow::OnExportMesh() {
     progress.setMinimumDuration(0);
     progress.setValue(0);
 
+    // Texture baking (before mesh export)
+    BakeResult bakeResult;
+    if (options.exportBakedTextures && hasTextures && hasMorphedMesh &&
+        project_->GetTargetMesh().isLoaded && project_->GetTargetMesh().mesh) {
+
+        progress.setLabelText("Baking textures...");
+        progress.setValue(0);
+
+        BakeSettings bakeSettings;
+        bakeSettings.resolution = options.bakeResolution;
+        bakeSettings.paddingPixels = 4;
+        bakeSettings.bakeAlbedo = textures.HasAlbedo();
+        bakeSettings.bakeNormalMap = textures.HasNormalMap();
+
+        TextureBaker baker;
+        bakeResult = baker.Bake(
+            *morphData.deformedMorphMesh,
+            *project_->GetTargetMesh().mesh,
+            project_->GetMorphMesh().transform,
+            project_->GetTargetMesh().transform,
+            textures.albedo.get(),
+            textures.normalMap ? textures.normalMap.get() : nullptr,
+            bakeSettings,
+            [&progress](float p) {
+                progress.setValue(static_cast<int>(p * 50.0f)); // First 50% for baking
+                progress.setLabelText(QString("Baking textures... %1%").arg(static_cast<int>(p * 100)));
+            }
+        );
+
+        if (bakeResult.success) {
+            // Write baked textures to disk
+            QFileInfo fileInfo(filepath);
+            QString basePath = fileInfo.absolutePath() + "/" + fileInfo.completeBaseName();
+            QString ext = "." + options.textureFormat;
+
+            if (bakeResult.bakedAlbedo) {
+                QString albedoPath = basePath + "_albedo" + ext;
+                if (options.textureFormat == "tga") {
+                    TextureWriter::WriteTGA(*bakeResult.bakedAlbedo, albedoPath);
+                } else {
+                    TextureWriter::WritePNG(*bakeResult.bakedAlbedo, albedoPath);
+                }
+                bakeResult.bakedAlbedo = bakeResult.bakedAlbedo; // Keep for result reporting
+            }
+            if (bakeResult.bakedNormalMap) {
+                QString normalPath = basePath + "_normal" + ext;
+                if (options.textureFormat == "tga") {
+                    TextureWriter::WriteTGA(*bakeResult.bakedNormalMap, normalPath);
+                } else {
+                    TextureWriter::WritePNG(*bakeResult.bakedNormalMap, normalPath);
+                }
+            }
+        }
+    }
+
+    progress.setLabelText("Exporting mesh...");
+    progress.setValue(50);
+
     // Export
     MeshExporter exporter;
     exporter.SetProgressCallback([&progress](float p, const QString& msg) {
-        progress.setValue(static_cast<int>(p * 100.0f));
+        progress.setValue(50 + static_cast<int>(p * 50.0f)); // Last 50% for mesh export
         progress.setLabelText(msg);
     });
 
@@ -780,6 +900,10 @@ void MainWindow::OnExportMesh() {
                               .arg(result.exportedFilePath)
                               .arg(result.vertexCount)
                               .arg(result.faceCount);
+
+        if (bakeResult.success) {
+            message += "\n\nBaked textures exported alongside mesh.";
+        }
 
         QMessageBox::StandardButton reply = QMessageBox::information(
             this, tr("Export Complete"), message + "\n\nOpen export folder?",

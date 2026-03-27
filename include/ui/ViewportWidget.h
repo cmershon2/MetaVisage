@@ -18,6 +18,7 @@ namespace MetaVisage {
 class Renderer;
 class Project;
 class Transform;
+class TextureData;
 class SculptBrush;
 class SmoothBrush;
 class GrabBrush;
@@ -66,6 +67,7 @@ public:
     void SetMorphPreviewMode(MorphPreviewMode mode);
     void InvalidateMesh(const Mesh* mesh);
     void UploadHeatMapColors(const Mesh* mesh, const std::vector<float>& displacements, float maxDisplacement);
+    void UploadMeshTexture(const Mesh* mesh, const TextureData& texture);
 
     // Sculpting (Touch Up stage)
     void SetBrushType(BrushType type);

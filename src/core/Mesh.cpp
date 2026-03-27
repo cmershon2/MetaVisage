@@ -116,6 +116,15 @@ bool Mesh::Load(const QString& filepath) {
             mat->Get(AI_MATKEY_SHININESS, shininess);
             material.shininess = shininess;
 
+            // Load texture paths if available
+            aiString texPath;
+            if (mat->GetTexture(aiTextureType_DIFFUSE, 0, &texPath) == AI_SUCCESS) {
+                material.diffuseTexturePath = texPath.C_Str();
+            }
+            if (mat->GetTexture(aiTextureType_NORMALS, 0, &texPath) == AI_SUCCESS) {
+                material.normalMapTexturePath = texPath.C_Str();
+            }
+
             materials_.push_back(material);
         }
     }

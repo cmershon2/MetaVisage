@@ -22,6 +22,7 @@ public:
 
     ExportOptions GetOptions() const;
     QString GetFilePath() const { return filepath_; }
+    void SetTexturesAvailable(bool available);
 
 private slots:
     void OnBrowse();
@@ -45,7 +46,13 @@ private:
     QPushButton* exportButton_;
     QPushButton* cancelButton_;
 
+    // Texture baking UI elements
+    QCheckBox* bakeTexturesCheck_;
+    QComboBox* bakeResolutionCombo_;
+    QComboBox* textureFormatCombo_;
+
     QString filepath_;
+    bool hasTextures_;
 };
 
 } // namespace MetaVisage

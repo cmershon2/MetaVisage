@@ -3,6 +3,7 @@
 
 #include "core/Types.h"
 #include "core/Mesh.h"
+#include "core/TextureData.h"
 #include "core/Transform.h"
 #include <QString>
 #include <QDateTime>
@@ -143,12 +144,14 @@ public:
     AlignmentData& GetAlignmentData() { return alignment_; }
     PointReferenceData& GetPointReferenceData() { return pointReference_; }
     MorphData& GetMorphData() { return morph_; }
+    TextureSet& GetTargetTextures() { return targetTextures_; }
 
     const MeshReference& GetMorphMesh() const { return morphMesh_; }
     const MeshReference& GetTargetMesh() const { return targetMesh_; }
     const AlignmentData& GetAlignmentData() const { return alignment_; }
     const PointReferenceData& GetPointReferenceData() const { return pointReference_; }
     const MorphData& GetMorphData() const { return morph_; }
+    const TextureSet& GetTargetTextures() const { return targetTextures_; }
 
     // Modifiers
     void SetName(const QString& name) { projectName_ = name; }
@@ -170,6 +173,7 @@ private:
     AlignmentData alignment_;
     PointReferenceData pointReference_;
     MorphData morph_;
+    TextureSet targetTextures_;
 };
 
 } // namespace MetaVisage

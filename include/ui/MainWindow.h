@@ -80,6 +80,10 @@ private slots:
     void OnMorphPreviewModeChanged(MorphPreviewMode mode);
     void OnMorphParameterChanged();
 
+    // Texture import actions
+    void OnImportAlbedoTexture();
+    void OnImportNormalMap();
+
     // Touch Up actions
     void OnFinalizeRequested();
 

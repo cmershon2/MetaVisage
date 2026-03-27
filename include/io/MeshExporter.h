@@ -25,6 +25,11 @@ struct ExportOptions {
     bool metaHumanCompatible;   // Reconstruct original vertex layout for MetaHuman Conform
     bool undoUVFlip;            // Undo aiProcess_FlipUVs Y-flip from import
 
+    // Texture baking options
+    bool exportBakedTextures;   // Bake and write textures alongside mesh
+    int bakeResolution;         // Texture resolution: 1024, 2048, or 4096
+    QString textureFormat;      // "png" or "tga"
+
     ExportOptions()
         : format(ExportFormat::FBX),
           triangulate(true),
@@ -34,7 +39,10 @@ struct ExportOptions {
           scaleFactor(1.0f),
           ueNamingPrefix(""),
           metaHumanCompatible(false),
-          undoUVFlip(false) {}
+          undoUVFlip(false),
+          exportBakedTextures(false),
+          bakeResolution(2048),
+          textureFormat("png") {}
 };
 
 struct ExportResult {
@@ -43,6 +51,8 @@ struct ExportResult {
     QString exportedFilePath;
     int vertexCount;
     int faceCount;
+    QString bakedAlbedoPath;
+    QString bakedNormalMapPath;
 
     ExportResult() : success(false), vertexCount(0), faceCount(0) {}
 };

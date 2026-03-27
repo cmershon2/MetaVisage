@@ -42,6 +42,10 @@ public:
     // Touch Up stage - update brush radius display from viewport
     void SetBrushRadius(float radius);
 
+    // Texture labels
+    void SetAlbedoFileName(const QString& name);
+    void SetNormalMapFileName(const QString& name);
+
 public slots:
     // Update display when transform mode changes
     void OnTransformModeChanged(TransformMode mode, AxisConstraint axis);
@@ -113,6 +117,10 @@ signals:
     void ClearMaskRequested();
     void InvertMaskRequested();
 
+    // Texture import signals
+    void ImportAlbedoTextureRequested();
+    void ImportNormalMapRequested();
+
     // Touch Up stage signals
     void BrushTypeChanged(BrushType type);
     void BrushRadiusChangedSignal(float radius);
@@ -151,6 +159,12 @@ private:
     QDoubleSpinBox* scaleYSpinBox_;
     QDoubleSpinBox* scaleZSpinBox_;
     QPushButton* resetTransformButton_;
+
+    // Texture import UI elements (Alignment stage)
+    QPushButton* importAlbedoButton_;
+    QPushButton* importNormalMapButton_;
+    QLabel* albedoFileLabel_;
+    QLabel* normalMapFileLabel_;
 
     // Point reference UI elements (only valid during PointReference stage)
     QLabel* targetPointCountLabel_;

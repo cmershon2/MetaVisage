@@ -292,6 +292,9 @@ void BVH::FindClosestPointNode(const BVHNode* node, const Vector3& queryPoint,
                 best.point = closest;
                 best.distanceSq = distSq;
                 best.triangleIndex = tri.triangleIndex;
+                best.i0 = tri.i0;
+                best.i1 = tri.i1;
+                best.i2 = tri.i2;
                 best.found = true;
 
                 // Compute face normal

@@ -1,4 +1,5 @@
 #include "io/ProjectSerializer.h"
+#include "core/TextureData.h"
 #include "utils/Logger.h"
 #include <QFile>
 #include <QJsonDocument>
@@ -35,6 +36,9 @@ SerializationResult ProjectSerializer::Save(const Project& project, const QStrin
     root["alignment"] = SerializeAlignmentData(project.GetAlignmentData());
     root["pointReference"] = SerializePointReferenceData(project.GetPointReferenceData());
     root["morph"] = SerializeMorphData(project.GetMorphData());
+
+    // Texture data (v2+)
+    root["targetTextures"] = SerializeTextureSet(project.GetTargetTextures(), projectDir);
 
     // Write to file
     QJsonDocument doc(root);
@@ -131,6 +135,12 @@ SerializationResult ProjectSerializer::Load(Project& project, const QString& fil
         morphData.nricpEpsilon = loaded.nricpEpsilon;
         morphData.nricpEnableBoundaryExclusion = loaded.nricpEnableBoundaryExclusion;
         morphData.nricpBoundaryExclusionHops = loaded.nricpBoundaryExclusionHops;
+    }
+
+    // Texture data (v2+, backward compatible)
+    if (root.contains("targetTextures")) {
+        project.GetTargetTextures() = DeserializeTextureSet(root["targetTextures"].toObject(),
+                                                              projectDir, result.warnings);
     }
 
     result.success = true;
@@ -480,6 +490,48 @@ QString ProjectSerializer::ResolveRelativePath(const QString& relativePath, cons
 
     // Resolve relative to project directory
     return QDir(projectDir).absoluteFilePath(relativePath);
+}
+
+QJsonObject ProjectSerializer::SerializeTextureSet(const TextureSet& textures, const QString& projectDir) const {
+    QJsonObject obj;
+    if (textures.albedo && textures.albedo->IsLoaded()) {
+        obj["albedoPath"] = MakeRelativePath(textures.albedo->GetFilePath(), projectDir);
+    }
+    if (textures.normalMap && textures.normalMap->IsLoaded()) {
+        obj["normalMapPath"] = MakeRelativePath(textures.normalMap->GetFilePath(), projectDir);
+    }
+    return obj;
+}
+
+TextureSet ProjectSerializer::DeserializeTextureSet(const QJsonObject& obj, const QString& projectDir,
+                                                     QStringList& warnings) const {
+    TextureSet textures;
+
+    if (obj.contains("albedoPath")) {
+        QString path = ResolveRelativePath(obj["albedoPath"].toString(), projectDir);
+        if (QFile::exists(path)) {
+            textures.albedo = TextureData::LoadFromFile(path);
+            if (!textures.albedo) {
+                warnings.append(QString("Failed to load albedo texture: %1").arg(path));
+            }
+        } else {
+            warnings.append(QString("Albedo texture not found: %1").arg(path));
+        }
+    }
+
+    if (obj.contains("normalMapPath")) {
+        QString path = ResolveRelativePath(obj["normalMapPath"].toString(), projectDir);
+        if (QFile::exists(path)) {
+            textures.normalMap = TextureData::LoadFromFile(path);
+            if (!textures.normalMap) {
+                warnings.append(QString("Failed to load normal map: %1").arg(path));
+            }
+        } else {
+            warnings.append(QString("Normal map not found: %1").arg(path));
+        }
+    }
+
+    return textures;
 }
 
 } // namespace MetaVisage

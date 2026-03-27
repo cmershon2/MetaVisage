@@ -1,6 +1,7 @@
 #include "ui/ViewportWidget.h"
 #include "rendering/Renderer.h"
 #include "core/Project.h"
+#include "core/TextureData.h"
 #include "utils/RayCaster.h"
 #include "utils/BVH.h"
 #include "utils/SpatialHash.h"
@@ -120,6 +121,14 @@ void ViewportWidget::UploadHeatMapColors(const Mesh* mesh, const std::vector<flo
     makeCurrent();
     if (renderer_) {
         renderer_->UploadHeatMapColors(mesh, displacements, maxDisplacement);
+    }
+    doneCurrent();
+}
+
+void ViewportWidget::UploadMeshTexture(const Mesh* mesh, const TextureData& texture) {
+    makeCurrent();
+    if (renderer_) {
+        renderer_->UploadMeshTexture(mesh, texture);
     }
     doneCurrent();
 }

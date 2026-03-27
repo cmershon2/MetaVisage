@@ -9,7 +9,7 @@
 namespace MetaVisage {
 
 ExportDialog::ExportDialog(QWidget* parent)
-    : QDialog(parent) {
+    : QDialog(parent), hasTextures_(false) {
     setWindowTitle("Export Mesh");
     setMinimumWidth(500);
     CreateUI();
@@ -72,6 +72,32 @@ void ExportDialog::CreateUI() {
     optionsLayout->addRow("UE Name Prefix:", prefixEdit_);
 
     mainLayout->addWidget(optionsGroup);
+
+    // Texture Baking section
+    QGroupBox* textureGroup = new QGroupBox("Texture Baking");
+    QFormLayout* textureLayout = new QFormLayout(textureGroup);
+
+    bakeTexturesCheck_ = new QCheckBox("Bake and export textures");
+    bakeTexturesCheck_->setChecked(false);
+    bakeTexturesCheck_->setToolTip("Remap target textures to MetaHuman UV space and export alongside mesh");
+    textureLayout->addRow("", bakeTexturesCheck_);
+
+    bakeResolutionCombo_ = new QComboBox();
+    bakeResolutionCombo_->addItem("1024x1024", 1024);
+    bakeResolutionCombo_->addItem("2048x2048", 2048);
+    bakeResolutionCombo_->addItem("4096x4096", 4096);
+    bakeResolutionCombo_->setCurrentIndex(1); // Default 2048
+    textureLayout->addRow("Resolution:", bakeResolutionCombo_);
+
+    textureFormatCombo_ = new QComboBox();
+    textureFormatCombo_->addItem("PNG", "png");
+    textureFormatCombo_->addItem("TGA", "tga");
+    textureLayout->addRow("Format:", textureFormatCombo_);
+
+    // Disable texture controls initially
+    textureGroup->setEnabled(false);
+
+    mainLayout->addWidget(textureGroup);
 
     // Buttons
     QHBoxLayout* buttonLayout = new QHBoxLayout();
@@ -163,7 +189,24 @@ ExportOptions ExportDialog::GetOptions() const {
     options.ueNamingPrefix = prefixEdit_->text();
     options.metaHumanCompatible = metaHumanCheck_->isChecked();
     options.undoUVFlip = metaHumanCheck_->isChecked();  // Auto-enable UV un-flip for MetaHuman
+    options.exportBakedTextures = bakeTexturesCheck_->isChecked();
+    options.bakeResolution = bakeResolutionCombo_->currentData().toInt();
+    options.textureFormat = textureFormatCombo_->currentData().toString();
     return options;
+}
+
+void ExportDialog::SetTexturesAvailable(bool available) {
+    hasTextures_ = available;
+    // Find the texture group by iterating children
+    for (auto* child : findChildren<QGroupBox*>()) {
+        if (child->title() == "Texture Baking") {
+            child->setEnabled(available);
+            break;
+        }
+    }
+    if (available) {
+        bakeTexturesCheck_->setChecked(true);
+    }
 }
 
 } // namespace MetaVisage

@@ -1,4 +1,5 @@
 #include "rendering/MeshRenderer.h"
+#include "core/TextureData.h"
 #include <vector>
 #include <map>
 
@@ -9,6 +10,7 @@ MeshRenderer::MeshRenderer()
       vbo_(0),
       ibo_(0),
       colorVBO_(0),
+      textureId_(0),
       indexCount_(0),
       vertexCount_(0),
       hasVertexColors_(false) {
@@ -219,8 +221,21 @@ void MeshRenderer::Render(unsigned int shaderProgram, const Matrix4x4& viewProje
             break;
 
         case ShadingMode::Textured:
+            if (textureId_ != 0) {
+                glActiveTexture(GL_TEXTURE0);
+                glBindTexture(GL_TEXTURE_2D, textureId_);
+                int texLoc = glGetUniformLocation(shaderProgram, "uAlbedoTex");
+                if (texLoc >= 0) glUniform1i(texLoc, 0);
+                int hasTexLoc = glGetUniformLocation(shaderProgram, "uHasTexture");
+                if (hasTexLoc >= 0) glUniform1i(hasTexLoc, 1);
+            }
             glPolygonMode(GL_FRONT_AND_BACK, GL_FILL);
             glDrawElements(GL_TRIANGLES, indexCount_, GL_UNSIGNED_INT, 0);
+            if (textureId_ != 0) {
+                glBindTexture(GL_TEXTURE_2D, 0);
+                int hasTexLoc2 = glGetUniformLocation(shaderProgram, "uHasTexture");
+                if (hasTexLoc2 >= 0) glUniform1i(hasTexLoc2, 0);
+            }
             break;
     }
 
@@ -450,7 +465,36 @@ void MeshRenderer::RenderHeatMap(unsigned int shaderProgram, const Matrix4x4& vi
     glBindVertexArray(0);
 }
 
+void MeshRenderer::UploadTexture(const TextureData& texture) {
+    ClearTexture();
+
+    if (!texture.IsLoaded()) return;
+
+    glGenTextures(1, &textureId_);
+    glBindTexture(GL_TEXTURE_2D, textureId_);
+
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_REPEAT);
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_REPEAT);
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_LINEAR_MIPMAP_LINEAR);
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
+
+    glTexImage2D(GL_TEXTURE_2D, 0, GL_RGBA,
+                 texture.GetWidth(), texture.GetHeight(), 0,
+                 GL_RGBA, GL_UNSIGNED_BYTE, texture.GetPixels().data());
+    glGenerateMipmap(GL_TEXTURE_2D);
+
+    glBindTexture(GL_TEXTURE_2D, 0);
+}
+
+void MeshRenderer::ClearTexture() {
+    if (textureId_ != 0) {
+        glDeleteTextures(1, &textureId_);
+        textureId_ = 0;
+    }
+}
+
 void MeshRenderer::Clear() {
+    ClearTexture();
     if (vao_ != 0) {
         glDeleteVertexArrays(1, &vao_);
         vao_ = 0;

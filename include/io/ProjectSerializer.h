@@ -37,6 +37,7 @@ private:
     QJsonObject SerializePointCorrespondence(const PointCorrespondence& corr) const;
     QJsonObject SerializePointReferenceData(const PointReferenceData& data) const;
     QJsonObject SerializeMorphData(const MorphData& data) const;
+    QJsonObject SerializeTextureSet(const TextureSet& textures, const QString& projectDir) const;
 
     // Deserialization helpers
     Vector3 DeserializeVector3(const QJsonObject& obj) const;
@@ -48,12 +49,14 @@ private:
     PointCorrespondence DeserializePointCorrespondence(const QJsonObject& obj) const;
     PointReferenceData DeserializePointReferenceData(const QJsonObject& obj) const;
     MorphData DeserializeMorphData(const QJsonObject& obj) const;
+    TextureSet DeserializeTextureSet(const QJsonObject& obj, const QString& projectDir,
+                                      QStringList& warnings) const;
 
     // Path utilities
     QString MakeRelativePath(const QString& filepath, const QString& projectDir) const;
     QString ResolveRelativePath(const QString& relativePath, const QString& projectDir) const;
 
-    static const int FORMAT_VERSION = 1;
+    static const int FORMAT_VERSION = 2;
 };
 
 } // namespace MetaVisage

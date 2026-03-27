@@ -29,10 +29,11 @@ struct BVHClosestPointResult {
     Vector3 normal;       // Surface normal at closest point (face normal)
     float distanceSq;     // Squared distance from query to closest point
     int triangleIndex;    // Which triangle contains the closest point
+    unsigned int i0, i1, i2; // Vertex indices of the triangle
     bool found;
 
     BVHClosestPointResult() : distanceSq(std::numeric_limits<float>::max()),
-                               triangleIndex(-1), found(false) {}
+                               triangleIndex(-1), i0(0), i1(0), i2(0), found(false) {}
 };
 
 class BVH {

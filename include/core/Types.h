@@ -524,6 +524,7 @@ struct Material {
     Vector3 specularColor;
     float shininess;
     std::string diffuseTexturePath;
+    std::string normalMapTexturePath;
 
     Material() : diffuseColor(0.8f, 0.8f, 0.8f),
                  specularColor(1.0f, 1.0f, 1.0f),
