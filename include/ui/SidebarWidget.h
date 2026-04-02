@@ -13,6 +13,7 @@
 #include <QProgressBar>
 #include <QButtonGroup>
 #include "core/Types.h"
+#include "core/TextureData.h"
 
 namespace MetaVisage {
 
@@ -42,9 +43,12 @@ public:
     // Touch Up stage - update brush radius display from viewport
     void SetBrushRadius(float radius);
 
-    // Texture labels
+    // Texture labels (legacy)
     void SetAlbedoFileName(const QString& name);
     void SetNormalMapFileName(const QString& name);
+
+    // Dynamic texture list
+    void RefreshTextureList(const TextureSet& textures);
 
     // Restore symmetry state from loaded project (Stage 2)
     void RestoreSymmetryState(bool enabled, Axis axis);
@@ -123,6 +127,8 @@ signals:
     // Texture import signals
     void ImportAlbedoTextureRequested();
     void ImportNormalMapRequested();
+    void ImportTextureRequested(const QString& name);
+    void RemoveTextureRequested(const QString& name);
 
     // Touch Up stage signals
     void BrushTypeChanged(BrushType type);
@@ -168,6 +174,9 @@ private:
     QPushButton* importNormalMapButton_;
     QLabel* albedoFileLabel_;
     QLabel* normalMapFileLabel_;
+    // Dynamic texture list
+    QVBoxLayout* textureListLayout_;
+    QPushButton* addTextureButton_;
 
     // Point reference UI elements (only valid during PointReference stage)
     QLabel* targetPointCountLabel_;

@@ -78,6 +78,8 @@ private slots:
     // Texture import actions
     void OnImportAlbedoTexture();
     void OnImportNormalMap();
+    void OnImportTexture(const QString& name);
+    void OnRemoveTexture(const QString& name);
 
     // Touch Up actions
     void OnFinalizeRequested();

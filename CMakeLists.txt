@@ -80,6 +80,7 @@ set(SOURCES
     src/rendering/MeshRenderer.cpp
     src/rendering/ShaderManager.cpp
     src/rendering/PointRenderer.cpp
+    src/rendering/GizmoRenderer.cpp
     src/utils/RayCaster.cpp
     src/deformation/RBFInterpolator.cpp
     src/deformation/MeshDeformer.cpp
@@ -103,6 +104,7 @@ set(SOURCES
     src/core/TextureData.cpp
     src/baking/TextureBaker.cpp
     src/baking/TextureWriter.cpp
+    src/ui/TexturePreviewDialog.cpp
 )
 
 # Header files
@@ -120,6 +122,7 @@ set(HEADERS
     include/rendering/MeshRenderer.h
     include/rendering/ShaderManager.h
     include/rendering/PointRenderer.h
+    include/rendering/GizmoRenderer.h
     include/utils/RayCaster.h
     include/deformation/RBFInterpolator.h
     include/deformation/MeshDeformer.h
@@ -146,6 +149,7 @@ set(HEADERS
     include/core/TextureData.h
     include/baking/TextureBaker.h
     include/baking/TextureWriter.h
+    include/ui/TexturePreviewDialog.h
 )
 
 # Create executable

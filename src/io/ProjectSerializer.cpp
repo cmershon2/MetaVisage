@@ -494,12 +494,19 @@ QString ProjectSerializer::ResolveRelativePath(const QString& relativePath, cons
 
 QJsonObject ProjectSerializer::SerializeTextureSet(const TextureSet& textures, const QString& projectDir) const {
     QJsonObject obj;
-    if (textures.albedo && textures.albedo->IsLoaded()) {
-        obj["albedoPath"] = MakeRelativePath(textures.albedo->GetFilePath(), projectDir);
+
+    // New v3 format: entries array
+    QJsonArray entries;
+    for (const auto& tex : textures.textures) {
+        if (tex.data && tex.data->IsLoaded()) {
+            QJsonObject entry;
+            entry["name"] = tex.name;
+            entry["path"] = MakeRelativePath(tex.data->GetFilePath(), projectDir);
+            entries.append(entry);
+        }
     }
-    if (textures.normalMap && textures.normalMap->IsLoaded()) {
-        obj["normalMapPath"] = MakeRelativePath(textures.normalMap->GetFilePath(), projectDir);
-    }
+    obj["entries"] = entries;
+
     return obj;
 }
 
@@ -507,11 +514,35 @@ TextureSet ProjectSerializer::DeserializeTextureSet(const QJsonObject& obj, cons
                                                      QStringList& warnings) const {
     TextureSet textures;
 
+    // New v3 format: entries array
+    if (obj.contains("entries")) {
+        QJsonArray entries = obj["entries"].toArray();
+        for (const auto& entryVal : entries) {
+            QJsonObject entry = entryVal.toObject();
+            QString name = entry["name"].toString();
+            QString path = ResolveRelativePath(entry["path"].toString(), projectDir);
+            if (QFile::exists(path)) {
+                auto data = TextureData::LoadFromFile(path);
+                if (data) {
+                    textures.Add(name, data);
+                } else {
+                    warnings.append(QString("Failed to load texture '%1': %2").arg(name, path));
+                }
+            } else {
+                warnings.append(QString("Texture '%1' not found: %2").arg(name, path));
+            }
+        }
+        return textures;
+    }
+
+    // Backward compat: v1/v2 format with albedoPath/normalMapPath
     if (obj.contains("albedoPath")) {
         QString path = ResolveRelativePath(obj["albedoPath"].toString(), projectDir);
         if (QFile::exists(path)) {
-            textures.albedo = TextureData::LoadFromFile(path);
-            if (!textures.albedo) {
+            auto data = TextureData::LoadFromFile(path);
+            if (data) {
+                textures.Add("Albedo", data);
+            } else {
                 warnings.append(QString("Failed to load albedo texture: %1").arg(path));
             }
         } else {
@@ -522,8 +553,10 @@ TextureSet ProjectSerializer::DeserializeTextureSet(const QJsonObject& obj, cons
     if (obj.contains("normalMapPath")) {
         QString path = ResolveRelativePath(obj["normalMapPath"].toString(), projectDir);
         if (QFile::exists(path)) {
-            textures.normalMap = TextureData::LoadFromFile(path);
-            if (!textures.normalMap) {
+            auto data = TextureData::LoadFromFile(path);
+            if (data) {
+                textures.Add("Normal Map", data);
+            } else {
                 warnings.append(QString("Failed to load normal map: %1").arg(path));
             }
         } else {

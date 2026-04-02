@@ -162,4 +162,15 @@ void TextureData::GetPixel(int x, int y, uint8_t& r, uint8_t& g, uint8_t& b, uin
     a = pixels_[idx + 3];
 }
 
+QImage TextureData::ToQImage() const {
+    if (!IsLoaded()) return QImage();
+
+    // Create a QImage from the RGBA pixel buffer
+    // QImage::Format_RGBA8888 matches our internal storage (R, G, B, A bytes)
+    QImage image(pixels_.data(), width_, height_, width_ * 4, QImage::Format_RGBA8888);
+
+    // Return a deep copy so the QImage doesn't reference our internal buffer
+    return image.copy();
+}
+
 } // namespace MetaVisage

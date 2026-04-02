@@ -44,6 +44,8 @@ ViewportWidget::ViewportWidget(QWidget *parent)
       maskBrush_(std::make_unique<MaskBrush>()),
       isMaskPainting_(false),
       isMaskStroking_(false),
+      hoveredGizmoAxis_(GizmoAxis::None),
+      activeGizmoAxis_(GizmoAxis::None),
       showTargetOverlay_(false),
       shadingModeCombo_(nullptr) {
 
@@ -751,6 +753,47 @@ void ViewportWidget::UpdateMaskBrushCursor(float screenX, float screenY) {
     update();
 }
 
+// --- Transform gizmo helpers ---
+
+bool ViewportWidget::IsGizmoVisible() const {
+    if (!project_ || transformMode_ == TransformMode::None) return false;
+    if (project_->GetCurrentStage() != WorkflowStage::Alignment) return false;
+    if (!project_->GetTargetMesh().isLoaded) return false;
+    return true;
+}
+
+Vector3 ViewportWidget::GetGizmoPosition() const {
+    if (!project_ || !project_->GetTargetMesh().isLoaded) return Vector3();
+
+    // Position the gizmo at the target mesh's bounding box center, offset by its transform
+    const MeshReference& target = project_->GetTargetMesh();
+    Vector3 meshCenter = target.mesh->GetBounds().Center();
+
+    // Apply the transform to the mesh center
+    Matrix4x4 modelMatrix = target.transform.GetMatrix();
+    float wx = modelMatrix.m[0]*meshCenter.x + modelMatrix.m[4]*meshCenter.y + modelMatrix.m[8]*meshCenter.z + modelMatrix.m[12];
+    float wy = modelMatrix.m[1]*meshCenter.x + modelMatrix.m[5]*meshCenter.y + modelMatrix.m[9]*meshCenter.z + modelMatrix.m[13];
+    float wz = modelMatrix.m[2]*meshCenter.x + modelMatrix.m[6]*meshCenter.y + modelMatrix.m[10]*meshCenter.z + modelMatrix.m[14];
+
+    return Vector3(wx, wy, wz);
+}
+
+void ViewportWidget::UpdateGizmoHover(float screenX, float screenY) {
+    if (!IsGizmoVisible() || !renderer_) {
+        hoveredGizmoAxis_ = GizmoAxis::None;
+        return;
+    }
+
+    Ray ray = RayCaster::ScreenToRay(screenX, screenY, width(), height(), *camera_);
+    GizmoAxis hit = renderer_->GizmoHitTest(
+        transformMode_, GetGizmoPosition(), ray, *camera_, width(), height());
+
+    if (hit != hoveredGizmoAxis_) {
+        hoveredGizmoAxis_ = hit;
+        update();
+    }
+}
+
 // --- OpenGL ---
 
 void ViewportWidget::initializeGL() {
@@ -779,6 +822,14 @@ void ViewportWidget::initializeGL() {
 void ViewportWidget::paintGL() {
     if (renderer_) {
         renderer_->Render(*camera_, width(), height(), project_);
+
+        // Render transform gizmo in Alignment stage
+        if (IsGizmoVisible()) {
+            renderer_->RenderTransformGizmo(
+                transformMode_, GetGizmoPosition(),
+                hoveredGizmoAxis_, activeGizmoAxis_,
+                *camera_, width(), height());
+        }
     }
 
     // Draw overlays with QPainter
@@ -946,9 +997,24 @@ void ViewportWidget::mousePressEvent(QMouseEvent *event) {
             // In Point Reference stage: place or select points
             HandlePointClick(event);
         } else if (transformMode_ != TransformMode::None) {
-            // In Alignment stage with transform mode: start transform
+            // In Alignment stage with transform mode: check gizmo click first
             if (project_ && project_->GetTargetMesh().isLoaded &&
                 project_->GetCurrentStage() == WorkflowStage::Alignment) {
+
+                // Check if clicking on a gizmo handle
+                if (hoveredGizmoAxis_ != GizmoAxis::None) {
+                    activeGizmoAxis_ = hoveredGizmoAxis_;
+                    // Set axis constraint to match the clicked gizmo handle
+                    switch (hoveredGizmoAxis_) {
+                        case GizmoAxis::X: axisConstraint_ = AxisConstraint::X; break;
+                        case GizmoAxis::Y: axisConstraint_ = AxisConstraint::Y; break;
+                        case GizmoAxis::Z: axisConstraint_ = AxisConstraint::Z; break;
+                        case GizmoAxis::Center: axisConstraint_ = AxisConstraint::None; break;
+                        default: break;
+                    }
+                    emit TransformModeChanged(transformMode_, axisConstraint_);
+                }
+
                 isTransforming_ = true;
                 transformStartPos_ = event->pos();
                 // Capture transform state for undo
@@ -1100,6 +1166,13 @@ void ViewportWidget::mouseMoveEvent(QMouseEvent *event) {
         update();
         emit CameraChanged();
     }
+
+    // Update gizmo hover highlight when not dragging
+    if (!isTransforming_ && !isOrbiting_ && !isPanning_ && IsGizmoVisible()) {
+        float screenX = static_cast<float>(event->pos().x());
+        float screenY = static_cast<float>(event->pos().y());
+        UpdateGizmoHover(screenX, screenY);
+    }
 }
 
 void ViewportWidget::mouseReleaseEvent(QMouseEvent *event) {
@@ -1110,6 +1183,7 @@ void ViewportWidget::mouseReleaseEvent(QMouseEvent *event) {
             HandleSculptRelease();
         } else if (isTransforming_) {
             isTransforming_ = false;
+            activeGizmoAxis_ = GizmoAxis::None;
             // Emit undo signal with before/after transform state
             if (project_ && project_->GetTargetMesh().isLoaded) {
                 Transform afterState = project_->GetTargetMesh().transform;
@@ -1343,14 +1417,20 @@ void ViewportWidget::SetTransformMode(TransformMode mode) {
         axisConstraint_ = AxisConstraint::None;  // Reset axis constraint when changing mode
     }
     isTransforming_ = false;
+    hoveredGizmoAxis_ = GizmoAxis::None;
+    activeGizmoAxis_ = GizmoAxis::None;
     emit TransformModeChanged(transformMode_, axisConstraint_);
+    update();
 }
 
 void ViewportWidget::CancelTransform() {
     transformMode_ = TransformMode::None;
     axisConstraint_ = AxisConstraint::None;
     isTransforming_ = false;
+    hoveredGizmoAxis_ = GizmoAxis::None;
+    activeGizmoAxis_ = GizmoAxis::None;
     emit TransformModeChanged(transformMode_, axisConstraint_);
+    update();
 }
 
 void ViewportWidget::ApplyTransform(const QPoint& delta) {
@@ -1382,8 +1462,8 @@ void ViewportWidget::ApplyTransform(const QPoint& delta) {
                     translation.y = dy;
                     break;
                 case AxisConstraint::Z:
-                    // Use horizontal movement for Z when constrained
-                    translation.z = dx;
+                    // Use horizontal movement for Z when constrained (negated for camera-relative feel)
+                    translation.z = -dx;
                     break;
                 case AxisConstraint::None:
                 default:
@@ -1405,12 +1485,14 @@ void ViewportWidget::ApplyTransform(const QPoint& delta) {
             switch (axisConstraint_) {
                 case AxisConstraint::X:
                     axis = Vector3(1.0f, 0.0f, 0.0f);
+                    angle = -angle;  // Negate for intuitive drag direction
                     break;
                 case AxisConstraint::Y:
                     axis = Vector3(0.0f, 1.0f, 0.0f);
                     break;
                 case AxisConstraint::Z:
                     axis = Vector3(0.0f, 0.0f, 1.0f);
+                    angle = -angle;  // Negate for intuitive drag direction
                     break;
                 case AxisConstraint::None:
                 default:
@@ -1440,6 +1522,10 @@ void ViewportWidget::ApplyTransform(const QPoint& delta) {
 
             Vector3 scaleVec(1.0f, 1.0f, 1.0f);
 
+            // Compute inverted scale factor for Z axis (negate delta for camera-relative feel)
+            float scaleFactorInv = 1.0f + (-delta.x()) * scaleSensitivity;
+            scaleFactorInv = std::max(0.1f, std::min(2.0f, scaleFactorInv));
+
             switch (axisConstraint_) {
                 case AxisConstraint::X:
                     scaleVec.x = scaleFactor;
@@ -1448,7 +1534,7 @@ void ViewportWidget::ApplyTransform(const QPoint& delta) {
                     scaleVec.y = scaleFactor;
                     break;
                 case AxisConstraint::Z:
-                    scaleVec.z = scaleFactor;
+                    scaleVec.z = scaleFactorInv;
                     break;
                 case AxisConstraint::None:
                 default:

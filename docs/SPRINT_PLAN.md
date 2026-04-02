@@ -154,53 +154,53 @@ This sprint plan covers the v2.0 release of MetaVisage. It addresses all v1.0.0 
 **Background:** Transform tools in Stage 1 currently rely entirely on keyboard shortcuts and mouse drag with no visual indication. Users expect Blender-style axis gizmos for Move, Rotate, and Scale.
 
 **Tasks:**
-- [ ] Implement a `TransformGizmo` base class responsible for rendering and hit detection
-- [ ] Implement `MoveGizmo` — three axis arrows (X/Y/Z) plus a center handle for free movement; arrows rendered as cones with shaft lines; axis colors match orientation gizmo (X=red, Y=green, Z=blue)
-- [ ] Implement `RotateGizmo` — three rotation arcs around each axis, rendered as partial circles in their respective axis colors
-- [ ] Implement `ScaleGizmo` — three axis handles with box endpoints plus a center handle for uniform scale
-- [ ] Implement ray casting for gizmo hit detection (`GizmoRayCast()`) to determine which axis handle the mouse is hovering over or clicking
-- [ ] Highlight the hovered axis handle on mouse-over
-- [ ] Apply the drag delta to the target mesh transform for the selected axis when the user clicks and drags a gizmo handle
-- [ ] Gizmos activate based on the current transform mode (G=Move, R=Rotate, S=Scale) — the active gizmo is shown at the target mesh's world position
-- [ ] Keyboard axis constraint (X/Y/Z keys) still functions when a gizmo is active — pressing an axis key locks the gizmo to that axis
+- [x] Implement a `TransformGizmo` base class responsible for rendering and hit detection
+- [x] Implement `MoveGizmo` — three axis arrows (X/Y/Z) plus a center handle for free movement; arrows rendered as cones with shaft lines; axis colors match orientation gizmo (X=red, Y=green, Z=blue)
+- [x] Implement `RotateGizmo` — three rotation arcs around each axis, rendered as partial circles in their respective axis colors
+- [x] Implement `ScaleGizmo` — three axis handles with box endpoints plus a center handle for uniform scale
+- [x] Implement ray casting for gizmo hit detection (`GizmoRayCast()`) to determine which axis handle the mouse is hovering over or clicking
+- [x] Highlight the hovered axis handle on mouse-over
+- [x] Apply the drag delta to the target mesh transform for the selected axis when the user clicks and drags a gizmo handle
+- [x] Gizmos activate based on the current transform mode (G=Move, R=Rotate, S=Scale) — the active gizmo is shown at the target mesh's world position
+- [x] Keyboard axis constraint (X/Y/Z keys) still functions when a gizmo is active — pressing an axis key locks the gizmo to that axis
 
 #### Story 3.2: Rotation Alignment Fix
 **Background:** Users reported that the rotation values displayed in the sidebar do not match the apparent rotation of the mesh in the viewport.
 
 **Tasks:**
-- [ ] Investigate the discrepancy between the Euler angles displayed in the sidebar and the visual rotation applied via the `Transform` quaternion — likely a gimbal lock or axis convention mismatch
-- [ ] Standardize the rotation display to use a consistent Euler convention (XYZ, extrinsic) matching what the viewport quaternion represents
-- [ ] Ensure that setting rotation values via the sidebar (when numeric spinboxes are implemented) and via the rotate gizmo both produce the same visual result
-- [ ] Regression test: apply a 45° Y rotation via both the viewport drag and sidebar input, verify the mesh visually matches in both cases
+- [x] Investigate the discrepancy between the Euler angles displayed in the sidebar and the visual rotation applied via the `Transform` quaternion — likely a gimbal lock or axis convention mismatch
+- [x] Standardize the rotation display to use a consistent Euler convention (XYZ, extrinsic) matching what the viewport quaternion represents
+- [x] Ensure that setting rotation values via the sidebar (when numeric spinboxes are implemented) and via the rotate gizmo both produce the same visual result
+- [x] Regression test: apply a 45° Y rotation via both the viewport drag and sidebar input, verify the mesh visually matches in both cases
 
 #### Story 3.3: Unlimited Texture Uploads
 **Background:** The texture system is currently hard-coded to accept only two textures (Albedo and Normal Map). Users need to upload arbitrary numbers of texture maps.
 
 **Tasks:**
-- [ ] Refactor the texture data model in `MeshReference` to store a dynamic list of named textures (`vector<TextureSlot>` where `TextureSlot` has a name, filepath, and GL texture ID) rather than two fixed slots
-- [ ] Update the Stage 1 sidebar texture section to show a scrollable list of uploaded textures, one row per texture
-- [ ] Add an "Add Texture" button that opens a file dialog allowing the user to select an image file; the user can provide a name for the slot (e.g. "Roughness", "AO", "Emissive")
-- [ ] Add a remove button per texture slot
-- [ ] Persist all texture slots in the project file via `ProjectSerializer`
+- [x] Refactor the texture data model in `MeshReference` to store a dynamic list of named textures (`vector<TextureSlot>` where `TextureSlot` has a name, filepath, and GL texture ID) rather than two fixed slots
+- [x] Update the Stage 1 sidebar texture section to show a scrollable list of uploaded textures, one row per texture
+- [x] Add an "Add Texture" button that opens a file dialog allowing the user to select an image file; the user can provide a name for the slot (e.g. "Roughness", "AO", "Emissive")
+- [x] Add a remove button per texture slot
+- [x] Persist all texture slots in the project file via `ProjectSerializer`
 
 #### Story 3.4: Texture Thumbnails & Preview Modal
 **Background:** Users have no way to visually identify a texture from its filename alone.
 
 **Tasks:**
-- [ ] For each texture in the sidebar list, display a small thumbnail (48×48px) generated from the texture image alongside the filename
+- [x] For each texture in the sidebar list, display a small thumbnail (48×48px) generated from the texture image alongside the filename
 - [ ] Load thumbnail images asynchronously on a background thread to avoid blocking the UI when loading projects with many textures
-- [ ] Clicking a thumbnail opens a modal dialog (`TexturePreviewDialog`) that displays the full-resolution texture image, the texture name, filepath, and dimensions
-- [ ] The modal should be resizable and display the image scaled to fit while preserving aspect ratio
+- [x] Clicking a thumbnail opens a modal dialog (`TexturePreviewDialog`) that displays the full-resolution texture image, the texture name, filepath, and dimensions
+- [x] The modal should be resizable and display the image scaled to fit while preserving aspect ratio
 
 ### Acceptance Criteria
-- [ ] Move, Rotate, and Scale gizmos render at the target mesh position in Stage 1
-- [ ] Gizmo axis handles highlight on hover
-- [ ] Dragging a gizmo handle applies the corresponding transform to the target mesh
-- [ ] Rotation values in the sidebar match the visual rotation in the viewport
-- [ ] Users can add any number of named texture slots via the sidebar
-- [ ] Each texture slot displays a 48×48px thumbnail
-- [ ] Clicking a thumbnail opens a preview modal with the full-resolution image
-- [ ] All texture slots are saved and restored by the project serializer
+- [x] Move, Rotate, and Scale gizmos render at the target mesh position in Stage 1
+- [x] Gizmo axis handles highlight on hover
+- [x] Dragging a gizmo handle applies the corresponding transform to the target mesh
+- [x] Rotation values in the sidebar match the visual rotation in the viewport
+- [x] Users can add any number of named texture slots via the sidebar
+- [x] Each texture slot displays a 48×48px thumbnail
+- [x] Clicking a thumbnail opens a preview modal with the full-resolution image
+- [x] All texture slots are saved and restored by the project serializer
 
 ---
 

@@ -1,6 +1,7 @@
 #include "rendering/Renderer.h"
 #include "rendering/ShaderManager.h"
 #include "rendering/MeshRenderer.h"
+#include "rendering/GizmoRenderer.h"
 #include "core/Project.h"
 #include "core/TextureData.h"
 #include <vector>
@@ -29,7 +30,8 @@ Renderer::Renderer()
       showTargetOverlay_(false),
       showMask_(false),
       gizmoVAO_(0),
-      gizmoVBO_(0) {
+      gizmoVBO_(0),
+      gizmoRenderer_(nullptr) {
 }
 
 Renderer::~Renderer() {
@@ -64,6 +66,11 @@ bool Renderer::Initialize() {
     shaderManager_->LoadShader("matcap", "assets/shaders/matcap.vert", "assets/shaders/matcap.frag");
     shaderManager_->LoadShader("textured", "assets/shaders/basic.vert", "assets/shaders/textured.frag");
     shaderManager_->LoadShader("gizmo", "assets/shaders/gizmo.vert", "assets/shaders/gizmo.frag");
+    shaderManager_->LoadShader("gizmo_transform", "assets/shaders/gizmo_transform.vert", "assets/shaders/gizmo_transform.frag");
+
+    // Initialize transform gizmo renderer
+    gizmoRenderer_ = std::make_unique<GizmoRenderer>();
+    gizmoRenderer_->Initialize();
 
     // Initialize point renderer
     pointRenderer_ = std::make_unique<PointRenderer>();
@@ -644,6 +651,26 @@ void Renderer::RenderPoints(const Camera& camera, int width, int height, Project
         unsigned int program = shaderManager_->GetShader("point");
         pointRenderer_->Render(program, viewProjection, pointSize_);
     }
+}
+
+void Renderer::RenderTransformGizmo(TransformMode mode, const Vector3& position,
+                                     GizmoAxis hoveredAxis, GizmoAxis activeAxis,
+                                     const Camera& camera, int viewportWidth, int viewportHeight) {
+    if (!gizmoRenderer_ || mode == TransformMode::None) return;
+
+    unsigned int program = shaderManager_->GetShader("gizmo_transform");
+    if (program == 0) return;
+
+    gizmoRenderer_->Render(mode, position, hoveredAxis, activeAxis,
+                           camera, viewportWidth, viewportHeight, program);
+}
+
+GizmoAxis Renderer::GizmoHitTest(TransformMode mode, const Vector3& gizmoPosition,
+                                  const Ray& ray, const Camera& camera,
+                                  int viewportWidth, int viewportHeight) const {
+    if (!gizmoRenderer_ || mode == TransformMode::None) return GizmoAxis::None;
+    return gizmoRenderer_->HitTest(mode, gizmoPosition, ray, camera,
+                                   viewportWidth, viewportHeight);
 }
 
 } // namespace MetaVisage
