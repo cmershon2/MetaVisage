@@ -43,11 +43,6 @@ private slots:
     // Edit menu actions
     void OnUndo();
     void OnRedo();
-    void OnPreferences();
-
-    // View menu actions
-    void OnToggleGrid();
-    void OnResetCamera();
 
     // Help menu actions
     void OnDocumentation();
@@ -129,9 +124,11 @@ private:
     QAction* undoAction_;
     QAction* redoAction_;
 
+    // Context-sensitive menu actions
+    QAction* exportAction_;
+
     // Stats timer
     QTimer* statsTimer_;
-    float currentFPS_;
 
     // Morph processing
     QThread* morphThread_;

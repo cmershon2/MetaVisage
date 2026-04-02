@@ -19,7 +19,8 @@
       "Bash(xargs grep -l \"affine\\\\|transform.*matrix\\\\|control.*node\\\\|subsampling\\\\|interpolation\")",
       "Bash(cmake ..)",
       "Bash(powershell.exe -Command \"./build-msvc.ps1 -Clean -Deploy -QtPath ''C:/Qt/6.10.1/msvc2022_64'' -VcpkgToolchain ''C:/Users/Casey Mershon/vcpkg/scripts/buildsystems/vcpkg.cmake''\")",
-      "Bash(grep -v \"//\")"
+      "Bash(grep -v \"//\")",
+      "Bash(find /c/Users/Casey Mershon/Desktop/Web Dev/MetaVisage/src -type f \\\\\\(-name *.cpp -o -name *.h \\\\\\))"
     ]
   }
 }

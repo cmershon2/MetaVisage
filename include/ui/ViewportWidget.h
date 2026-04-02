@@ -117,8 +117,6 @@ signals:
     void SculptStrokeCompleted(BrushStroke stroke);
     // Signal emitted when mask painting stroke completes
     void MaskStrokeCompleted();
-    // Signal emitted with FPS updates
-    void FPSUpdated(float fps);
 
 protected:
     // OpenGL functions
@@ -212,10 +210,6 @@ private:
     // Transform undo state capture
     Transform transformBeforeState_;
 
-    // FPS counter
-    QElapsedTimer fpsTimer_;
-    int frameCount_;
-    float currentFPS_;
 };
 
 } // namespace MetaVisage

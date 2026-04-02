@@ -1623,6 +1623,25 @@ void SidebarWidget::UpdatePointList() {
     UpdatePointCounts();
 }
 
+void SidebarWidget::RestoreSymmetryState(bool enabled, Axis axis) {
+    if (!symmetryCheckBox_ || !symmetryAxisCombo_) return;
+
+    // Block signals to prevent feedback loops during restoration
+    symmetryCheckBox_->blockSignals(true);
+    symmetryAxisCombo_->blockSignals(true);
+
+    symmetryCheckBox_->setChecked(enabled);
+    symmetryAxisCombo_->setEnabled(enabled);
+
+    int axisIndex = symmetryAxisCombo_->findData(static_cast<int>(axis));
+    if (axisIndex >= 0) {
+        symmetryAxisCombo_->setCurrentIndex(axisIndex);
+    }
+
+    symmetryCheckBox_->blockSignals(false);
+    symmetryAxisCombo_->blockSignals(false);
+}
+
 void SidebarWidget::RebuildPointListContent() {
     if (!pointListScroll_ || !project_) return;
 

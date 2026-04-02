@@ -44,9 +44,7 @@ ViewportWidget::ViewportWidget(QWidget *parent)
       maskBrush_(std::make_unique<MaskBrush>()),
       isMaskPainting_(false),
       isMaskStroking_(false),
-      showTargetOverlay_(false),
-      frameCount_(0),
-      currentFPS_(0.0f) {
+      showTargetOverlay_(false) {
 
     setFocusPolicy(Qt::StrongFocus);
     setMouseTracking(true);
@@ -701,17 +699,6 @@ void ViewportWidget::initializeGL() {
 void ViewportWidget::paintGL() {
     if (renderer_) {
         renderer_->Render(*camera_, width(), height(), project_);
-    }
-
-    // FPS counter
-    frameCount_++;
-    if (!fpsTimer_.isValid()) {
-        fpsTimer_.start();
-    } else if (fpsTimer_.elapsed() >= 500) {
-        currentFPS_ = frameCount_ * 1000.0f / fpsTimer_.elapsed();
-        emit FPSUpdated(currentFPS_);
-        frameCount_ = 0;
-        fpsTimer_.restart();
     }
 
     // Draw overlays with QPainter
