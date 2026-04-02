@@ -61,12 +61,13 @@ public:
 
 private:
     void RenderGrid(const Matrix4x4& viewProjection);
+    void RenderOrientationGizmo(const Camera& camera, int viewportWidth, int viewportHeight);
     void RenderMesh(const Mesh& mesh, const Transform& transform,
-                   const Vector3& color, const Matrix4x4& viewProjection);
+                   const Vector3& color, const Matrix4x4& viewProjection, const Vector3& viewPos);
     void RenderMeshOverlay(const Mesh& mesh, const Transform& transform,
-                           const Vector3& color, float alpha, const Matrix4x4& viewProjection);
+                           const Vector3& color, float alpha, const Matrix4x4& viewProjection, const Vector3& viewPos);
     void RenderMeshHeatMap(const Mesh& mesh, const Transform& transform,
-                           const Matrix4x4& viewProjection);
+                           const Matrix4x4& viewProjection, const Vector3& viewPos);
     void RenderPoints(const Camera& camera, int width, int height, Project* project);
     void RenderMorphStage(const Camera& camera, int width, int height, Project* project,
                           const Matrix4x4& viewProjection);
@@ -85,7 +86,6 @@ private:
     RenderFilter renderFilter_;
     MorphPreviewMode morphPreviewMode_;
     unsigned int gridVAO_;
-    unsigned int gridVBO_;
     int gridVertexCount_;
 
     // Point rendering state
@@ -108,6 +108,10 @@ private:
 
     // Mask visualization
     bool showMask_;
+
+    // Orientation gizmo
+    unsigned int gizmoVAO_;
+    unsigned int gizmoVBO_;
 };
 
 } // namespace MetaVisage

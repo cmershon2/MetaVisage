@@ -101,45 +101,45 @@ This sprint plan covers the v2.0 release of MetaVisage. It addresses all v1.0.0 
 **Background:** The shading mode selector currently lives in the Stage 1 sidebar and does not function in Stage 1 at all. It should be moved to a persistent overlay in the top-left corner of the viewport, visible and functional in all stages.
 
 **Tasks:**
-- [ ] Remove the shading mode selector from `SidebarWidget`'s Stage 1 controls
-- [ ] Add a compact shading mode dropdown/button group as a floating overlay widget anchored to the top-left of `ViewportWidget` — rendered above the 3D viewport using a `QWidget` child positioned absolutely
-- [ ] Ensure the overlay is visible and functional in all four stages, including the dual-viewport layout of Stage 2 (one control per viewport, or a shared control driving both)
-- [ ] Fix the underlying bug that caused the shading mode selector to have no effect in Stage 1 — trace the signal connection between the old sidebar control and the renderer and replicate it for the new overlay control
+- [x] Remove the shading mode selector from `SidebarWidget`'s Stage 1 controls
+- [x] Add a compact shading mode dropdown/button group as a floating overlay widget anchored to the top-left of `ViewportWidget` — rendered above the 3D viewport using a `QWidget` child positioned absolutely
+- [x] Ensure the overlay is visible and functional in all four stages, including the dual-viewport layout of Stage 2 (one control per viewport, or a shared control driving both)
+- [x] Fix the underlying bug that caused the shading mode selector to have no effect in Stage 1 — trace the signal connection between the old sidebar control and the renderer and replicate it for the new overlay control
 
 #### Story 2.2: Orientation Gizmo
 **Background:** Users have no visual reference for axis orientation while navigating the viewport, which makes alignment and point placement disorienting.
 
 **Tasks:**
-- [ ] Implement an orientation gizmo rendered in the top-right corner of the viewport — a small, fixed-size 3-axis indicator (X = red, Y = green, Z = blue) that rotates to match the current camera orientation
-- [ ] Render the gizmo in its own viewport-space region (e.g. 80×80px inset) using a separate MVP matrix that applies only the camera's rotation component, not translation or the main projection
-- [ ] Display axis labels (X, Y, Z) alongside each axis arm
-- [ ] Ensure the gizmo renders in both single-viewport and dual-viewport layouts without overlapping other overlays
-- [ ] Gizmo is display-only; clicking it is not required for v2 (deferred)
+- [x] Implement an orientation gizmo rendered in the top-right corner of the viewport — a small, fixed-size 3-axis indicator (X = red, Y = green, Z = blue) that rotates to match the current camera orientation
+- [x] Render the gizmo in its own viewport-space region (e.g. 80×80px inset) using a separate MVP matrix that applies only the camera's rotation component, not translation or the main projection
+- [x] Display axis labels (X, Y, Z) alongside each axis arm
+- [x] Ensure the gizmo renders in both single-viewport and dual-viewport layouts without overlapping other overlays
+- [x] Gizmo is display-only; clicking it is not required for v2 (deferred)
 
 #### Story 2.3: Infinite Grid
 **Background:** The current 3D grid has a fixed size and visually terminates at the edges, which looks unpolished and disorienting at certain camera distances.
 
 **Tasks:**
-- [ ] Replace the fixed-size grid with an infinite/fading grid rendered via a shader technique — use a full-screen quad in world space with distance-based alpha fade, or extend the existing grid plane shader to use a repeating pattern with distance fade
-- [ ] Grid lines should fade out gracefully at the horizon/edges so the boundary is not visible
-- [ ] Grid line density should adapt to zoom level (coarser lines visible at greater zoom distances, finer lines visible when zoomed in)
-- [ ] Grid rendering performance should not degrade compared to v1 for typical camera distances
+- [x] Replace the fixed-size grid with an infinite/fading grid rendered via a shader technique — use a full-screen quad in world space with distance-based alpha fade, or extend the existing grid plane shader to use a repeating pattern with distance fade
+- [x] Grid lines should fade out gracefully at the horizon/edges so the boundary is not visible
+- [x] Grid line density should adapt to zoom level (coarser lines visible at greater zoom distances, finer lines visible when zoomed in)
+- [x] Grid rendering performance should not degrade compared to v1 for typical camera distances
 
 #### Story 2.4: Camera-Relative Lighting
 **Background:** The directional light in the viewport is currently fixed in world space, meaning it does not move as the camera orbits. This causes the mesh to appear statically lit from one direction regardless of viewing angle, reducing the usefulness of the viewport for evaluating surface quality.
 
 **Tasks:**
-- [ ] Change the directional light direction to be specified in view space (or update the light direction uniform to track the camera view matrix) so that the key light always illuminates the mesh from a consistent direction relative to the viewer
-- [ ] Ensure this change applies to all shading modes (solid, heatmap, matcap) and all stages
-- [ ] The change should be transparent to the user — no new UI control is needed; the light simply moves naturally with the camera
+- [x] Change the directional light direction to be specified in view space (or update the light direction uniform to track the camera view matrix) so that the key light always illuminates the mesh from a consistent direction relative to the viewer
+- [x] Ensure this change applies to all shading modes (solid, heatmap, matcap) and all stages
+- [x] The change should be transparent to the user — no new UI control is needed; the light simply moves naturally with the camera
 
 ### Acceptance Criteria
-- [ ] Shading mode control appears as a viewport overlay in the top-left corner in all four stages
-- [ ] Shading mode changes take effect immediately in Stage 1 (bug fixed)
-- [ ] Orientation gizmo appears in the top-right corner of the viewport and rotates correctly as the camera orbits
-- [ ] Grid extends to the visual horizon with no visible boundary edge
-- [ ] Grid line density adjusts appropriately as the user zooms in and out
-- [ ] The directional light moves with the camera in all stages and all shading modes
+- [x] Shading mode control appears as a viewport overlay in the top-left corner in all four stages
+- [x] Shading mode changes take effect immediately in Stage 1 (bug fixed)
+- [x] Orientation gizmo appears in the top-right corner of the viewport and rotates correctly as the camera orbits
+- [x] Grid extends to the visual horizon with no visible boundary edge
+- [x] Grid line density adjusts appropriately as the user zooms in and out
+- [x] The directional light moves with the camera in all stages and all shading modes
 
 ---
 

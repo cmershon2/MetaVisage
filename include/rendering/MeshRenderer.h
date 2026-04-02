@@ -20,9 +20,9 @@ public:
     void UploadMesh(const Mesh& mesh);
     void UpdateVertexData(const Mesh& mesh);
     void Render(unsigned int shaderProgram, const Matrix4x4& viewProjection, const Transform& transform,
-                ShadingMode mode, const Vector3& color);
+                ShadingMode mode, const Vector3& color, const Vector3& viewPos);
     void RenderWithAlpha(unsigned int shaderProgram, const Matrix4x4& viewProjection, const Transform& transform,
-                         ShadingMode mode, const Vector3& color, float alpha);
+                         ShadingMode mode, const Vector3& color, float alpha, const Vector3& viewPos);
     void Clear();
 
     bool HasMesh() const { return vao_ != 0; }
@@ -30,7 +30,7 @@ public:
     // Heat map support: upload per-vertex colors and render with them
     void UploadVertexColors(const std::vector<Vector3>& colors);
     void RenderHeatMap(unsigned int shaderProgram, const Matrix4x4& viewProjection,
-                       const Transform& transform, ShadingMode mode);
+                       const Transform& transform, ShadingMode mode, const Vector3& viewPos);
 
     // Texture support
     void UploadTexture(const TextureData& texture);

@@ -62,7 +62,8 @@ void ShaderManager::UseShader(const QString& name) {
 
 unsigned int ShaderManager::CompileShader(unsigned int type, const QString& source) {
     unsigned int shader = glCreateShader(type);
-    const char* src = source.toUtf8().constData();
+    QByteArray sourceBytes = source.toUtf8();
+    const char* src = sourceBytes.constData();
     glShaderSource(shader, 1, &src, nullptr);
     glCompileShader(shader);
 

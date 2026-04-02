@@ -7,6 +7,7 @@
 #include <QWheelEvent>
 #include <QKeyEvent>
 #include <QElapsedTimer>
+#include <QComboBox>
 #include <memory>
 #include "core/Camera.h"
 #include "core/Types.h"
@@ -35,6 +36,10 @@ public:
 
     void SetProject(Project* project) { project_ = project; }
     Camera* GetCamera() { return camera_.get(); }
+
+    // Shading mode
+    void SetShadingMode(ShadingMode mode);
+    ShadingMode GetShadingMode() const;
 
     // Transform mode accessors
     TransformMode GetTransformMode() const { return transformMode_; }
@@ -209,6 +214,10 @@ private:
 
     // Transform undo state capture
     Transform transformBeforeState_;
+
+    // Shading mode overlay
+    QComboBox* shadingModeCombo_;
+    void CreateShadingModeOverlay();
 
 };
 

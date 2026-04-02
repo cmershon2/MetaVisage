@@ -167,7 +167,7 @@ void MeshRenderer::UploadMesh(const Mesh& mesh) {
 }
 
 void MeshRenderer::Render(unsigned int shaderProgram, const Matrix4x4& viewProjection, const Transform& transform,
-                          ShadingMode mode, const Vector3& color) {
+                          ShadingMode mode, const Vector3& color, const Vector3& viewPos) {
     if (vao_ == 0 || indexCount_ == 0) return;
 
     glUseProgram(shaderProgram);
@@ -190,9 +190,11 @@ void MeshRenderer::Render(unsigned int shaderProgram, const Matrix4x4& viewProje
     glUniformMatrix4fv(normalMatrixLoc, 1, GL_FALSE, normalMatrix.Data());
 
     glUniform3f(colorLoc, color.x, color.y, color.z);
-    glUniform3f(lightDirLoc, 0.3f, -0.5f, 0.8f);
+    // Light direction follows the camera: illuminate from the viewer's position
+    Vector3 lightDir = viewPos.Normalized();
+    glUniform3f(lightDirLoc, lightDir.x, lightDir.y, lightDir.z);
     glUniform3f(lightColorLoc, 1.0f, 1.0f, 1.0f);
-    glUniform3f(viewPosLoc, 0.0f, 0.0f, 5.0f);
+    glUniform3f(viewPosLoc, viewPos.x, viewPos.y, viewPos.z);
 
     glBindVertexArray(vao_);
 
@@ -244,7 +246,7 @@ void MeshRenderer::Render(unsigned int shaderProgram, const Matrix4x4& viewProje
 
 void MeshRenderer::RenderWithAlpha(unsigned int shaderProgram, const Matrix4x4& viewProjection,
                                     const Transform& transform, ShadingMode /*mode*/,
-                                    const Vector3& color, float alpha) {
+                                    const Vector3& color, float alpha, const Vector3& viewPos) {
     if (vao_ == 0 || indexCount_ == 0) return;
 
     glUseProgram(shaderProgram);
@@ -266,9 +268,10 @@ void MeshRenderer::RenderWithAlpha(unsigned int shaderProgram, const Matrix4x4& 
     glUniformMatrix4fv(normalMatrixLoc, 1, GL_FALSE, normalMatrix.Data());
 
     glUniform3f(colorLoc, color.x, color.y, color.z);
-    glUniform3f(lightDirLoc, 0.3f, -0.5f, 0.8f);
+    Vector3 lightDirAlpha = viewPos.Normalized();
+    glUniform3f(lightDirLoc, lightDirAlpha.x, lightDirAlpha.y, lightDirAlpha.z);
     glUniform3f(lightColorLoc, 1.0f, 1.0f, 1.0f);
-    glUniform3f(viewPosLoc, 0.0f, 0.0f, 5.0f);
+    glUniform3f(viewPosLoc, viewPos.x, viewPos.y, viewPos.z);
     if (alphaLoc >= 0) {
         glUniform1f(alphaLoc, alpha);
     }
@@ -413,7 +416,7 @@ void MeshRenderer::UploadVertexColors(const std::vector<Vector3>& colors) {
 }
 
 void MeshRenderer::RenderHeatMap(unsigned int shaderProgram, const Matrix4x4& viewProjection,
-                                  const Transform& transform, ShadingMode mode) {
+                                  const Transform& transform, ShadingMode mode, const Vector3& viewPos) {
     if (vao_ == 0 || indexCount_ == 0 || !hasVertexColors_) return;
 
     glUseProgram(shaderProgram);
@@ -432,9 +435,10 @@ void MeshRenderer::RenderHeatMap(unsigned int shaderProgram, const Matrix4x4& vi
     Matrix4x4 normalMatrix = model.Inverse().Transpose();
     glUniformMatrix4fv(normalMatrixLoc, 1, GL_FALSE, normalMatrix.Data());
 
-    glUniform3f(lightDirLoc, 0.3f, -0.5f, 0.8f);
+    Vector3 lightDirHeat = viewPos.Normalized();
+    glUniform3f(lightDirLoc, lightDirHeat.x, lightDirHeat.y, lightDirHeat.z);
     glUniform3f(lightColorLoc, 1.0f, 1.0f, 1.0f);
-    glUniform3f(viewPosLoc, 0.0f, 0.0f, 5.0f);
+    glUniform3f(viewPosLoc, viewPos.x, viewPos.y, viewPos.z);
 
     glBindVertexArray(vao_);
 
