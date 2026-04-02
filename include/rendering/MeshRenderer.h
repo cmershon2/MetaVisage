@@ -10,6 +10,7 @@
 namespace MetaVisage {
 
 class ShaderManager;
+class TextureData;
 
 class MeshRenderer : protected QOpenGLFunctions_4_3_Core {
 public:
@@ -31,11 +32,18 @@ public:
     void RenderHeatMap(unsigned int shaderProgram, const Matrix4x4& viewProjection,
                        const Transform& transform, ShadingMode mode);
 
+    // Texture support
+    void UploadTexture(const TextureData& texture);
+    void ClearTexture();
+    bool HasTexture() const { return textureId_ != 0; }
+    unsigned int GetTextureId() const { return textureId_; }
+
 private:
     unsigned int vao_;
     unsigned int vbo_;
     unsigned int ibo_;
     unsigned int colorVBO_;
+    unsigned int textureId_;
     GLsizei indexCount_;
     size_t vertexCount_;
     bool hasVertexColors_;

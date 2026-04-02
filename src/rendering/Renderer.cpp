@@ -2,6 +2,7 @@
 #include "rendering/ShaderManager.h"
 #include "rendering/MeshRenderer.h"
 #include "core/Project.h"
+#include "core/TextureData.h"
 #include <vector>
 #include <algorithm>
 #include <cmath>
@@ -57,6 +58,7 @@ bool Renderer::Initialize() {
     shaderManager_->LoadShader("heatmap", "assets/shaders/heatmap.vert", "assets/shaders/heatmap.frag");
     shaderManager_->LoadShader("overlay", "assets/shaders/basic.vert", "assets/shaders/overlay.frag");
     shaderManager_->LoadShader("matcap", "assets/shaders/matcap.vert", "assets/shaders/matcap.frag");
+    shaderManager_->LoadShader("textured", "assets/shaders/basic.vert", "assets/shaders/textured.frag");
 
     // Initialize point renderer
     pointRenderer_ = std::make_unique<PointRenderer>();
@@ -437,7 +439,13 @@ void Renderer::RenderMesh(const Mesh& mesh, const Transform& transform,
                           const Vector3& color, const Matrix4x4& viewProjection) {
     MeshRenderer* renderer = GetOrCreateMeshRenderer(mesh);
     if (renderer->HasMesh()) {
-        unsigned int program = shaderManager_->GetShader("basic");
+        // Use textured shader when in Textured mode and texture is available
+        unsigned int program;
+        if (shadingMode_ == ShadingMode::Textured && renderer->HasTexture()) {
+            program = shaderManager_->GetShader("textured");
+        } else {
+            program = shaderManager_->GetShader("basic");
+        }
         renderer->Render(program, viewProjection, transform, shadingMode_, color);
     }
 }
@@ -464,6 +472,20 @@ void Renderer::InvalidateMesh(const Mesh* mesh) {
     auto it = meshRenderers_.find(mesh);
     if (it != meshRenderers_.end()) {
         meshRenderers_.erase(it);
+    }
+}
+
+void Renderer::UploadMeshTexture(const Mesh* mesh, const TextureData& texture) {
+    MeshRenderer* renderer = GetOrCreateMeshRenderer(*mesh);
+    if (renderer->HasMesh()) {
+        renderer->UploadTexture(texture);
+    }
+}
+
+void Renderer::ClearMeshTexture(const Mesh* mesh) {
+    auto it = meshRenderers_.find(mesh);
+    if (it != meshRenderers_.end()) {
+        it->second->ClearTexture();
     }
 }
 

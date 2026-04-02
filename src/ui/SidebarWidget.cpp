@@ -271,10 +271,61 @@ void SidebarWidget::CreateAlignmentControls() {
     shadingCombo->addItem("Solid", static_cast<int>(ShadingMode::Solid));
     shadingCombo->addItem("Wireframe", static_cast<int>(ShadingMode::Wireframe));
     shadingCombo->addItem("Solid + Wireframe", static_cast<int>(ShadingMode::SolidWireframe));
+    shadingCombo->addItem("Textured", static_cast<int>(ShadingMode::Textured));
     shadingCombo->setCurrentIndex(0);
     shadingLayout->addWidget(shadingCombo);
 
     controlsLayout->addWidget(shadingGroup);
+
+    // Target Textures Group
+    QGroupBox* textureGroup = new QGroupBox("Target Textures");
+    QVBoxLayout* textureLayout = new QVBoxLayout(textureGroup);
+
+    importAlbedoButton_ = new QPushButton("Import Albedo Texture");
+    importAlbedoButton_->setStyleSheet(
+        "QPushButton {"
+        "    background-color: #8E44AD;"
+        "    color: white;"
+        "    border: none;"
+        "    padding: 6px 12px;"
+        "    font-size: 9pt;"
+        "    border-radius: 4px;"
+        "}"
+        "QPushButton:hover {"
+        "    background-color: #7D3C98;"
+        "}"
+    );
+    connect(importAlbedoButton_, &QPushButton::clicked, this, &SidebarWidget::ImportAlbedoTextureRequested);
+    textureLayout->addWidget(importAlbedoButton_);
+
+    albedoFileLabel_ = new QLabel("Albedo: None");
+    albedoFileLabel_->setStyleSheet("QLabel { color: #95A5A6; font-size: 8pt; }");
+    albedoFileLabel_->setWordWrap(true);
+    textureLayout->addWidget(albedoFileLabel_);
+
+    importNormalMapButton_ = new QPushButton("Import Normal Map");
+    importNormalMapButton_->setStyleSheet(
+        "QPushButton {"
+        "    background-color: #8E44AD;"
+        "    color: white;"
+        "    border: none;"
+        "    padding: 6px 12px;"
+        "    font-size: 9pt;"
+        "    border-radius: 4px;"
+        "}"
+        "QPushButton:hover {"
+        "    background-color: #7D3C98;"
+        "}"
+    );
+    connect(importNormalMapButton_, &QPushButton::clicked, this, &SidebarWidget::ImportNormalMapRequested);
+    textureLayout->addWidget(importNormalMapButton_);
+
+    normalMapFileLabel_ = new QLabel("Normal Map: None");
+    normalMapFileLabel_->setStyleSheet("QLabel { color: #95A5A6; font-size: 8pt; }");
+    normalMapFileLabel_->setWordWrap(true);
+    textureLayout->addWidget(normalMapFileLabel_);
+
+    controlsLayout->addWidget(textureGroup);
 
     // Transform Tools Group
     QGroupBox* toolsGroup = new QGroupBox("Transform Tools");
@@ -2012,6 +2063,20 @@ void SidebarWidget::OnNRICPNormalizeSamplingToggled(bool enabled) {
         project_->GetMorphData().nricpNormalizeSampling = enabled;
     }
     emit MorphParameterChanged();
+}
+
+void SidebarWidget::SetAlbedoFileName(const QString& name) {
+    if (albedoFileLabel_) {
+        albedoFileLabel_->setText(QString("Albedo: %1").arg(name));
+        albedoFileLabel_->setStyleSheet("QLabel { color: #2ECC71; font-size: 8pt; }");
+    }
+}
+
+void SidebarWidget::SetNormalMapFileName(const QString& name) {
+    if (normalMapFileLabel_) {
+        normalMapFileLabel_->setText(QString("Normal Map: %1").arg(name));
+        normalMapFileLabel_->setStyleSheet("QLabel { color: #2ECC71; font-size: 8pt; }");
+    }
 }
 
 } // namespace MetaVisage
