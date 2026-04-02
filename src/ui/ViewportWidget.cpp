@@ -44,16 +44,96 @@ ViewportWidget::ViewportWidget(QWidget *parent)
       maskBrush_(std::make_unique<MaskBrush>()),
       isMaskPainting_(false),
       isMaskStroking_(false),
-      showTargetOverlay_(false) {
+      showTargetOverlay_(false),
+      shadingModeCombo_(nullptr) {
 
     setFocusPolicy(Qt::StrongFocus);
     setMouseTracking(true);
 
     // Default border style (inactive)
     setStyleSheet("border: 2px solid #555;");
+
+    CreateShadingModeOverlay();
 }
 
 ViewportWidget::~ViewportWidget() {
+}
+
+void ViewportWidget::CreateShadingModeOverlay() {
+    shadingModeCombo_ = new QComboBox(this);
+    shadingModeCombo_->addItem("Solid", static_cast<int>(ShadingMode::Solid));
+    shadingModeCombo_->addItem("Wireframe", static_cast<int>(ShadingMode::Wireframe));
+    shadingModeCombo_->addItem("Solid + Wireframe", static_cast<int>(ShadingMode::SolidWireframe));
+    shadingModeCombo_->addItem("Textured", static_cast<int>(ShadingMode::Textured));
+    shadingModeCombo_->setCurrentIndex(0);
+    shadingModeCombo_->setFixedWidth(150);
+    shadingModeCombo_->move(8, 8);
+    shadingModeCombo_->setStyleSheet(
+        "QComboBox {"
+        "    background-color: rgba(44, 62, 80, 200);"
+        "    color: #ECF0F1;"
+        "    border: 1px solid #3498DB;"
+        "    border-radius: 4px;"
+        "    padding: 4px 8px;"
+        "    font-size: 9pt;"
+        "}"
+        "QComboBox:hover {"
+        "    border-color: #2980B9;"
+        "    background-color: rgba(52, 73, 94, 220);"
+        "}"
+        "QComboBox::drop-down {"
+        "    subcontrol-origin: padding;"
+        "    subcontrol-position: top right;"
+        "    width: 20px;"
+        "    border-left: 1px solid #3498DB;"
+        "}"
+        "QComboBox::down-arrow {"
+        "    width: 0px;"
+        "    height: 0px;"
+        "    border-left: 4px solid transparent;"
+        "    border-right: 4px solid transparent;"
+        "    border-top: 5px solid #ECF0F1;"
+        "}"
+        "QComboBox QAbstractItemView {"
+        "    background-color: #2C3E50;"
+        "    color: #ECF0F1;"
+        "    border: 1px solid #3498DB;"
+        "    selection-background-color: #3498DB;"
+        "}"
+    );
+
+    connect(shadingModeCombo_, QOverload<int>::of(&QComboBox::currentIndexChanged),
+            this, [this](int index) {
+                ShadingMode mode = static_cast<ShadingMode>(
+                    shadingModeCombo_->itemData(index).toInt());
+                if (renderer_) {
+                    renderer_->SetShadingMode(mode);
+                    update();
+                }
+            });
+}
+
+void ViewportWidget::SetShadingMode(ShadingMode mode) {
+    if (renderer_) {
+        renderer_->SetShadingMode(mode);
+    }
+    // Update combo without re-triggering the signal
+    if (shadingModeCombo_) {
+        int idx = shadingModeCombo_->findData(static_cast<int>(mode));
+        if (idx >= 0) {
+            shadingModeCombo_->blockSignals(true);
+            shadingModeCombo_->setCurrentIndex(idx);
+            shadingModeCombo_->blockSignals(false);
+        }
+    }
+    update();
+}
+
+ShadingMode ViewportWidget::GetShadingMode() const {
+    if (renderer_) {
+        return renderer_->GetShadingMode();
+    }
+    return ShadingMode::Solid;
 }
 
 void ViewportWidget::SetRenderFilter(RenderFilter filter) {
@@ -715,7 +795,7 @@ void ViewportWidget::paintGL() {
         QFontMetrics fm(font);
         QRect textRect = fm.boundingRect(viewportLabel_);
         textRect.adjust(-8, -4, 8, 4);
-        textRect.moveTopLeft(QPoint(8, 8));
+        textRect.moveTopLeft(QPoint(8, 40));
 
         painter.setPen(Qt::NoPen);
         painter.setBrush(QColor(0, 0, 0, 128));
@@ -723,6 +803,53 @@ void ViewportWidget::paintGL() {
 
         painter.setPen(QColor(255, 255, 255, 200));
         painter.drawText(textRect, Qt::AlignCenter, viewportLabel_);
+    }
+
+    // Draw orientation gizmo axis labels in top-right corner
+    {
+        const int gizmoSize = 80;
+        const int padding = 10;
+        int gizmoX = width() - gizmoSize - padding;
+        int gizmoY = padding; // Qt Y is top-down
+
+        // Compute the view direction to project axis tips to 2D
+        Vector3 camPos = camera_->GetPosition();
+        Vector3 camTarget = camera_->GetTarget();
+        Vector3 viewDir = (camTarget - camPos).Normalized();
+        Vector3 eye = viewDir * -2.0f;
+        Matrix4x4 view = Matrix4x4::LookAt(eye, Vector3(0, 0, 0), camera_->GetUp());
+        Matrix4x4 proj = Matrix4x4::Orthographic(-1.0f, 1.0f, -1.0f, 1.0f, 0.01f, 10.0f);
+        Matrix4x4 vp = proj * view;
+
+        float axisLen = 0.7f;
+        struct AxisLabel { Vector3 tip; QColor color; QString label; };
+        AxisLabel axes[3] = {
+            {Vector3(axisLen, 0, 0), QColor(230, 50, 50), "X"},
+            {Vector3(0, axisLen, 0), QColor(50, 200, 50), "Y"},
+            {Vector3(0, 0, axisLen), QColor(75, 130, 230), "Z"}
+        };
+
+        QFont gizmoFont = painter.font();
+        gizmoFont.setPointSize(8);
+        gizmoFont.setBold(true);
+        painter.setFont(gizmoFont);
+
+        for (const auto& axis : axes) {
+            // Project to clip space
+            float cx = vp.m[0]*axis.tip.x + vp.m[4]*axis.tip.y + vp.m[8]*axis.tip.z + vp.m[12];
+            float cy = vp.m[1]*axis.tip.x + vp.m[5]*axis.tip.y + vp.m[9]*axis.tip.z + vp.m[13];
+            float cw = vp.m[3]*axis.tip.x + vp.m[7]*axis.tip.y + vp.m[11]*axis.tip.z + vp.m[15];
+            if (std::abs(cw) < 0.0001f) continue;
+            float ndcX = cx / cw;
+            float ndcY = cy / cw;
+
+            // Convert NDC to gizmo viewport pixel coordinates
+            int sx = gizmoX + (int)((ndcX * 0.5f + 0.5f) * gizmoSize);
+            int sy = gizmoY + (int)((1.0f - (ndcY * 0.5f + 0.5f)) * gizmoSize);
+
+            painter.setPen(axis.color);
+            painter.drawText(sx - 4, sy + 4, axis.label);
+        }
     }
 
     // Draw point labels in PointReference stage

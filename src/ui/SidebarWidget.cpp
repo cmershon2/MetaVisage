@@ -263,20 +263,6 @@ void SidebarWidget::CreateAlignmentControls() {
 
     controlsLayout->addWidget(meshStatusGroup);
 
-    // Shading Mode Group
-    QGroupBox* shadingGroup = new QGroupBox("Shading Mode");
-    QVBoxLayout* shadingLayout = new QVBoxLayout(shadingGroup);
-
-    QComboBox* shadingCombo = new QComboBox();
-    shadingCombo->addItem("Solid", static_cast<int>(ShadingMode::Solid));
-    shadingCombo->addItem("Wireframe", static_cast<int>(ShadingMode::Wireframe));
-    shadingCombo->addItem("Solid + Wireframe", static_cast<int>(ShadingMode::SolidWireframe));
-    shadingCombo->addItem("Textured", static_cast<int>(ShadingMode::Textured));
-    shadingCombo->setCurrentIndex(0);
-    shadingLayout->addWidget(shadingCombo);
-
-    controlsLayout->addWidget(shadingGroup);
-
     // Target Textures Group
     QGroupBox* textureGroup = new QGroupBox("Target Textures");
     QVBoxLayout* textureLayout = new QVBoxLayout(textureGroup);
@@ -515,8 +501,6 @@ void SidebarWidget::CreateAlignmentControls() {
     scaleXSpinBox_->setToolTip("Target mesh X scale");
     scaleYSpinBox_->setToolTip("Target mesh Y scale");
     scaleZSpinBox_->setToolTip("Target mesh Z scale");
-    shadingCombo->setToolTip("Change mesh rendering mode");
-
     // Reset button
     resetTransformButton_ = new QPushButton("Reset Transform");
     resetTransformButton_->setToolTip("Reset target mesh transform to identity");

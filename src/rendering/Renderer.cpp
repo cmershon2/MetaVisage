@@ -16,7 +16,6 @@ Renderer::Renderer()
       renderFilter_(RenderFilter::All),
       morphPreviewMode_(MorphPreviewMode::Deformed),
       gridVAO_(0),
-      gridVBO_(0),
       gridVertexCount_(0),
       pointSize_(12.0f),
       selectedPointIndex_(-1),
@@ -28,21 +27,26 @@ Renderer::Renderer()
       brushCursorRadius_(0.0f),
       brushCursorInnerRadius_(0.0f),
       showTargetOverlay_(false),
-      showMask_(false) {
+      showMask_(false),
+      gizmoVAO_(0),
+      gizmoVBO_(0) {
 }
 
 Renderer::~Renderer() {
     if (gridVAO_ != 0) {
         glDeleteVertexArrays(1, &gridVAO_);
     }
-    if (gridVBO_ != 0) {
-        glDeleteBuffers(1, &gridVBO_);
-    }
     if (brushCursorVAO_ != 0) {
         glDeleteVertexArrays(1, &brushCursorVAO_);
     }
     if (brushCursorVBO_ != 0) {
         glDeleteBuffers(1, &brushCursorVBO_);
+    }
+    if (gizmoVAO_ != 0) {
+        glDeleteVertexArrays(1, &gizmoVAO_);
+    }
+    if (gizmoVBO_ != 0) {
+        glDeleteBuffers(1, &gizmoVBO_);
     }
 }
 
@@ -59,73 +63,64 @@ bool Renderer::Initialize() {
     shaderManager_->LoadShader("overlay", "assets/shaders/basic.vert", "assets/shaders/overlay.frag");
     shaderManager_->LoadShader("matcap", "assets/shaders/matcap.vert", "assets/shaders/matcap.frag");
     shaderManager_->LoadShader("textured", "assets/shaders/basic.vert", "assets/shaders/textured.frag");
+    shaderManager_->LoadShader("gizmo", "assets/shaders/gizmo.vert", "assets/shaders/gizmo.frag");
 
     // Initialize point renderer
     pointRenderer_ = std::make_unique<PointRenderer>();
     pointRenderer_->Initialize();
 
-    // Create grid geometry - sized for typical 3D models (1-10 unit scale)
-    const int gridLines = 10;
-    const float gridSpacing = 1.0f;
-    const float gridExtent = gridLines * gridSpacing;
-    std::vector<float> gridVertices;
-
-    // Grid lines parallel to X axis (running along X, varying Z)
-    for (int i = -gridLines; i <= gridLines; ++i) {
-        float z = i * gridSpacing;
-        float r = (i == 0) ? 0.3f : 0.35f;
-        float g = (i == 0) ? 0.3f : 0.35f;
-        float b = (i == 0) ? 0.6f : 0.35f;
-
-        gridVertices.push_back(-gridExtent);
-        gridVertices.push_back(0.0f);
-        gridVertices.push_back(z);
-        gridVertices.push_back(r);
-        gridVertices.push_back(g);
-        gridVertices.push_back(b);
-
-        gridVertices.push_back(gridExtent);
-        gridVertices.push_back(0.0f);
-        gridVertices.push_back(z);
-        gridVertices.push_back(r);
-        gridVertices.push_back(g);
-        gridVertices.push_back(b);
-    }
-
-    // Grid lines parallel to Z axis (running along Z, varying X)
-    for (int i = -gridLines; i <= gridLines; ++i) {
-        float x = i * gridSpacing;
-        float r = (i == 0) ? 0.6f : 0.35f;
-        float g = (i == 0) ? 0.3f : 0.35f;
-        float b = (i == 0) ? 0.3f : 0.35f;
-
-        gridVertices.push_back(x);
-        gridVertices.push_back(0.0f);
-        gridVertices.push_back(-gridExtent);
-        gridVertices.push_back(r);
-        gridVertices.push_back(g);
-        gridVertices.push_back(b);
-
-        gridVertices.push_back(x);
-        gridVertices.push_back(0.0f);
-        gridVertices.push_back(gridExtent);
-        gridVertices.push_back(r);
-        gridVertices.push_back(g);
-        gridVertices.push_back(b);
-    }
-
-    gridVertexCount_ = 2 * (gridLines * 2 + 1) * 2;
-
+    // Create empty VAO for fullscreen grid rendering (uses gl_VertexID, no vertex data)
     glGenVertexArrays(1, &gridVAO_);
-    glGenBuffers(1, &gridVBO_);
+    gridVertexCount_ = 3; // Fullscreen triangle
 
-    glBindVertexArray(gridVAO_);
-    glBindBuffer(GL_ARRAY_BUFFER, gridVBO_);
-    glBufferData(GL_ARRAY_BUFFER, gridVertices.size() * sizeof(float), gridVertices.data(), GL_STATIC_DRAW);
+    // Create orientation gizmo geometry (3 axis lines + 3 arrowhead cones)
+    // Each line: origin to axis tip, colored by axis
+    // Format: position(3) + color(3) per vertex
+    std::vector<float> gizmoVertices;
+    float axisLen = 0.7f;
+    float arrowLen = 0.15f;
+    float arrowWidth = 0.06f;
+
+    // Helper lambda to add a line segment
+    auto addLine = [&](float x1, float y1, float z1, float x2, float y2, float z2,
+                       float r, float g, float b) {
+        gizmoVertices.insert(gizmoVertices.end(), {x1, y1, z1, r, g, b});
+        gizmoVertices.insert(gizmoVertices.end(), {x2, y2, z2, r, g, b});
+    };
+
+    // X axis (red)
+    addLine(0, 0, 0, axisLen, 0, 0, 0.9f, 0.2f, 0.2f);
+    // X arrowhead
+    addLine(axisLen, 0, 0, axisLen - arrowLen, arrowWidth, 0, 0.9f, 0.2f, 0.2f);
+    addLine(axisLen, 0, 0, axisLen - arrowLen, -arrowWidth, 0, 0.9f, 0.2f, 0.2f);
+    addLine(axisLen, 0, 0, axisLen - arrowLen, 0, arrowWidth, 0.9f, 0.2f, 0.2f);
+    addLine(axisLen, 0, 0, axisLen - arrowLen, 0, -arrowWidth, 0.9f, 0.2f, 0.2f);
+
+    // Y axis (green)
+    addLine(0, 0, 0, 0, axisLen, 0, 0.2f, 0.8f, 0.2f);
+    // Y arrowhead
+    addLine(0, axisLen, 0, arrowWidth, axisLen - arrowLen, 0, 0.2f, 0.8f, 0.2f);
+    addLine(0, axisLen, 0, -arrowWidth, axisLen - arrowLen, 0, 0.2f, 0.8f, 0.2f);
+    addLine(0, axisLen, 0, 0, axisLen - arrowLen, arrowWidth, 0.2f, 0.8f, 0.2f);
+    addLine(0, axisLen, 0, 0, axisLen - arrowLen, -arrowWidth, 0.2f, 0.8f, 0.2f);
+
+    // Z axis (blue)
+    addLine(0, 0, 0, 0, 0, axisLen, 0.3f, 0.5f, 0.9f);
+    // Z arrowhead
+    addLine(0, 0, axisLen, arrowWidth, 0, axisLen - arrowLen, 0.3f, 0.5f, 0.9f);
+    addLine(0, 0, axisLen, -arrowWidth, 0, axisLen - arrowLen, 0.3f, 0.5f, 0.9f);
+    addLine(0, 0, axisLen, 0, arrowWidth, axisLen - arrowLen, 0.3f, 0.5f, 0.9f);
+    addLine(0, 0, axisLen, 0, -arrowWidth, axisLen - arrowLen, 0.3f, 0.5f, 0.9f);
+
+    glGenVertexArrays(1, &gizmoVAO_);
+    glGenBuffers(1, &gizmoVBO_);
+
+    glBindVertexArray(gizmoVAO_);
+    glBindBuffer(GL_ARRAY_BUFFER, gizmoVBO_);
+    glBufferData(GL_ARRAY_BUFFER, gizmoVertices.size() * sizeof(float), gizmoVertices.data(), GL_STATIC_DRAW);
 
     glVertexAttribPointer(0, 3, GL_FLOAT, GL_FALSE, 6 * sizeof(float), (void*)0);
     glEnableVertexAttribArray(0);
-
     glVertexAttribPointer(1, 3, GL_FLOAT, GL_FALSE, 6 * sizeof(float), (void*)(3 * sizeof(float)));
     glEnableVertexAttribArray(1);
 
@@ -150,16 +145,20 @@ void Renderer::Render(const Camera& camera, int width, int height, Project* proj
         RenderGrid(viewProjection);
     }
 
+    Vector3 viewPos = camera.GetPosition();
+
     if (project) {
         // Morph stage uses specialized rendering
         if (project->GetCurrentStage() == WorkflowStage::Morph) {
             RenderMorphStage(camera, width, height, project, viewProjection);
+            RenderOrientationGizmo(camera, width, height);
             return;
         }
 
         // Touch Up stage uses specialized rendering
         if (project->GetCurrentStage() == WorkflowStage::TouchUp) {
             RenderTouchUpStage(camera, width, height, project, viewProjection);
+            RenderOrientationGizmo(camera, width, height);
             return;
         }
 
@@ -168,7 +167,7 @@ void Renderer::Render(const Camera& camera, int width, int height, Project* proj
             const MeshReference& morphMeshRef = project->GetMorphMesh();
             if (morphMeshRef.isLoaded && morphMeshRef.mesh) {
                 Vector3 morphColor(0.3f, 0.5f, 0.9f);
-                RenderMesh(*morphMeshRef.mesh, morphMeshRef.transform, morphColor, viewProjection);
+                RenderMesh(*morphMeshRef.mesh, morphMeshRef.transform, morphColor, viewProjection, viewPos);
             }
         }
 
@@ -177,7 +176,7 @@ void Renderer::Render(const Camera& camera, int width, int height, Project* proj
             const MeshReference& targetMeshRef = project->GetTargetMesh();
             if (targetMeshRef.isLoaded && targetMeshRef.mesh) {
                 Vector3 targetColor(0.9f, 0.6f, 0.2f);
-                RenderMesh(*targetMeshRef.mesh, targetMeshRef.transform, targetColor, viewProjection);
+                RenderMesh(*targetMeshRef.mesh, targetMeshRef.transform, targetColor, viewProjection, viewPos);
             }
         }
 
@@ -186,9 +185,11 @@ void Renderer::Render(const Camera& camera, int width, int height, Project* proj
             RenderPoints(camera, width, height, project);
         }
     }
+
+    RenderOrientationGizmo(camera, width, height);
 }
 
-void Renderer::RenderMorphStage(const Camera& /*camera*/, int /*width*/, int /*height*/, Project* project,
+void Renderer::RenderMorphStage(const Camera& camera, int /*width*/, int /*height*/, Project* project,
                                  const Matrix4x4& viewProjection) {
     const MorphData& morphData = project->GetMorphData();
     const MeshReference& morphMeshRef = project->GetMorphMesh();
@@ -196,6 +197,7 @@ void Renderer::RenderMorphStage(const Camera& /*camera*/, int /*width*/, int /*h
     if (!morphMeshRef.isLoaded || !morphMeshRef.mesh) return;
 
     Vector3 morphColor(0.3f, 0.5f, 0.9f);
+    Vector3 viewPos = camera.GetPosition();
 
     // If mask is being shown, render with mask colors using heat map shader
     if (showMask_ && !morphData.vertexMask.empty()) {
@@ -204,7 +206,7 @@ void Renderer::RenderMorphStage(const Camera& /*camera*/, int /*width*/, int /*h
         if (morphData.isProcessed && morphData.deformedMorphMesh) {
             meshToRender = morphData.deformedMorphMesh.get();
         }
-        RenderMeshHeatMap(*meshToRender, morphMeshRef.transform, viewProjection);
+        RenderMeshHeatMap(*meshToRender, morphMeshRef.transform, viewProjection, viewPos);
         // Also render brush cursor for mask painting
         RenderBrushCursor(viewProjection);
         return;
@@ -213,42 +215,42 @@ void Renderer::RenderMorphStage(const Camera& /*camera*/, int /*width*/, int /*h
     switch (morphPreviewMode_) {
         case MorphPreviewMode::Deformed:
             if (morphData.isProcessed && morphData.deformedMorphMesh) {
-                RenderMesh(*morphData.deformedMorphMesh, morphMeshRef.transform, morphColor, viewProjection);
+                RenderMesh(*morphData.deformedMorphMesh, morphMeshRef.transform, morphColor, viewProjection, viewPos);
             } else {
-                RenderMesh(*morphMeshRef.mesh, morphMeshRef.transform, morphColor, viewProjection);
+                RenderMesh(*morphMeshRef.mesh, morphMeshRef.transform, morphColor, viewProjection, viewPos);
             }
             break;
 
         case MorphPreviewMode::Original:
-            RenderMesh(*morphMeshRef.mesh, morphMeshRef.transform, morphColor, viewProjection);
+            RenderMesh(*morphMeshRef.mesh, morphMeshRef.transform, morphColor, viewProjection, viewPos);
             break;
 
         case MorphPreviewMode::Overlay:
             if (morphData.isProcessed && morphData.deformedMorphMesh) {
-                RenderMesh(*morphData.deformedMorphMesh, morphMeshRef.transform, morphColor, viewProjection);
+                RenderMesh(*morphData.deformedMorphMesh, morphMeshRef.transform, morphColor, viewProjection, viewPos);
             } else {
-                RenderMesh(*morphMeshRef.mesh, morphMeshRef.transform, morphColor, viewProjection);
+                RenderMesh(*morphMeshRef.mesh, morphMeshRef.transform, morphColor, viewProjection, viewPos);
             }
             {
                 const MeshReference& targetMeshRef = project->GetTargetMesh();
                 if (targetMeshRef.isLoaded && targetMeshRef.mesh) {
                     Vector3 targetColor(0.9f, 0.6f, 0.2f);
-                    RenderMeshOverlay(*targetMeshRef.mesh, targetMeshRef.transform, targetColor, 0.35f, viewProjection);
+                    RenderMeshOverlay(*targetMeshRef.mesh, targetMeshRef.transform, targetColor, 0.35f, viewProjection, viewPos);
                 }
             }
             break;
 
         case MorphPreviewMode::HeatMap:
             if (morphData.isProcessed && morphData.deformedMorphMesh) {
-                RenderMeshHeatMap(*morphData.deformedMorphMesh, morphMeshRef.transform, viewProjection);
+                RenderMeshHeatMap(*morphData.deformedMorphMesh, morphMeshRef.transform, viewProjection, viewPos);
             } else {
-                RenderMesh(*morphMeshRef.mesh, morphMeshRef.transform, morphColor, viewProjection);
+                RenderMesh(*morphMeshRef.mesh, morphMeshRef.transform, morphColor, viewProjection, viewPos);
             }
             break;
     }
 }
 
-void Renderer::RenderTouchUpStage(const Camera& /*camera*/, int /*width*/, int /*height*/,
+void Renderer::RenderTouchUpStage(const Camera& camera, int /*width*/, int /*height*/,
                                    Project* project, const Matrix4x4& viewProjection) {
     const MorphData& morphData = project->GetMorphData();
     const MeshReference& morphMeshRef = project->GetMorphMesh();
@@ -256,12 +258,13 @@ void Renderer::RenderTouchUpStage(const Camera& /*camera*/, int /*width*/, int /
     if (!morphMeshRef.isLoaded || !morphMeshRef.mesh) return;
 
     Vector3 morphColor(0.3f, 0.5f, 0.9f);
+    Vector3 viewPos = camera.GetPosition();
 
     // Render the deformed mesh for sculpting
     if (morphData.deformedMorphMesh) {
-        RenderMesh(*morphData.deformedMorphMesh, morphMeshRef.transform, morphColor, viewProjection);
+        RenderMesh(*morphData.deformedMorphMesh, morphMeshRef.transform, morphColor, viewProjection, viewPos);
     } else {
-        RenderMesh(*morphMeshRef.mesh, morphMeshRef.transform, morphColor, viewProjection);
+        RenderMesh(*morphMeshRef.mesh, morphMeshRef.transform, morphColor, viewProjection, viewPos);
     }
 
     // Render target mesh overlay if enabled
@@ -269,7 +272,7 @@ void Renderer::RenderTouchUpStage(const Camera& /*camera*/, int /*width*/, int /
         const MeshReference& targetMeshRef = project->GetTargetMesh();
         if (targetMeshRef.isLoaded && targetMeshRef.mesh) {
             Vector3 targetColor(0.9f, 0.6f, 0.2f);
-            RenderMeshOverlay(*targetMeshRef.mesh, targetMeshRef.transform, targetColor, 0.3f, viewProjection);
+            RenderMeshOverlay(*targetMeshRef.mesh, targetMeshRef.transform, targetColor, 0.3f, viewProjection, viewPos);
         }
     }
 
@@ -379,8 +382,8 @@ void Renderer::RenderBrushCursor(const Matrix4x4& viewProjection) {
 
     if (brushCursorVAO_ == 0 || brushCursorSegments_ == 0) return;
 
-    shaderManager_->UseShader("grid");
-    unsigned int program = shaderManager_->GetShader("grid");
+    shaderManager_->UseShader("gizmo");
+    unsigned int program = shaderManager_->GetShader("gizmo");
 
     int vpLoc = glGetUniformLocation(program, "uViewProjection");
     glUniformMatrix4fv(vpLoc, 1, GL_FALSE, viewProjection.Data());
@@ -413,17 +416,71 @@ void Renderer::UpdateMeshVertices(const Mesh* mesh) {
 }
 
 void Renderer::RenderGrid(const Matrix4x4& viewProjection) {
-    if (gridVAO_ == 0 || gridVertexCount_ == 0) return;
+    if (gridVAO_ == 0) return;
 
     shaderManager_->UseShader("grid");
     unsigned int program = shaderManager_->GetShader("grid");
 
+    // Set view-projection and its inverse for ray unprojection
     int vpLoc = glGetUniformLocation(program, "uViewProjection");
     glUniformMatrix4fv(vpLoc, 1, GL_FALSE, viewProjection.Data());
 
+    Matrix4x4 invVP = viewProjection.Inverse();
+    int invVPLoc = glGetUniformLocation(program, "uInvViewProjection");
+    glUniformMatrix4fv(invVPLoc, 1, GL_FALSE, invVP.Data());
+
+    int nearLoc = glGetUniformLocation(program, "uNearPlane");
+    int farLoc = glGetUniformLocation(program, "uFarPlane");
+    glUniform1f(nearLoc, 0.01f);
+    glUniform1f(farLoc, 100000.0f);
+
+    // Enable blending for smooth grid fade
+    glEnable(GL_BLEND);
+    glBlendFunc(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA);
+
     glBindVertexArray(gridVAO_);
-    glDrawArrays(GL_LINES, 0, gridVertexCount_);
+    glDrawArrays(GL_TRIANGLES, 0, 3);
     glBindVertexArray(0);
+
+    glDisable(GL_BLEND);
+}
+
+void Renderer::RenderOrientationGizmo(const Camera& camera, int viewportWidth, int viewportHeight) {
+    if (gizmoVAO_ == 0) return;
+
+    const int gizmoSize = 80;
+    const int padding = 10;
+    int gizmoX = viewportWidth - gizmoSize - padding;
+    int gizmoY = viewportHeight - gizmoSize - padding; // OpenGL Y is bottom-up
+
+    // Set up a small viewport in the top-right corner
+    glViewport(gizmoX, gizmoY, gizmoSize, gizmoSize);
+    glClear(GL_DEPTH_BUFFER_BIT); // Clear depth so gizmo renders on top
+
+    // Build a view matrix that only uses the camera's rotation (no translation)
+    // Place the "eye" at a fixed distance looking at the origin
+    Vector3 camPos = camera.GetPosition();
+    Vector3 camTarget = camera.GetTarget();
+    Vector3 viewDir = (camTarget - camPos).Normalized();
+    Vector3 eye = viewDir * -2.0f; // Look from the opposite direction at distance 2
+    Matrix4x4 view = Matrix4x4::LookAt(eye, Vector3(0, 0, 0), camera.GetUp());
+    Matrix4x4 proj = Matrix4x4::Orthographic(-1.0f, 1.0f, -1.0f, 1.0f, 0.01f, 10.0f);
+    Matrix4x4 vp = proj * view;
+
+    shaderManager_->UseShader("gizmo");
+    unsigned int program = shaderManager_->GetShader("gizmo");
+
+    int vpLoc = glGetUniformLocation(program, "uViewProjection");
+    glUniformMatrix4fv(vpLoc, 1, GL_FALSE, vp.Data());
+
+    glBindVertexArray(gizmoVAO_);
+    glLineWidth(2.5f);
+    glDrawArrays(GL_LINES, 0, 30); // 3 axes * (1 shaft + 4 arrowhead lines) * 2 verts = 30
+    glBindVertexArray(0);
+    glLineWidth(1.0f);
+
+    // Restore full viewport
+    glViewport(0, 0, viewportWidth, viewportHeight);
 }
 
 MeshRenderer* Renderer::GetOrCreateMeshRenderer(const Mesh& mesh) {
@@ -436,7 +493,7 @@ MeshRenderer* Renderer::GetOrCreateMeshRenderer(const Mesh& mesh) {
 }
 
 void Renderer::RenderMesh(const Mesh& mesh, const Transform& transform,
-                          const Vector3& color, const Matrix4x4& viewProjection) {
+                          const Vector3& color, const Matrix4x4& viewProjection, const Vector3& viewPos) {
     MeshRenderer* renderer = GetOrCreateMeshRenderer(mesh);
     if (renderer->HasMesh()) {
         // Use textured shader when in Textured mode and texture is available
@@ -446,25 +503,25 @@ void Renderer::RenderMesh(const Mesh& mesh, const Transform& transform,
         } else {
             program = shaderManager_->GetShader("basic");
         }
-        renderer->Render(program, viewProjection, transform, shadingMode_, color);
+        renderer->Render(program, viewProjection, transform, shadingMode_, color, viewPos);
     }
 }
 
 void Renderer::RenderMeshOverlay(const Mesh& mesh, const Transform& transform,
-                                  const Vector3& color, float alpha, const Matrix4x4& viewProjection) {
+                                  const Vector3& color, float alpha, const Matrix4x4& viewProjection, const Vector3& viewPos) {
     MeshRenderer* renderer = GetOrCreateMeshRenderer(mesh);
     if (renderer->HasMesh()) {
         unsigned int program = shaderManager_->GetShader("overlay");
-        renderer->RenderWithAlpha(program, viewProjection, transform, shadingMode_, color, alpha);
+        renderer->RenderWithAlpha(program, viewProjection, transform, shadingMode_, color, alpha, viewPos);
     }
 }
 
 void Renderer::RenderMeshHeatMap(const Mesh& mesh, const Transform& transform,
-                                  const Matrix4x4& viewProjection) {
+                                  const Matrix4x4& viewProjection, const Vector3& viewPos) {
     MeshRenderer* renderer = GetOrCreateMeshRenderer(mesh);
     if (renderer->HasMesh()) {
         unsigned int program = shaderManager_->GetShader("heatmap");
-        renderer->RenderHeatMap(program, viewProjection, transform, shadingMode_);
+        renderer->RenderHeatMap(program, viewProjection, transform, shadingMode_, viewPos);
     }
 }
 
