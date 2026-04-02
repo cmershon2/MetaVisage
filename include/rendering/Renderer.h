@@ -9,6 +9,7 @@
 #include "core/Mesh.h"
 #include "core/Transform.h"
 #include "rendering/PointRenderer.h"
+#include "rendering/GizmoRenderer.h"
 
 namespace MetaVisage {
 
@@ -53,6 +54,14 @@ public:
     // Texture support
     void UploadMeshTexture(const Mesh* mesh, const TextureData& texture);
     void ClearMeshTexture(const Mesh* mesh);
+
+    // Transform gizmo
+    void RenderTransformGizmo(TransformMode mode, const Vector3& position,
+                              GizmoAxis hoveredAxis, GizmoAxis activeAxis,
+                              const Camera& camera, int viewportWidth, int viewportHeight);
+    GizmoAxis GizmoHitTest(TransformMode mode, const Vector3& gizmoPosition,
+                           const Ray& ray, const Camera& camera,
+                           int viewportWidth, int viewportHeight) const;
 
     // Sculpting (Touch Up stage)
     void SetBrushCursor(const Vector3& position, const Vector3& normal, float radius, float innerRadius, bool visible);
@@ -112,6 +121,9 @@ private:
     // Orientation gizmo
     unsigned int gizmoVAO_;
     unsigned int gizmoVBO_;
+
+    // Transform gizmo
+    std::unique_ptr<GizmoRenderer> gizmoRenderer_;
 };
 
 } // namespace MetaVisage

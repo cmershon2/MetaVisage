@@ -12,6 +12,7 @@
 #include "core/Camera.h"
 #include "core/Types.h"
 #include "core/Transform.h"
+#include "rendering/GizmoRenderer.h"
 #include "sculpting/BrushStroke.h"
 
 namespace MetaVisage {
@@ -44,6 +45,8 @@ public:
     // Transform mode accessors
     TransformMode GetTransformMode() const { return transformMode_; }
     AxisConstraint GetAxisConstraint() const { return axisConstraint_; }
+    GizmoAxis GetHoveredGizmoAxis() const { return hoveredGizmoAxis_; }
+    GizmoAxis GetActiveGizmoAxis() const { return activeGizmoAxis_; }
     void SetTransformMode(TransformMode mode);
     void CancelTransform();
 
@@ -140,6 +143,11 @@ private:
     // Apply transform based on mouse delta
     void ApplyTransform(const QPoint& delta);
 
+    // Transform gizmo helpers
+    void UpdateGizmoHover(float screenX, float screenY);
+    Vector3 GetGizmoPosition() const;
+    bool IsGizmoVisible() const;
+
     // Point reference helpers
     void HandlePointClick(QMouseEvent *event);
     bool TrySelectExistingPoint(float screenX, float screenY);
@@ -211,6 +219,10 @@ private:
 
     // Target overlay in Touch Up
     bool showTargetOverlay_;
+
+    // Transform gizmo state
+    GizmoAxis hoveredGizmoAxis_;
+    GizmoAxis activeGizmoAxis_;
 
     // Transform undo state capture
     Transform transformBeforeState_;

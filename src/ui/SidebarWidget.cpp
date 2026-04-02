@@ -1,4 +1,5 @@
 #include "ui/SidebarWidget.h"
+#include "ui/TexturePreviewDialog.h"
 #include "core/Project.h"
 #include <QGroupBox>
 #include <QPushButton>
@@ -6,9 +7,12 @@
 #include <QRadioButton>
 #include <QButtonGroup>
 #include <QComboBox>
+#include <QInputDialog>
+#include <QFileInfo>
 #include <QGridLayout>
 #include <QScrollArea>
 #include <QCheckBox>
+#include <QPixmap>
 
 namespace MetaVisage {
 
@@ -265,32 +269,21 @@ void SidebarWidget::CreateAlignmentControls() {
 
     // Target Textures Group
     QGroupBox* textureGroup = new QGroupBox("Target Textures");
-    QVBoxLayout* textureLayout = new QVBoxLayout(textureGroup);
+    QVBoxLayout* textureGroupLayout = new QVBoxLayout(textureGroup);
 
-    importAlbedoButton_ = new QPushButton("Import Albedo Texture");
-    importAlbedoButton_->setStyleSheet(
-        "QPushButton {"
-        "    background-color: #8E44AD;"
-        "    color: white;"
-        "    border: none;"
-        "    padding: 6px 12px;"
-        "    font-size: 9pt;"
-        "    border-radius: 4px;"
-        "}"
-        "QPushButton:hover {"
-        "    background-color: #7D3C98;"
-        "}"
-    );
-    connect(importAlbedoButton_, &QPushButton::clicked, this, &SidebarWidget::ImportAlbedoTextureRequested);
-    textureLayout->addWidget(importAlbedoButton_);
+    // Dynamic texture list area
+    textureListLayout_ = new QVBoxLayout();
+    textureListLayout_->setSpacing(4);
+    textureGroupLayout->addLayout(textureListLayout_);
 
-    albedoFileLabel_ = new QLabel("Albedo: None");
+    // "No textures" placeholder (will be managed by RefreshTextureList)
+    albedoFileLabel_ = new QLabel("No textures loaded");
     albedoFileLabel_->setStyleSheet("QLabel { color: #95A5A6; font-size: 8pt; }");
-    albedoFileLabel_->setWordWrap(true);
-    textureLayout->addWidget(albedoFileLabel_);
+    textureListLayout_->addWidget(albedoFileLabel_);
 
-    importNormalMapButton_ = new QPushButton("Import Normal Map");
-    importNormalMapButton_->setStyleSheet(
+    // Add Texture button
+    addTextureButton_ = new QPushButton("+ Add Texture");
+    addTextureButton_->setStyleSheet(
         "QPushButton {"
         "    background-color: #8E44AD;"
         "    color: white;"
@@ -303,13 +296,44 @@ void SidebarWidget::CreateAlignmentControls() {
         "    background-color: #7D3C98;"
         "}"
     );
-    connect(importNormalMapButton_, &QPushButton::clicked, this, &SidebarWidget::ImportNormalMapRequested);
-    textureLayout->addWidget(importNormalMapButton_);
+    connect(addTextureButton_, &QPushButton::clicked, this, [this]() {
+        // Prompt user for texture name
+        QStringList defaultNames = {"Albedo", "Normal Map", "Roughness", "AO", "Emissive", "Metallic"};
+        // Filter out names already in use
+        QStringList availableNames;
+        if (project_) {
+            const auto& textures = project_->GetTargetTextures().textures;
+            for (const auto& name : defaultNames) {
+                bool inUse = false;
+                for (const auto& t : textures) {
+                    if (t.name == name) { inUse = true; break; }
+                }
+                if (!inUse) availableNames.append(name);
+            }
+        } else {
+            availableNames = defaultNames;
+        }
 
-    normalMapFileLabel_ = new QLabel("Normal Map: None");
-    normalMapFileLabel_->setStyleSheet("QLabel { color: #95A5A6; font-size: 8pt; }");
-    normalMapFileLabel_->setWordWrap(true);
-    textureLayout->addWidget(normalMapFileLabel_);
+        bool ok = false;
+        QString name;
+        if (!availableNames.isEmpty()) {
+            name = QInputDialog::getItem(this, tr("Add Texture"),
+                tr("Texture slot name:"), availableNames, 0, true, &ok);
+        } else {
+            name = QInputDialog::getText(this, tr("Add Texture"),
+                tr("Texture slot name:"), QLineEdit::Normal, "", &ok);
+        }
+
+        if (ok && !name.isEmpty()) {
+            emit ImportTextureRequested(name);
+        }
+    });
+    textureGroupLayout->addWidget(addTextureButton_);
+
+    // Keep legacy pointers valid (set to null since we no longer create them)
+    importAlbedoButton_ = nullptr;
+    importNormalMapButton_ = nullptr;
+    normalMapFileLabel_ = nullptr;
 
     controlsLayout->addWidget(textureGroup);
 
@@ -1540,6 +1564,9 @@ void SidebarWidget::ClearControls() {
     matchStatusLabel_ = nullptr; pointListScroll_ = nullptr; pointListContent_ = nullptr;
     clearAllPointsButton_ = nullptr; pointSizeSlider_ = nullptr;
     symmetryCheckBox_ = nullptr; symmetryAxisCombo_ = nullptr;
+    textureListLayout_ = nullptr; addTextureButton_ = nullptr;
+    importAlbedoButton_ = nullptr; importNormalMapButton_ = nullptr;
+    albedoFileLabel_ = nullptr; normalMapFileLabel_ = nullptr;
     algorithmCombo_ = nullptr;
     rbfParamsWidget_ = nullptr; nricpParamsWidget_ = nullptr;
     stiffnessSlider_ = nullptr; smoothnessSlider_ = nullptr;
@@ -1750,7 +1777,7 @@ void SidebarWidget::UpdateTransformDisplay() {
 
     const Transform& transform = project_->GetTargetMesh().transform;
     Vector3 pos = transform.GetPosition();
-    Vector3 euler = transform.GetRotation().ToEulerAngles();
+    Vector3 euler = transform.GetEulerAngles();
     Vector3 scale = transform.GetScale();
 
     posXSpinBox_->setValue(pos.x); posYSpinBox_->setValue(pos.y); posZSpinBox_->setValue(pos.z);
@@ -1874,17 +1901,16 @@ void SidebarWidget::OnSpinBoxValueChanged() {
     Vector3 newPos(static_cast<float>(posXSpinBox_->value()),
                    static_cast<float>(posYSpinBox_->value()),
                    static_cast<float>(posZSpinBox_->value()));
-    Quaternion newRot = Quaternion::FromEulerAngles(
-        static_cast<float>(rotXSpinBox_->value()),
-        static_cast<float>(rotYSpinBox_->value()),
-        static_cast<float>(rotZSpinBox_->value()));
+    float rotX = static_cast<float>(rotXSpinBox_->value());
+    float rotY = static_cast<float>(rotYSpinBox_->value());
+    float rotZ = static_cast<float>(rotZSpinBox_->value());
     Vector3 newScale(static_cast<float>(scaleXSpinBox_->value()),
                      static_cast<float>(scaleYSpinBox_->value()),
                      static_cast<float>(scaleZSpinBox_->value()));
 
     Transform& transform = project_->GetTargetMesh().transform;
     transform.SetPosition(newPos);
-    transform.SetRotation(newRot);
+    transform.SetRotationFromEuler(rotX, rotY, rotZ);
     transform.SetScale(newScale);
 
     emit TransformValuesChanged();
@@ -2069,16 +2095,101 @@ void SidebarWidget::OnNRICPNormalizeSamplingToggled(bool enabled) {
 }
 
 void SidebarWidget::SetAlbedoFileName(const QString& name) {
-    if (albedoFileLabel_) {
-        albedoFileLabel_->setText(QString("Albedo: %1").arg(name));
-        albedoFileLabel_->setStyleSheet("QLabel { color: #2ECC71; font-size: 8pt; }");
-    }
+    (void)name; // Legacy - now handled by RefreshTextureList
 }
 
 void SidebarWidget::SetNormalMapFileName(const QString& name) {
-    if (normalMapFileLabel_) {
-        normalMapFileLabel_->setText(QString("Normal Map: %1").arg(name));
-        normalMapFileLabel_->setStyleSheet("QLabel { color: #2ECC71; font-size: 8pt; }");
+    (void)name; // Legacy - now handled by RefreshTextureList
+}
+
+void SidebarWidget::RefreshTextureList(const TextureSet& textures) {
+    if (!textureListLayout_) return;
+
+    // Clear existing items from the texture list layout
+    QLayoutItem* item;
+    while ((item = textureListLayout_->takeAt(0)) != nullptr) {
+        if (item->widget()) {
+            item->widget()->deleteLater();
+        }
+        delete item;
+    }
+    albedoFileLabel_ = nullptr;
+
+    if (textures.textures.empty()) {
+        // Show placeholder
+        albedoFileLabel_ = new QLabel("No textures loaded");
+        albedoFileLabel_->setStyleSheet("QLabel { color: #95A5A6; font-size: 8pt; }");
+        textureListLayout_->addWidget(albedoFileLabel_);
+        return;
+    }
+
+    for (const auto& tex : textures.textures) {
+        QWidget* row = new QWidget();
+        QHBoxLayout* rowLayout = new QHBoxLayout(row);
+        rowLayout->setContentsMargins(0, 2, 0, 2);
+        rowLayout->setSpacing(6);
+
+        // 48x48 clickable thumbnail
+        if (tex.data && tex.data->IsLoaded()) {
+            QPushButton* thumb = new QPushButton();
+            thumb->setFixedSize(52, 52);
+            thumb->setIconSize(QSize(48, 48));
+            QImage img = tex.data->ToQImage();
+            QPixmap pix = QPixmap::fromImage(img).scaled(48, 48, Qt::KeepAspectRatio, Qt::SmoothTransformation);
+            thumb->setIcon(QIcon(pix));
+            thumb->setCursor(Qt::PointingHandCursor);
+            thumb->setToolTip("Click to preview full size");
+            thumb->setStyleSheet(
+                "QPushButton {"
+                "    background-color: #1a1a1a;"
+                "    border: 1px solid #555;"
+                "    padding: 1px;"
+                "}"
+                "QPushButton:hover {"
+                "    border: 1px solid #3498DB;"
+                "}"
+            );
+
+            QString texName = tex.name;
+            std::shared_ptr<TextureData> texData = tex.data;
+            connect(thumb, &QPushButton::clicked, this, [this, texName, texData]() {
+                auto* dialog = new TexturePreviewDialog(texName, *texData, this->window());
+                dialog->setAttribute(Qt::WA_DeleteOnClose);
+                dialog->show();
+            });
+            rowLayout->addWidget(thumb);
+        }
+
+        // Texture name and filename
+        QString filename = tex.data ? QFileInfo(tex.data->GetFilePath()).fileName() : "?";
+        QLabel* label = new QLabel(QString("%1: %2").arg(tex.name, filename));
+        label->setStyleSheet("QLabel { color: #2ECC71; font-size: 8pt; }");
+        label->setWordWrap(true);
+        rowLayout->addWidget(label, 1);
+
+        // Remove button
+        QPushButton* removeBtn = new QPushButton("X");
+        removeBtn->setFixedSize(20, 20);
+        removeBtn->setStyleSheet(
+            "QPushButton {"
+            "    background-color: #E74C3C;"
+            "    color: white;"
+            "    border: none;"
+            "    border-radius: 2px;"
+            "    font-size: 8pt;"
+            "    font-weight: bold;"
+            "}"
+            "QPushButton:hover {"
+            "    background-color: #C0392B;"
+            "}"
+        );
+        QString texName = tex.name;
+        connect(removeBtn, &QPushButton::clicked, this, [this, texName]() {
+            emit RemoveTextureRequested(texName);
+        });
+        rowLayout->addWidget(removeBtn);
+
+        textureListLayout_->addWidget(row);
     }
 }
 

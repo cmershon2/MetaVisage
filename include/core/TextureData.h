@@ -3,9 +3,11 @@
 
 #include "core/Types.h"
 #include <QString>
+#include <QImage>
 #include <vector>
 #include <cstdint>
 #include <memory>
+#include <algorithm>
 
 namespace MetaVisage {
 
@@ -40,6 +42,9 @@ public:
     const std::vector<uint8_t>& GetPixels() const { return pixels_; }
     std::vector<uint8_t>& GetPixels() { return pixels_; }
 
+    // Convert to QImage for display (thumbnails and previews)
+    QImage ToQImage() const;
+
 private:
     std::vector<uint8_t> pixels_;  // RGBA pixel data
     int width_;
@@ -51,13 +56,51 @@ private:
     void UVToPixel(float u, float v, float& px, float& py) const;
 };
 
-// Texture set for a mesh (albedo + optional normal map)
-struct TextureSet {
-    std::shared_ptr<TextureData> albedo;
-    std::shared_ptr<TextureData> normalMap;
+// A single named texture slot
+struct NamedTexture {
+    QString name;
+    std::shared_ptr<TextureData> data;
+};
 
-    bool HasAlbedo() const { return albedo && albedo->IsLoaded(); }
-    bool HasNormalMap() const { return normalMap && normalMap->IsLoaded(); }
+// Dynamic texture set for a mesh (supports arbitrary named slots)
+struct TextureSet {
+    std::vector<NamedTexture> textures;
+
+    // Add or replace a named texture
+    void Add(const QString& name, std::shared_ptr<TextureData> data) {
+        for (auto& t : textures) {
+            if (t.name == name) { t.data = data; return; }
+        }
+        textures.push_back({name, data});
+    }
+
+    // Remove a texture by name
+    void Remove(const QString& name) {
+        textures.erase(
+            std::remove_if(textures.begin(), textures.end(),
+                           [&](const NamedTexture& t) { return t.name == name; }),
+            textures.end());
+    }
+
+    // Lookup by name
+    std::shared_ptr<TextureData> GetByName(const QString& name) const {
+        for (const auto& t : textures) {
+            if (t.name == name) return t.data;
+        }
+        return nullptr;
+    }
+
+    // Backward-compatible accessors for renderer and baking
+    bool HasAlbedo() const {
+        auto t = GetByName("Albedo");
+        return t && t->IsLoaded();
+    }
+    bool HasNormalMap() const {
+        auto t = GetByName("Normal Map");
+        return t && t->IsLoaded();
+    }
+    std::shared_ptr<TextureData> GetAlbedo() const { return GetByName("Albedo"); }
+    std::shared_ptr<TextureData> GetNormalMap() const { return GetByName("Normal Map"); }
 };
 
 } // namespace MetaVisage

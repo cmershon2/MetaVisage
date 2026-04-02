@@ -30,7 +30,6 @@ Makefile
 
 # Compiler output
 *.o
-*.obj
 *.a
 *.lib
 

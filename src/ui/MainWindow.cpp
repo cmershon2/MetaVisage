@@ -278,6 +278,8 @@ void MainWindow::ConnectViewportSignals() {
     // Connect texture import signals
     connect(sidebarWidget_, &SidebarWidget::ImportAlbedoTextureRequested, this, &MainWindow::OnImportAlbedoTexture);
     connect(sidebarWidget_, &SidebarWidget::ImportNormalMapRequested, this, &MainWindow::OnImportNormalMap);
+    connect(sidebarWidget_, &SidebarWidget::ImportTextureRequested, this, &MainWindow::OnImportTexture);
+    connect(sidebarWidget_, &SidebarWidget::RemoveTextureRequested, this, &MainWindow::OnRemoveTexture);
 
     // Connect sidebar reset transform button
     connect(sidebarWidget_, &SidebarWidget::ResetTransformRequested, this, &MainWindow::OnResetTransform);
@@ -528,6 +530,17 @@ void MainWindow::OnOpenProject() {
                 }
             }
 
+            // Refresh texture list in sidebar
+            sidebarWidget_->RefreshTextureList(project_->GetTargetTextures());
+
+            // Upload albedo texture to renderer if present
+            if (project_->GetTargetTextures().HasAlbedo() &&
+                project_->GetTargetMesh().isLoaded && project_->GetTargetMesh().mesh) {
+                viewportContainer_->GetPrimaryViewport()->UploadMeshTexture(
+                    project_->GetTargetMesh().mesh.get(),
+                    *project_->GetTargetTextures().GetAlbedo());
+            }
+
             WelcomeDialog::AddRecentProject(filepath);
             UpdateWindowTitle();
             UpdateStatusBar();
@@ -693,49 +706,54 @@ void MainWindow::OnImportTargetMesh() {
 }
 
 void MainWindow::OnImportAlbedoTexture() {
+    OnImportTexture("Albedo");
+}
+
+void MainWindow::OnImportNormalMap() {
+    OnImportTexture("Normal Map");
+}
+
+void MainWindow::OnImportTexture(const QString& name) {
     QString filepath = QFileDialog::getOpenFileName(
-        this, tr("Import Albedo Texture"), QString(),
+        this, tr("Import Texture: %1").arg(name), QString(),
         tr("Images (*.png *.jpg *.jpeg *.tga *.bmp)"));
 
     if (!filepath.isEmpty()) {
         auto texture = TextureData::LoadFromFile(filepath);
         if (texture) {
-            project_->GetTargetTextures().albedo = texture;
-            QFileInfo fi(filepath);
-            sidebarWidget_->SetAlbedoFileName(fi.fileName());
-            statusLabel_->setText("Albedo texture loaded: " + fi.fileName());
+            project_->GetTargetTextures().Add(name, texture);
+            sidebarWidget_->RefreshTextureList(project_->GetTargetTextures());
+            statusLabel_->setText(QString("Texture loaded: %1 (%2)").arg(name, QFileInfo(filepath).fileName()));
 
-            // Upload to renderer for preview
-            const MeshReference& targetRef = project_->GetTargetMesh();
-            if (targetRef.isLoaded && targetRef.mesh) {
-                viewportContainer_->GetPrimaryViewport()->UploadMeshTexture(
-                    targetRef.mesh.get(), *texture);
-                viewportContainer_->GetPrimaryViewport()->update();
+            // Upload albedo to renderer for preview
+            if (name == "Albedo") {
+                const MeshReference& targetRef = project_->GetTargetMesh();
+                if (targetRef.isLoaded && targetRef.mesh) {
+                    viewportContainer_->GetPrimaryViewport()->UploadMeshTexture(
+                        targetRef.mesh.get(), *texture);
+                    viewportContainer_->GetPrimaryViewport()->update();
+                }
             }
         } else {
             ErrorHelper::ShowError(this, tr("Import Failed"),
-                tr("Failed to load albedo texture."), filepath);
+                tr("Failed to load texture: %1").arg(name), filepath);
         }
     }
 }
 
-void MainWindow::OnImportNormalMap() {
-    QString filepath = QFileDialog::getOpenFileName(
-        this, tr("Import Normal Map"), QString(),
-        tr("Images (*.png *.jpg *.jpeg *.tga *.bmp)"));
+void MainWindow::OnRemoveTexture(const QString& name) {
+    project_->GetTargetTextures().Remove(name);
+    sidebarWidget_->RefreshTextureList(project_->GetTargetTextures());
 
-    if (!filepath.isEmpty()) {
-        auto texture = TextureData::LoadFromFile(filepath);
-        if (texture) {
-            project_->GetTargetTextures().normalMap = texture;
-            QFileInfo fi(filepath);
-            sidebarWidget_->SetNormalMapFileName(fi.fileName());
-            statusLabel_->setText("Normal map loaded: " + fi.fileName());
-        } else {
-            ErrorHelper::ShowError(this, tr("Import Failed"),
-                tr("Failed to load normal map."), filepath);
+    // Clear renderer texture if albedo was removed
+    if (name == "Albedo") {
+        const MeshReference& targetRef = project_->GetTargetMesh();
+        if (targetRef.isLoaded && targetRef.mesh) {
+            viewportContainer_->GetPrimaryViewport()->InvalidateMesh(targetRef.mesh.get());
+            viewportContainer_->GetPrimaryViewport()->update();
         }
     }
+    statusLabel_->setText(QString("Texture removed: %1").arg(name));
 }
 
 void MainWindow::OnExportMesh() {
@@ -802,8 +820,8 @@ void MainWindow::OnExportMesh() {
             *project_->GetTargetMesh().mesh,
             project_->GetMorphMesh().transform,
             project_->GetTargetMesh().transform,
-            textures.albedo.get(),
-            textures.normalMap ? textures.normalMap.get() : nullptr,
+            textures.GetAlbedo().get(),
+            textures.GetNormalMap() ? textures.GetNormalMap().get() : nullptr,
             bakeSettings,
             [&progress](float p) {
                 progress.setValue(static_cast<int>(p * 50.0f)); // First 50% for baking
