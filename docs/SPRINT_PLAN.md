@@ -39,26 +39,26 @@ This sprint plan covers the v2.0 release of MetaVisage. It addresses all v1.0.0 
 **Background:** When a project saved during Stage 2 (Point Reference) is reopened, points render correctly in the viewport but the sidebar shows zero target/morph point counts, an empty Correspondence Points list, and symmetry mode shows as disabled even when it was previously enabled.
 
 **Tasks:**
-- [ ] Audit `ProjectSerializer` deserialization path for Stage 2 — identify why `PointReferenceData` is not being applied to `SidebarWidget` on load
-- [ ] Ensure `SidebarWidget::OnStageChanged()` re-populates point list and count displays from loaded `Project` state when entering Stage 2 from a loaded project
-- [ ] Restore symmetry enabled/axis state from deserialized `PointReferenceData` to the sidebar checkbox and axis selector
+- [x] Audit `ProjectSerializer` deserialization path for Stage 2 — identify why `PointReferenceData` is not being applied to `SidebarWidget` on load
+- [x] Ensure `SidebarWidget::OnStageChanged()` re-populates point list and count displays from loaded `Project` state when entering Stage 2 from a loaded project
+- [x] Restore symmetry enabled/axis state from deserialized `PointReferenceData` to the sidebar checkbox and axis selector
 - [ ] Write a manual regression test: save a project mid-Stage 2 with 10 points and symmetry enabled, reload, verify counts and symmetry state match
 
 #### Story 1.2: Top Navigation Bar Cleanup
 **Background:** Several menu items are either broken or shown in stages where they are not applicable, creating confusion.
 
 **Tasks:**
-- [ ] Fix `Help > Documentation` — open `https://docs.metavisage.io` via `QDesktopServices::openUrl()`
-- [ ] Remove the `Tools` menu from the menu bar entirely — transform tools are accessible via hotkeys and Stage 1 sidebar; the global menu adds noise in stages where it does not apply
-- [ ] Remove `Edit > Preferences` — currently a no-op; remove until a real preferences dialog is implemented
-- [ ] Make `File > Export Mesh` context-sensitive — hide this item in all stages except Stage 4 (Touch Up), where it should remain available
-- [ ] Audit `View` menu items — remove or disable any entries that have no functional implementation; retain only working options (shading mode, grid toggle, camera views)
+- [x] Fix `Help > Documentation` — open `https://docs.metavisage.io` via `QDesktopServices::openUrl()`
+- [x] Remove the `Tools` menu from the menu bar entirely — transform tools are accessible via hotkeys and Stage 1 sidebar; the global menu adds noise in stages where it does not apply
+- [x] Remove `Edit > Preferences` — currently a no-op; remove until a real preferences dialog is implemented
+- [x] Make `File > Export Mesh` context-sensitive — hide this item in all stages except Stage 4 (Touch Up), where it should remain available
+- [x] Audit `View` menu items — remove or disable any entries that have no functional implementation; retain only working options (shading mode, grid toggle, camera views)
 
 #### Story 1.3: System Theme Override
 **Background:** On systems configured to use Windows Light Mode, Qt inherits the light palette and renders the application background in white/light gray, inconsistent with the intended dark theme.
 
 **Tasks:**
-- [ ] Force the application-wide Qt palette to the existing dark theme at launch, regardless of the OS-level theme setting — use `QApplication::setStyle("Fusion")` and apply the custom dark palette unconditionally
+- [x] Force the application-wide Qt palette to the existing dark theme at launch, regardless of the OS-level theme setting — use `QApplication::setStyle("Fusion")` and apply the custom dark palette unconditionally
 - [ ] Verify that all widgets (including the settings panel, which was reportedly already dark) render consistently
 - [ ] Test on a Windows 11 system configured to Light Mode
 
@@ -66,27 +66,27 @@ This sprint plan covers the v2.0 release of MetaVisage. It addresses all v1.0.0 
 **Background:** The FPS counter in the status bar was reported as frequently inaccurate and is not considered a useful user-facing metric.
 
 **Tasks:**
-- [ ] Remove the FPS counter display from the status bar
-- [ ] Remove the 500ms FPS update timer from `ViewportWidget`
-- [ ] Retain any underlying frame timing code that is used internally by the rendering pipeline; only remove the display
+- [x] Remove the FPS counter display from the status bar
+- [x] Remove the 500ms FPS update timer from `ViewportWidget`
+- [x] Retain any underlying frame timing code that is used internally by the rendering pipeline; only remove the display
 
 #### Story 1.5: Landing Page — Recent Projects Scrollability
 **Background:** The recent projects list on the landing/splash screen squishes items together and is not scrollable when more than a few projects are present.
 
 **Tasks:**
-- [ ] Wrap the recent projects list widget in a `QScrollArea`
-- [ ] Set a maximum visible height for the list (e.g. 5 items before scrolling activates) so the dialog does not grow unbounded
-- [ ] Verify that project items display at consistent height and do not compress when the list is long
+- [x] Wrap the recent projects list widget in a `QScrollArea`
+- [x] Set a maximum visible height for the list (e.g. 5 items before scrolling activates) so the dialog does not grow unbounded
+- [x] Verify that project items display at consistent height and do not compress when the list is long
 
 ### Acceptance Criteria
-- [ ] Reopening a Stage 2 project shows correct point counts, correspondence list, and symmetry state in the sidebar
-- [ ] `Help > Documentation` opens `https://docs.metavisage.io` in the default browser
-- [ ] `Tools` menu is no longer visible in the menu bar
-- [ ] `Edit > Preferences` is no longer visible in the menu bar
-- [ ] `File > Export Mesh` is hidden in Stages 1–3 and visible in Stage 4
-- [ ] Application renders dark background on both Dark Mode and Light Mode Windows systems
-- [ ] FPS counter is no longer shown in the status bar
-- [ ] Recent projects list is scrollable and items display at uniform height
+- [x] Reopening a Stage 2 project shows correct point counts, correspondence list, and symmetry state in the sidebar
+- [x] `Help > Documentation` opens `https://docs.metavisage.io` in the default browser
+- [x] `Tools` menu is no longer visible in the menu bar
+- [x] `Edit > Preferences` is no longer visible in the menu bar
+- [x] `File > Export Mesh` is hidden in Stages 1–3 and visible in Stage 4
+- [x] Application renders dark background on both Dark Mode and Light Mode Windows systems
+- [x] FPS counter is no longer shown in the status bar
+- [x] Recent projects list is scrollable and items display at uniform height
 
 ---
 

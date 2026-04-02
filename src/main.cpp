@@ -4,6 +4,8 @@
 #include <QSurfaceFormat>
 #include <QStandardPaths>
 #include <QIcon>
+#include <QPalette>
+#include <QStyleFactory>
 
 int main(int argc, char *argv[]) {
     // Set up OpenGL context format
@@ -17,8 +19,29 @@ int main(int argc, char *argv[]) {
 
     QApplication app(argc, argv);
     app.setApplicationName("MetaVisage");
-    app.setApplicationVersion("1.0.0");
+    app.setApplicationVersion("2.0.0");
     app.setOrganizationName("MetaVisage");
+
+    // Force Fusion style and dark palette regardless of OS theme
+    app.setStyle(QStyleFactory::create("Fusion"));
+
+    QPalette darkPalette;
+    darkPalette.setColor(QPalette::Window, QColor(30, 30, 30));
+    darkPalette.setColor(QPalette::WindowText, Qt::white);
+    darkPalette.setColor(QPalette::Base, QColor(44, 62, 80));
+    darkPalette.setColor(QPalette::AlternateBase, QColor(52, 73, 94));
+    darkPalette.setColor(QPalette::ToolTipBase, QColor(44, 62, 80));
+    darkPalette.setColor(QPalette::ToolTipText, Qt::white);
+    darkPalette.setColor(QPalette::Text, Qt::white);
+    darkPalette.setColor(QPalette::Button, QColor(44, 62, 80));
+    darkPalette.setColor(QPalette::ButtonText, Qt::white);
+    darkPalette.setColor(QPalette::BrightText, Qt::red);
+    darkPalette.setColor(QPalette::Link, QColor(52, 152, 219));
+    darkPalette.setColor(QPalette::Highlight, QColor(52, 152, 219));
+    darkPalette.setColor(QPalette::HighlightedText, Qt::white);
+    darkPalette.setColor(QPalette::Disabled, QPalette::Text, QColor(127, 140, 141));
+    darkPalette.setColor(QPalette::Disabled, QPalette::ButtonText, QColor(127, 140, 141));
+    app.setPalette(darkPalette);
 
     // Set application icon
     QIcon appIcon;
@@ -32,7 +55,7 @@ int main(int argc, char *argv[]) {
     // Initialize logging system
     QString logDir = QStandardPaths::writableLocation(QStandardPaths::AppDataLocation) + "/logs";
     MetaVisage::Logger::Instance().Initialize(logDir);
-    MV_LOG_INFO("MetaVisage v1.0.0 starting");
+    MV_LOG_INFO("MetaVisage v2.0.0 starting");
 
     MetaVisage::MainWindow mainWindow;
     mainWindow.show();

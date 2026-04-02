@@ -115,8 +115,8 @@ MainWindow::MainWindow(QWidget *parent)
       undoStack_(std::make_unique<UndoStack>()),
       undoAction_(nullptr),
       redoAction_(nullptr),
+      exportAction_(nullptr),
       statsTimer_(nullptr),
-      currentFPS_(0.0f),
       morphThread_(nullptr),
       morphWorker_(nullptr) {
 
@@ -182,9 +182,10 @@ void MainWindow::CreateMenus() {
 
     fileMenu->addSeparator();
 
-    QAction* exportAction = fileMenu->addAction(tr("&Export Mesh"));
-    exportAction->setShortcut(QKeySequence(Qt::CTRL | Qt::Key_E));
-    connect(exportAction, &QAction::triggered, this, &MainWindow::OnExportMesh);
+    exportAction_ = fileMenu->addAction(tr("&Export Mesh"));
+    exportAction_->setShortcut(QKeySequence(Qt::CTRL | Qt::Key_E));
+    exportAction_->setVisible(false); // Only visible in Stage 4 (Touch Up)
+    connect(exportAction_, &QAction::triggered, this, &MainWindow::OnExportMesh);
 
     fileMenu->addSeparator();
 
@@ -202,50 +203,6 @@ void MainWindow::CreateMenus() {
     redoAction_ = editMenu->addAction(tr("&Redo"));
     redoAction_->setShortcut(QKeySequence::Redo);
     connect(redoAction_, &QAction::triggered, this, &MainWindow::OnRedo);
-
-    editMenu->addSeparator();
-
-    QAction* prefsAction = editMenu->addAction(tr("&Preferences"));
-    connect(prefsAction, &QAction::triggered, this, &MainWindow::OnPreferences);
-
-    // View Menu
-    QMenu* viewMenu = menuBar_->addMenu(tr("&View"));
-
-    QAction* gridAction = viewMenu->addAction(tr("Show/Hide &Grid"));
-    connect(gridAction, &QAction::triggered, this, &MainWindow::OnToggleGrid);
-
-    QAction* resetCameraAction = viewMenu->addAction(tr("&Reset Camera"));
-    resetCameraAction->setShortcut(QKeySequence(Qt::Key_Home));
-    connect(resetCameraAction, &QAction::triggered, this, &MainWindow::OnResetCamera);
-
-    // Tools Menu
-    QMenu* toolsMenu = menuBar_->addMenu(tr("&Tools"));
-    QAction* moveAction = toolsMenu->addAction(tr("Move (G)"));
-    connect(moveAction, &QAction::triggered, this, [this]() {
-        ViewportWidget* vp = viewportContainer_->GetPrimaryViewport();
-        if (vp) {
-            vp->setFocus();
-            vp->SetTransformMode(TransformMode::Move);
-        }
-    });
-
-    QAction* rotateAction = toolsMenu->addAction(tr("Rotate (R)"));
-    connect(rotateAction, &QAction::triggered, this, [this]() {
-        ViewportWidget* vp = viewportContainer_->GetPrimaryViewport();
-        if (vp) {
-            vp->setFocus();
-            vp->SetTransformMode(TransformMode::Rotate);
-        }
-    });
-
-    QAction* scaleAction = toolsMenu->addAction(tr("Scale (S)"));
-    connect(scaleAction, &QAction::triggered, this, [this]() {
-        ViewportWidget* vp = viewportContainer_->GetPrimaryViewport();
-        if (vp) {
-            vp->setFocus();
-            vp->SetTransformMode(TransformMode::Scale);
-        }
-    });
 
     // Help Menu
     QMenu* helpMenu = menuBar_->addMenu(tr("&Help"));
@@ -276,7 +233,7 @@ void MainWindow::CreateStatusBar() {
 
     toolLabel_ = new QLabel("Tool: None");
     statusLabel_ = new QLabel("Ready");
-    statsLabel_ = new QLabel("Vertices: 0 | Faces: 0 | FPS: 0");
+    statsLabel_ = new QLabel("Vertices: 0 | Faces: 0");
 
     statusBar_->addWidget(toolLabel_);
     statusBar_->addWidget(statusLabel_, 1);
@@ -446,9 +403,7 @@ void MainWindow::ConnectViewportSignals() {
     connect(viewportContainer_->GetPrimaryViewport(), &ViewportWidget::SculptStrokeCompleted,
             this, &MainWindow::OnSculptStrokeCompleted);
 
-    // Connect FPS signal
-    connect(viewportContainer_->GetPrimaryViewport(), &ViewportWidget::FPSUpdated,
-            this, [this](float fps) { currentFPS_ = fps; });
+    // FPS signal removed in v2.0 — FPS counter no longer displayed
 }
 
 void MainWindow::UpdateWindowTitle() {
@@ -506,6 +461,19 @@ void MainWindow::OnOpenProject() {
             WorkflowStage stage = project_->GetCurrentStage();
             viewportContainer_->SetDualMode(stage == WorkflowStage::PointReference);
             sidebarWidget_->SetStage(stage);
+
+            // Show Export Mesh only in Stage 4 (Touch Up)
+            exportAction_->setVisible(stage == WorkflowStage::TouchUp);
+
+            // Restore Stage 2 sidebar state from loaded project data
+            if (stage == WorkflowStage::PointReference) {
+                // Re-populate point counts, correspondence list, and symmetry state
+                RefreshPointUI();
+
+                // Restore symmetry enabled/axis state to sidebar controls
+                const PointReferenceData& prData = project_->GetPointReferenceData();
+                sidebarWidget_->RestoreSymmetryState(prData.symmetryEnabled, prData.symmetryAxis);
+            }
 
             // Reconstruct deformed mesh from saved vertex data
             MorphData& morphData = project_->GetMorphData();
@@ -1152,24 +1120,13 @@ void MainWindow::UpdateStatsDisplay() {
         }
     }
 
-    statsLabel_->setText(QString("Vertices: %1 | Faces: %2 | FPS: %3")
-        .arg(totalVertices).arg(totalFaces).arg(static_cast<int>(currentFPS_)));
+    statsLabel_->setText(QString("Vertices: %1 | Faces: %2")
+        .arg(totalVertices).arg(totalFaces));
 }
-
-void MainWindow::OnPreferences() {
-    QMessageBox::information(this, tr("Not Implemented"),
-        tr("Preferences will be implemented in future sprints"));
-}
-
-// View menu slots
-void MainWindow::OnToggleGrid() {}
-void MainWindow::OnResetCamera() {}
 
 // Help menu slots
 void MainWindow::OnDocumentation() {
-    QMessageBox::information(this, tr("Documentation"),
-        tr("Documentation will be available after Sprint 12.\n\n"
-           "Please refer to CLAUDE.md and docs/PRD.md for now."));
+    QDesktopServices::openUrl(QUrl("https://docs.metavisage.io"));
 }
 
 void MainWindow::OnKeyboardShortcuts() {
@@ -1183,9 +1140,8 @@ void MainWindow::OnReportIssue() {
 
 void MainWindow::OnAbout() {
     QMessageBox::about(this, tr("About MetaVisage"),
-        tr("<h3>MetaVisage v1.0.0</h3>"
-           "<p>Open-source MetaHuman Mesh Morphing Tool</p>"
-           "<p>Licensed under MIT License</p>"
+        tr("<h3>MetaVisage v2.0.0</h3>"
+           "<p>MetaHuman Mesh Morphing Tool</p>"
            "<p>Author: Casey Mershon</p>"
            "<p>&copy; 2025</p>"));
 }
@@ -1700,6 +1656,9 @@ void MainWindow::OnNextStage() {
     sidebarWidget_->SetStage(nextStage);
     UpdateStatusBar();
 
+    // Show Export Mesh only in Stage 4 (Touch Up)
+    exportAction_->setVisible(nextStage == WorkflowStage::TouchUp);
+
     // Update viewport layout based on stage
     if (nextStage == WorkflowStage::PointReference) {
         viewportContainer_->SetDualMode(true);
@@ -1769,6 +1728,9 @@ void MainWindow::OnPreviousStage() {
     project_->SetCurrentStage(prevStage);
     sidebarWidget_->SetStage(prevStage);
     UpdateStatusBar();
+
+    // Show Export Mesh only in Stage 4 (Touch Up)
+    exportAction_->setVisible(prevStage == WorkflowStage::TouchUp);
 
     // Update viewport layout based on stage
     if (prevStage == WorkflowStage::PointReference) {

@@ -7,6 +7,7 @@
 #include <QFileInfo>
 #include <QFileDialog>
 #include <QIcon>
+#include <QScrollArea>
 
 namespace MetaVisage {
 
@@ -84,6 +85,25 @@ void WelcomeDialog::SetupUI() {
         noRecent->setAlignment(Qt::AlignCenter);
         contentLayout->addWidget(noRecent);
     } else {
+        // Wrap recent projects in a scroll area
+        QScrollArea* scrollArea = new QScrollArea();
+        scrollArea->setWidgetResizable(true);
+        scrollArea->setFrameShape(QFrame::NoFrame);
+        scrollArea->setStyleSheet(
+            "QScrollArea { background: transparent; border: none; }"
+            "QScrollBar:vertical { background-color: #2C3E50; width: 8px; }"
+            "QScrollBar::handle:vertical { background-color: #555; border-radius: 4px; min-height: 20px; }"
+            "QScrollBar::add-line:vertical, QScrollBar::sub-line:vertical { height: 0px; }"
+        );
+        // Max height for ~3 visible items before scrolling activates
+        scrollArea->setMaximumHeight(250);
+
+        QWidget* scrollContent = new QWidget();
+        scrollContent->setStyleSheet("QWidget { background: transparent; }");
+        QVBoxLayout* scrollLayout = new QVBoxLayout(scrollContent);
+        scrollLayout->setContentsMargins(0, 0, 0, 0);
+        scrollLayout->setSpacing(8);
+
         for (const QString& path : recentProjects) {
             QFileInfo fileInfo(path);
             if (!fileInfo.exists()) continue;
@@ -95,7 +115,6 @@ void WelcomeDialog::SetupUI() {
             QString projectDir = fileInfo.absolutePath();
             QString lastModified = fileInfo.lastModified().toString("MMM d, yyyy h:mm AP");
 
-            projectButton->setText(projectName);
             projectButton->setToolTip(path);
             projectButton->setStyleSheet(
                 "QPushButton {"
@@ -112,15 +131,12 @@ void WelcomeDialog::SetupUI() {
                 "    border-color: #3498DB;"
                 "}"
             );
-            projectButton->setMinimumHeight(70);
+            projectButton->setFixedHeight(70);
 
             // Use a layout inside the button for multi-line display
             QVBoxLayout* btnLayout = new QVBoxLayout(projectButton);
             btnLayout->setContentsMargins(16, 10, 16, 10);
             btnLayout->setSpacing(3);
-
-            // Clear default text, use layout labels instead
-            projectButton->setText("");
 
             QLabel* nameLabel = new QLabel(projectName);
             nameLabel->setStyleSheet("QLabel { color: white; font-size: 10pt; font-weight: bold; background: transparent; }");
@@ -141,8 +157,12 @@ void WelcomeDialog::SetupUI() {
                 OnRecentProjectClicked(path);
             });
 
-            contentLayout->addWidget(projectButton);
+            scrollLayout->addWidget(projectButton);
         }
+
+        scrollLayout->addStretch();
+        scrollArea->setWidget(scrollContent);
+        contentLayout->addWidget(scrollArea);
     }
 
     contentLayout->addStretch();

@@ -46,6 +46,9 @@ public:
     void SetAlbedoFileName(const QString& name);
     void SetNormalMapFileName(const QString& name);
 
+    // Restore symmetry state from loaded project (Stage 2)
+    void RestoreSymmetryState(bool enabled, Axis axis);
+
 public slots:
     // Update display when transform mode changes
     void OnTransformModeChanged(TransformMode mode, AxisConstraint axis);
