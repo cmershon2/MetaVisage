@@ -61,6 +61,7 @@ endif()
 # Include directories
 include_directories(
     ${CMAKE_CURRENT_SOURCE_DIR}/include
+    ${CMAKE_CURRENT_SOURCE_DIR}/include/thirdparty
     ${CMAKE_CURRENT_SOURCE_DIR}/src
 )
 
@@ -99,6 +100,9 @@ set(SOURCES
     src/utils/SpatialHash.cpp
     src/ui/ShortcutsDialog.cpp
     src/ui/WelcomeDialog.cpp
+    src/core/TextureData.cpp
+    src/baking/TextureBaker.cpp
+    src/baking/TextureWriter.cpp
 )
 
 # Header files
@@ -139,6 +143,9 @@ set(HEADERS
     include/utils/SpatialHash.h
     include/ui/ShortcutsDialog.h
     include/ui/WelcomeDialog.h
+    include/core/TextureData.h
+    include/baking/TextureBaker.h
+    include/baking/TextureWriter.h
 )
 
 # Create executable
