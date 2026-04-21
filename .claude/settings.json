@@ -28,12 +28,12 @@
         "hooks": [
           {
             "type": "command",
-            "command": "python .claude/hooks/validate-commit-msg.py",
+            "command": "python $CLAUDE_PROJECT_DIR/.claude/hooks/validate-commit-msg.py",
             "timeout": 10
           },
           {
             "type": "command",
-            "command": "python .claude/hooks/scan-secrets.py",
+            "command": "python $CLAUDE_PROJECT_DIR/.claude/hooks/scan-secrets.py",
             "timeout": 15
           }
         ]
