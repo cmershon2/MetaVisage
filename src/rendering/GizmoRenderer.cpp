@@ -30,8 +30,6 @@ GizmoRenderer::~GizmoRenderer() {
 }
 
 bool GizmoRenderer::Initialize() {
-    initializeOpenGLFunctions();
-
     bool ok = true;
     ok &= LoadGizmoModel("assets/models/gizmos/move_gizmo.obj", moveGizmo_);
     ok &= LoadGizmoModel("assets/models/gizmos/rotate_gizmo.obj", rotateGizmo_);

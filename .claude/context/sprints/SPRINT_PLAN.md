@@ -1,25 +1,30 @@
 # Sprint Plan: MetaVisage v2.0
 
 **Version:** 2.0  
-**Date:** April 2, 2026  
-**Total Duration:** 16 weeks (8 sprints @ 2 weeks each)  
+**Date:** April 19, 2026  
+**Total Duration:** 20 weeks (10 sprints @ 2 weeks each)  
 **License:** Proprietary (Closed Source)
 
 ---
 
 ## Overview
 
-This sprint plan covers the v2.0 release of MetaVisage. It addresses all v1.0.0 user feedback, introduces the licensing and subscription system required by the transition to a paid product, adds distribution infrastructure (installer and auto-updates), and completes the remaining UX polish work across all four workflow stages.
+This sprint plan covers the v2.0 release of MetaVisage. It addresses all v1.0.0 user feedback, introduces the licensing and subscription system required by the transition to a paid product, adds distribution infrastructure (installer and auto-updates), completes the remaining UX polish work across all four workflow stages, and migrates the application off Qt onto a self-contained stack of Dear ImGui, GLFW, and standard C++ libraries.
+
+**Framework Migration Context:** MetaVisage v1.0.0 was built on Qt under an open-source model. With the shift to a commercial product, Qt requires a commercial license. Rather than incur that cost, the team has decided to migrate to Dear ImGui (UI rendering) and GLFW (window and OpenGL context management), paired with lightweight standard libraries to cover the remaining Qt responsibilities. Development is paused after Sprint 3 while this migration is completed via Sprints 3.5 and 3.6. Sprints 4–8 continue as originally planned, built on the new stack.
 
 **Inputs:**
 - v1.0.0 user feedback (Version_1_0_0_Feedback.md)
 - Desktop App Integration Guide (DESKTOP_APP_INTEGRATION.md) — licensing API contract from the web team
+- Desktop Auth Flow (DESKTOP_AUTH_FLOW.md) — browser-based OAuth auth flow specification
 - PRD-WebPortal.md — tier feature matrix and feature flag definitions
 
 **Sprint Structure:**
-- Sprint 1: Critical Bug Fixes & Navigation Polish
-- Sprint 2: Viewport & Global UI Infrastructure
-- Sprint 3: Stage 1 — Transform Gizmos & Texture System
+- Sprint 1: Critical Bug Fixes & Navigation Polish *(Complete)*
+- Sprint 2: Viewport & Global UI Infrastructure *(Complete)*
+- Sprint 3: Stage 1 — Transform Gizmos & Texture System *(Complete)*
+- Sprint 3.5: Framework Migration — Platform Layer (Qt → GLFW + ImGui)
+- Sprint 3.6: Framework Migration — UI Layer (Sidebars, Dialogs & System Services)
 - Sprint 4: Stage 3 — Wrap Engine Redesign (Algorithm & Preset System)
 - Sprint 5: Stage 3 — Advanced Parameters, Masking & Stage 4 Polish
 - Sprint 6: Licensing Infrastructure — Core Integration
@@ -59,7 +64,7 @@ This sprint plan covers the v2.0 release of MetaVisage. It addresses all v1.0.0 
 
 **Tasks:**
 - [x] Force the application-wide Qt palette to the existing dark theme at launch, regardless of the OS-level theme setting — use `QApplication::setStyle("Fusion")` and apply the custom dark palette unconditionally
-- [ ] Verify that all widgets (including the settings panel, which was reportedly already dark) render consistently
+- [x] Verify that all widgets (including the settings panel, which was reportedly already dark) render consistently
 - [ ] Test on a Windows 11 system configured to Light Mode
 
 #### Story 1.4: Remove FPS Counter
@@ -204,6 +209,162 @@ This sprint plan covers the v2.0 release of MetaVisage. It addresses all v1.0.0 
 
 ---
 
+## Sprint 3.5: Framework Migration — Platform Layer
+
+**Duration:** 2 weeks  
+**Goals:** Remove Qt from the project entirely and replace the platform layer — window creation, OpenGL context management, the main event loop, and input handling — with GLFW and Dear ImGui. By the end of this sprint the application must compile, launch, render the 3D viewport, and respond to camera input. All existing rendering code (shaders, VBOs, MeshRenderer, PointRenderer, GridRenderer, etc.) is carried over unchanged; only the hosting layer changes.
+
+**New Dependencies (all available via vcpkg):**
+- `glfw3` — window, OpenGL context, and raw input
+- `imgui[glfw-binding,opengl3-binding]` — UI rendering with GLFW and OpenGL3 backends
+- `glad` or `glew` — OpenGL function loading (replacing Qt's built-in loader)
+
+### Stories
+
+#### Story 3.5.1: Dependency & Build System Overhaul
+**Background:** CMakeLists.txt currently finds and links Qt6 components across the entire project. These must be replaced cleanly before any other migration work can proceed.
+
+**Tasks:**
+- [ ] Remove all `find_package(Qt6 ...)`, `qt_add_executable`, `target_link_libraries(...Qt6::...)` and Qt MOC/UIC/RCC invocations from `CMakeLists.txt`
+- [ ] Add `find_package` calls for `glfw3`, `imgui`, and `glad` (or `glew`) via vcpkg toolchain
+- [ ] Add `find_package` calls for `nlohmann_json`, `nativefiledialog-extended` (NFD), and `CURL` — these will be needed in Sprint 3.6 but should be confirmed as buildable now
+- [ ] Confirm Eigen3, Assimp, and all deformation/sculpting source files still compile cleanly with no Qt headers in scope — these are the portions that transfer without change
+- [ ] Update `build-msvc.ps1` to remove Qt deployment steps (`windeployqt`) and add any new DLL deployment steps required by GLFW/ImGui
+- [ ] Verify a clean MSVC Release build with zero errors after dependency swap (linking will fail until the application entry point is rewritten in Story 3.5.2, but compilation of non-UI translation units should succeed)
+
+#### Story 3.5.2: Application Entry Point & Main Loop
+**Background:** Qt's `QApplication::exec()` owns the event loop. This is replaced with a standard GLFW `while (!glfwWindowShouldClose)` render loop with ImGui frame management.
+
+**Tasks:**
+- [ ] Replace `main.cpp` — remove `QApplication`, create a GLFW window (`glfwCreateWindow`) at 1920×1080 with an OpenGL 4.3 Core Profile context, and implement the main render loop:
+  - `glfwPollEvents()`
+  - `ImGui_ImplGlfw_NewFrame()` / `ImGui_ImplOpenGL3_NewFrame()` / `ImGui::NewFrame()`
+  - Application update tick (stage logic, input processing)
+  - 3D viewport render pass (existing OpenGL pipeline)
+  - ImGui render pass (`ImGui::Render()` / `ImGui_ImplOpenGL3_RenderDrawData()`)
+  - `glfwSwapBuffers()`
+- [ ] Initialize Dear ImGui with `ImGui::CreateContext()`, `ImGui_ImplGlfw_InitForOpenGL()`, `ImGui_ImplOpenGL3_Init("#version 430")`, and apply the existing dark theme colours to `ImGui::GetStyle()`
+- [ ] Implement `AppWindow` class to own the GLFW window handle, ImGui context, and top-level render orchestration — this is the direct replacement for Qt's `MainWindow`
+- [ ] Enforce the always-dark background: set `glfwWindowHint(GLFW_DECORATED, GLFW_TRUE)` and clear the framebuffer to the existing dark background colour regardless of OS theme — ImGui renders entirely within the OpenGL context so OS light/dark mode has no effect
+- [ ] Implement clean shutdown: `ImGui_ImplOpenGL3_Shutdown()`, `ImGui_ImplGlfw_Shutdown()`, `ImGui::DestroyContext()`, `glfwDestroyWindow()`, `glfwTerminate()`
+
+#### Story 3.5.3: OpenGL Context & Viewport Rendering
+**Background:** The existing `ViewportWidget` (a `QOpenGLWidget` subclass) managed its own OpenGL context. The rendering code inside it — `Renderer`, `MeshRenderer`, `PointRenderer`, `ShaderManager` — is entirely portable and does not need to change. Only the hosting mechanism changes.
+
+**Tasks:**
+- [ ] Remove `ViewportWidget` as a Qt widget — convert it to a plain `Viewport` class that receives the framebuffer region to render into (defined by an `ImVec2` position and size passed from the ImGui layout each frame)
+- [ ] Use `ImGui::GetWindowDrawList()` and `ImGui::InvisibleButton()` with a matching size to create a mouse-interactive 3D viewport region within the ImGui window — route all mouse events from this region to the existing camera and sculpting input handlers
+- [ ] Restore OpenGL state after the 3D render pass before handing back to ImGui (depth test, blend mode, VAO binding) — ImGui requires a clean GL state
+- [ ] Implement dual-viewport layout for Stage 2 using two side-by-side `ImGui::InvisibleButton` regions within the same ImGui window, each with their own scissor rect and render pass — this replaces `ViewportContainer` and `QSplitter`
+- [ ] Verify the grid, mesh rendering, point markers, brush cursor, orientation gizmo, and shading mode overlay all render correctly in the new hosting context
+
+#### Story 3.5.4: Input Handling
+**Background:** Qt's mouse and keyboard event system (`mousePressEvent`, `keyPressEvent`, etc.) is replaced with GLFW callbacks and ImGui's input polling.
+
+**Tasks:**
+- [ ] Register GLFW callbacks (`glfwSetMouseButtonCallback`, `glfwSetCursorPosCallback`, `glfwSetScrollCallback`, `glfwSetKeyCallback`) and forward events to the appropriate handler (camera controls, transform tools, sculpting, point placement) only when ImGui is not consuming the input (`!ImGui::GetIO().WantCaptureMouse`, `!ImGui::GetIO().WantCaptureKeyboard`)
+- [ ] Re-implement all keyboard shortcuts (G/R/S transform modes, X/Y/Z axis constraints, Numpad camera views, `[`/`]` brush radius, `Delete` for points, `Escape` to cancel) using GLFW key codes in the main input dispatch
+- [ ] Implement the `[ ]` brush radius shortcut and `Delete` key for point removal via the GLFW key callback
+- [ ] Verify camera orbit (middle mouse), pan (Shift + middle mouse), and zoom (scroll wheel) all function correctly in the new input system
+
+### Acceptance Criteria
+- [ ] Project compiles with zero Qt dependencies — no Qt headers included anywhere, no Qt libraries linked
+- [ ] Application launches and displays a GLFW window with the dark background
+- [ ] Dear ImGui initializes and renders (confirm with a placeholder debug window)
+- [ ] The 3D viewport renders the grid, and loaded meshes render correctly with all shading modes
+- [ ] Camera orbit, pan, and zoom work via mouse input
+- [ ] All keyboard shortcuts function correctly
+- [ ] Dual-viewport layout renders correctly for Stage 2 (two side-by-side viewports, camera sync intact)
+- [ ] `build-msvc.ps1` builds cleanly with the new dependency set
+- [ ] No regressions in rendering quality compared to the Qt-hosted version
+
+---
+
+## Sprint 3.6: Framework Migration — UI Layer
+
+**Duration:** 2 weeks  
+**Goals:** Re-implement all user-facing UI in Dear ImGui — the menu bar, all four stage sidebar panels, all dialogs and modals — and replace Qt's system service APIs (networking, file dialogs, settings, single-instance detection, URL opening) with their lightweight standard equivalents. By the end of this sprint the application must be fully functional across all four stages with feature parity to the Qt version as it stood at the end of Sprint 3.
+
+**New Dependencies (all available via vcpkg):**
+- `nativefiledialog-extended` (NFD) — native Windows file open/save dialogs
+- `curl` — HTTP networking (replaces `QNetworkAccessManager`, needed for Sprint 6)
+- `stb` — `stb_image.h` for texture thumbnail decoding (header-only, likely already present)
+
+### Stories
+
+#### Story 3.6.1: ImGui Layout Architecture & Menu Bar
+**Background:** The application layout — menu bar across the top, 3D viewport on the left, sidebar on the right — must be implemented as a set of ImGui windows docked to the main GLFW window. Dear ImGui's docking API (`ImGui::DockSpace`) is used to create a stable, resizable layout without floating panels.
+
+**Tasks:**
+- [ ] Enable ImGui docking (`ImGuiConfigFlags_DockingEnable`) and create a full-window dockspace as the root layout container
+- [ ] Define three docked regions: `MenuBar` (top, fixed height), `Viewport` (centre-left, fills remaining space), `Sidebar` (right, fixed 320px width, scrollable)
+- [ ] Implement the `ImGui::BeginMainMenuBar()` menu bar with all menus restored:
+  - **File**: New Project, Open Project, Save Project (`Ctrl+S`), Save As (`Ctrl+Shift+S`), Export Mesh (Stage 4 only — hidden in other stages via `ImGui::BeginDisabled`), Exit
+  - **Edit**: Undo (`Ctrl+Z`), Redo (`Ctrl+Shift+Z`)
+  - **View**: Shading Mode submenu, Show/Hide Grid, camera view presets (Front/Right/Top/Perspective)
+  - **Help**: Documentation, Account & License, Check for Updates, Keyboard Shortcuts, About
+- [ ] Implement stage-sensitive menu item visibility — items not relevant to the current stage are hidden or disabled, matching the behaviour specified in Sprint 1.2
+- [ ] Implement the status bar as a fixed-height ImGui window anchored to the bottom of the screen, displaying current tool, contextual hint text, and the tier badge from the license manager
+
+#### Story 3.6.2: Stage Sidebar Panels
+**Background:** All four stage sidebar panels must be re-implemented in ImGui, reproducing the full control set delivered in Sprints 1–3 and designed to accommodate the additions coming in Sprints 4–5.
+
+**Tasks:**
+- [ ] **Stage 1 — Alignment sidebar**: mesh load status (morph/target file paths and load buttons), transform mode indicator (Move/Rotate/Scale active tool), position and scale readouts (X/Y/Z), Reset Transform button, stage validation message, Next Stage button — all signals/slots replaced with direct state reads and writes on the `Project` singleton each frame
+- [ ] **Stage 2 — Point Reference sidebar**: active viewport indicator, target/morph point count displays with colour-coded match status, scrollable point correspondence list (selectable rows), point size slider, symmetry enable checkbox and axis selector (X/Y/Z), Clear All Points button with inline confirmation, Next Stage button
+- [ ] **Stage 3 — Morph/Wrap sidebar**: preset card row (horizontal scroll, 128×80px image cards with selection highlight, `+ Save Preset` card), Vertex Masking section (always visible), collapsible General and Advanced parameter sections (collapse state persisted in config), Process button, Cancel button, progress bar, preview mode dropdown, Accept Result / Re-process buttons, Reset to Defaults button, Next Stage button — full parameter hierarchy from Sprint 5 spec scaffolded here, enabled in Sprint 5
+- [ ] **Stage 4 — Touch Up sidebar**: 2×2 visual brush card selector (brush preview images, active highlight), radius slider, strength slider, falloff combo, symmetry toggle and axis selector, target overlay checkbox, Finalize and Export button
+- [ ] Implement the stage indicator (`1 / 4`, `2 / 4`, etc.) as a persistent element at the top of the sidebar across all stages
+- [ ] Implement `ImGui::BeginDisabled()` / `ImGui::EndDisabled()` guards on all Next Stage buttons when stage validation conditions are not met, with an inline validation message below the button explaining what is missing
+
+#### Story 3.6.3: Dialogs & Modals
+**Background:** Qt's `QDialog`, `QMessageBox`, and `QFileDialog` classes must be replaced. File dialogs use NFD for native OS pickers; all other dialogs are implemented as ImGui modal popups.
+
+**Tasks:**
+- [ ] **File dialogs**: replace all `QFileDialog::getOpenFileName` / `getSaveFileName` calls with `NFD_OpenDialog` / `NFD_SaveDialog` from `nativefiledialog-extended` — applies to mesh loading (FBX/OBJ/GLTF filter), texture loading (PNG/JPG/TGA filter), project open/save (`.mmproj` filter), and export (FBX/OBJ filter)
+- [ ] **Confirmation dialogs**: replace `QMessageBox::question` with `ImGui::OpenPopup` / `ImGui::BeginPopupModal` — applies to Clear All Points, Delete Point, Delete User Preset, Sign Out, and stage-change-with-unsaved-changes confirmations
+- [ ] **Error dialogs**: replace `ErrorHelper` / `QMessageBox::critical` with a reusable `ShowErrorModal(title, message)` helper that opens a centred ImGui modal with an OK button — applies to mesh load failures, export failures, and validation errors
+- [ ] **About dialog**: re-implement as an ImGui modal with application name, version, and MIT/proprietary notice
+- [ ] **Keyboard Shortcuts dialog**: re-implement as a scrollable ImGui modal listing all shortcuts in a two-column table
+- [ ] **Texture Preview modal**: display the full-resolution texture in an `ImGui::Image()` call within a resizable modal, with the texture name, filepath, and dimensions shown below — texture is uploaded to a GL texture and passed as an `ImTextureID`
+- [ ] **Export dialog**: re-implement as an ImGui modal containing the format selector, triangulate checkbox, scale factor input, include materials toggle, and the Export button — triggers NFD save dialog to choose the output path
+
+#### Story 3.6.4: System Service Replacements
+**Background:** Qt provided several system-level services that have no ImGui equivalent and must be replaced with OS-level or standard library solutions.
+
+**Tasks:**
+- [ ] **Settings/Config persistence**: replace `QSettings` with a hand-written JSON config file at `%APPDATA%\MetaVisage\config.json` using `nlohmann::json` — store: last opened project path, sidebar collapse states, window size, recent projects list (max 10 entries). Read on launch, write on clean exit and on any setting change
+- [ ] **Open URL**: replace `QDesktopServices::openUrl()` with `ShellExecuteEx(NULL, "open", url, ...)` — used for the Documentation link, Manage Subscription link, and the auth browser launch in Sprint 6
+- [ ] **Recent projects list**: re-implement using the JSON config; populate the landing screen on launch by reading the `recentProjects` array; on project open/save, prepend to the list and trim to 10 entries; display as a scrollable ImGui list within the new project / landing modal
+- [ ] **libcurl initialisation**: call `curl_global_init(CURL_GLOBAL_DEFAULT)` at application startup and `curl_global_cleanup()` at shutdown — this prepares libcurl for use in Sprint 6 without requiring further setup work at that point. Implement a reusable `HttpClient::Post(url, headers, body)` helper that wraps a synchronous `CURL*` easy handle and returns `{statusCode, responseBody}` — Sprint 6 will call this from a `std::thread` to avoid blocking the render loop
+- [ ] **Single-instance detection & Named Pipe**: implement the single-instance pattern using a Win32 Named Pipe (`\\.\pipe\MetaVisageSingleInstance`) — on launch, attempt to create the pipe server; if creation fails (pipe already exists), open it as a client, write the command-line arguments (the `metavisage://` URI if present) to the pipe, and exit; the first instance reads from the pipe in a background `std::thread` and passes any received URI to the auth handler. This replaces `QLocalServer`/`QLocalSocket` and is required for the Sprint 6 deep link auth flow
+- [ ] **Threading**: audit all remaining uses of `QThread`, `QMutex`, `QWaitCondition`, and `QAtomicInt` — replace with `std::thread`, `std::mutex`, `std::condition_variable`, and `std::atomic`. The `MorphWorker` thread in `MainWindow.cpp` and the texture thumbnail loader are the primary targets; `MeshDeformer` already uses `std::atomic<bool>` for cancellation and requires no change
+
+#### Story 3.6.5: Shading Mode Viewport Overlay & Orientation Gizmo (ImGui Port)
+**Background:** Sprints 2.1 and 2.2 implemented the shading mode overlay and orientation gizmo in Qt. These need to be re-implemented in the ImGui context — the underlying OpenGL rendering is unchanged, but the overlay widget hosting changes.
+
+**Tasks:**
+- [ ] Re-implement the shading mode overlay as a small `ImGui::SetNextWindowPos`-anchored window in the top-left of the viewport region, rendered after the 3D pass — contains a compact `ImGui::Combo` for Solid / Wireframe / Solid+Wireframe
+- [ ] The orientation gizmo continues to be rendered via OpenGL (as implemented in Sprint 2.2) directly into the viewport framebuffer — no ImGui changes needed; verify it still renders correctly in the new viewport hosting
+
+### Acceptance Criteria
+- [ ] Application launches into the full ImGui layout with menu bar, 3D viewport, and sidebar
+- [ ] All four stage sidebar panels are present and functionally complete
+- [ ] Stage transitions work correctly — Next Stage buttons validate and advance the stage, sidebar panel switches
+- [ ] All file dialogs (mesh load, texture load, project open/save, export) open native Windows pickers via NFD
+- [ ] All confirmation and error dialogs function correctly as ImGui modals
+- [ ] About, Keyboard Shortcuts, Texture Preview, and Export dialogs open and display correctly
+- [ ] `config.json` is written on exit and read on launch; recent projects list, window size, and sidebar collapse states are restored
+- [ ] `ShellExecuteEx` opens URLs correctly in the default browser
+- [ ] Named Pipe single-instance detection works — a second launch forwards its arguments to the first instance and exits
+- [ ] `HttpClient::Post()` helper compiles and returns correct results against a test endpoint
+- [ ] libcurl initialises and shuts down cleanly with no memory leaks
+- [ ] `MorphWorker` and texture loader threads use `std::thread` / `std::mutex` exclusively — no remaining `QThread` usage
+- [ ] No Qt headers or libraries remain anywhere in the codebase or build system
+- [ ] Full workflow (Stage 1 → Stage 4 → Export) completes without crashes or regressions compared to the Qt version at end of Sprint 3
+
+---
+
 ## Sprint 4: Stage 3 — Wrap Engine Redesign (Algorithm & Preset System)
 
 **Duration:** 2 weeks  
@@ -341,67 +502,103 @@ This sprint plan covers the v2.0 release of MetaVisage. It addresses all v1.0.0 
 ## Sprint 6: Licensing Infrastructure — Core Integration
 
 **Duration:** 2 weeks  
-**Goals:** Integrate the desktop application with the MetaVisage licensing API. This sprint covers the full license validation flow, JWT caching, offline grace period, and the in-app license entry and status UI. This is the foundational sprint enabling the transition to the paid model.
+**Goals:** Implement the browser-based OAuth-style authentication flow using the `metavisage://` custom URL scheme, as documented in `DESKTOP_AUTH_FLOW.md`. Users open the app, are directed to the web portal to sign in, and the portal redirects back to the desktop app automatically — no manual license key copying required. This sprint also covers session storage, the offline JWT cache, and the in-app license status UI.
 
 ### Stories
 
-#### Story 6.1: License Key Entry & Storage
-**Background:** Users receive a 32-character hex license key from the web portal dashboard. The desktop app must provide a way to enter this key and store it securely.
+#### Story 6.1: LicenseManager Foundation & Auth State
+**Background:** All license and session operations need a central owner before any auth flow can be wired up.
 
 **Tasks:**
-- [ ] Add a `LicenseManager` singleton class responsible for all license-related operations: key storage, JWT caching, validation calls, and feature flag access
-- [ ] On first launch (no cached license), show a license entry dialog: a text input for the license key, a "Validate" button, and a link to `https://metavisage.io` to obtain a key
-- [ ] The free tier must still be accessible — add a "Continue with Free Tier" button that calls the validation API with no key and accepts a free-tier JWT response; this allows users who signed up for free to use the app without manually copying a key if one is provided
-- [ ] Store the license key securely in `QSettings` under an obfuscated key name
-- [ ] If a valid cached JWT already exists on launch, skip the entry dialog and proceed directly to the application
+- [ ] Add a `LicenseManager` singleton class responsible for: session token storage, JWT caching, auth flow initiation, token refresh, feature flag access, and conversion tracking
+- [ ] Define the session state machine: `Unauthenticated` → `Authenticating` (browser open, waiting for deep link) → `Authenticated` → `Expired` / `Inactive`
+- [ ] On app launch, check for a valid cached session (Story 6.3): if found and within grace period, transition to `Authenticated` and proceed; if not found, transition to `Unauthenticated` and show the sign-in prompt
+- [ ] Add a sign-in prompt screen (shown in place of the main application when unauthenticated): MetaVisage branding, a "Sign In / Create Account" primary button, and a brief explanation of why sign-in is required — no manual key input field
+- [ ] Configure the API base URL via a compile-time constant (`METAVISAGE_API_BASE_URL`), with staging (`https://staging.metavisage.io`) and local dev (`http://localhost:3000`) values available via CMake build flags
 
-#### Story 6.2: License Validation API Integration
-**Background:** The app must call `POST /api/license/validate` on launch (and periodically every 24 hours) to obtain a fresh signed JWT. See `DESKTOP_APP_INTEGRATION.md` for the full API contract.
-
-**Tasks:**
-- [ ] Implement `LicenseManager::ValidateOnline()` using `QNetworkAccessManager` to call `POST https://metavisage.io/api/license/validate` with `Authorization: Bearer <license_key>`
-- [ ] Parse the JSON response: extract `token`, `tier`, `conversions_used`, `conversions_limit`, `conversions_reset_at`
-- [ ] On success (HTTP 200): cache the JWT (Story 6.3), update in-memory tier and usage state
-- [ ] Handle all documented error codes with appropriate user-facing messages:
-  - `401 unauthorized` — "Invalid license key. Please check your key at metavisage.io."
-  - `403 inactive` — "Your subscription has been cancelled. Please resubscribe at metavisage.io."
-  - `403 expired` — "Your payment is past due. Please update your payment method at metavisage.io."
-  - `404 not_found` — "No active license found for this key."
-  - `429 rate_limited` — Respect `Retry-After` header; retry silently after the specified delay
-  - `500 internal_error` — Retry with exponential backoff (1s, 2s, 4s, max 30s); fall back to cached JWT
-- [ ] Set up a 24-hour `QTimer` to trigger background re-validation while the app is running; re-validation failures fall back to the cached JWT silently if within the grace window
-- [ ] Configure the API base URL via a compile-time constant (`METAVISAGE_API_BASE_URL`), with staging and local dev values available via build flags
-
-#### Story 6.3: JWT Cache (Offline Grace Period)
-**Background:** The cached JWT allows the app to function for up to 7 days without network access. The cache must be encrypted to prevent copying between machines.
+#### Story 6.2: Browser Launch & Custom URL Scheme Interception
+**Background:** The auth flow begins by opening the system browser to the web portal and ends when the portal redirects back to the desktop app via the `metavisage://` custom URL scheme. The desktop side must generate the state parameter, open the browser, and then intercept the deep link URI when it arrives.
 
 **Tasks:**
-- [ ] On successful validation, serialize the raw JWT string to a local cache file (`%APPDATA%\MetaVisage\license.cache`)
-- [ ] Encrypt the cache file using AES-256 with a key derived from: the Windows machine GUID (`HKLM\SOFTWARE\Microsoft\Cryptography\MachineGuid`) concatenated with the user's license key, passed through SHA-256
-- [ ] On app launch, if online validation fails or the device is offline: attempt to load and decrypt the cached JWT; verify the JWT signature using `LICENSE_JWT_SECRET` (embedded as a compile-time constant)
-- [ ] Check the JWT `exp` claim: if not expired (within the 7-day window), grant full access using the cached tier and feature flags
-- [ ] If the cached JWT is expired and the device is offline: show a dialog informing the user they must connect to the internet to continue, with a "Retry" button
-- [ ] On `403 inactive` or `403 expired` responses: clear the cache file and downgrade/block access
+- [ ] Implement `LicenseManager::BeginAuthFlow()`:
+  - Generate a cryptographically random 32-character state string using `QRandomGenerator::global()->generate()` (or OS entropy via `BCryptGenRandom` for stronger entropy)
+  - Store the state in memory for later validation
+  - Open `https://metavisage.io/desktop-auth/init?state={state}` via `QDesktopServices::openUrl()`
+  - Transition auth state to `Authenticating`; show a waiting UI ("Waiting for sign-in in your browser... Cancel" with a cancel button that aborts the flow)
+- [ ] Handle the `metavisage://` deep link URI on Windows — the OS launches the application with the URI as a command-line argument (`argv[1]`) when the scheme is triggered. Parse `argv` at startup and detect if a `metavisage://auth?...` URI is present
+- [ ] Handle the **already-running** case: if the app is already open when the deep link fires, Windows will launch a second instance. The second instance must forward the URI to the first via `QLocalServer`/`QLocalSocket` (single-instance pattern) and then exit. The first instance receives the URI via the local socket and continues the auth flow
+- [ ] Implement `LicenseManager::HandleDeepLink(const QString& uri)`: parse `code` and `state` query parameters from the `metavisage://auth?code=...&state=...` URI
+- [ ] Validate that the `state` parameter in the deep link exactly matches the one generated in `BeginAuthFlow()` — if they do not match, abort the flow, show an error ("Authentication failed: security check failed. Please try again."), and return to the sign-in prompt
+- [ ] On successful state validation, proceed to the code exchange (Story 6.3)
+- [ ] Handle timeout: if no deep link is received within 5 minutes of opening the browser, cancel the flow automatically and return to the sign-in prompt with a message ("Sign-in timed out. Please try again.")
 
-#### Story 6.4: License Status UI
-**Background:** Users need to see their current license status, tier, and remaining conversions within the application.
+#### Story 6.3: Code Exchange & Session Storage
+**Background:** After intercepting the deep link and validating the state, the desktop app exchanges the short-lived code for the actual session tokens and license JWT via `POST /api/desktop/exchange`.
 
 **Tasks:**
-- [ ] Add a "License" item to the `Help` menu that opens a `LicenseStatusDialog`
-- [ ] `LicenseStatusDialog` displays: current tier name, conversions used / conversions limit for the current period, reset date, license key (masked except last 4 characters), validation status (Online / Offline - Grace Period / Expired), and a "Manage Subscription" link that opens `https://metavisage.io/dashboard`
+- [ ] Implement `LicenseManager::ExchangeCode(const QString& code)` using `QNetworkAccessManager`:
+  - `POST https://metavisage.io/api/desktop/exchange` with JSON body `{"code": "{code}"}`
+  - No `Authorization` header required — the code is the credential
+  - Parse the response: extract `access_token`, `refresh_token`, `license_jwt`
+  - On `400 Bad Request` (code expired or already used): show a clear error ("The sign-in link expired. Please sign in again.") and restart the auth flow — exchange codes are single-use and expire after 2 minutes
+  - On `429 Too Many Requests`: respect the `Retry-After` header and retry silently
+- [ ] On successful exchange:
+  - Store `access_token` and `refresh_token` encrypted in `%APPDATA%\MetaVisage\session.cache` using AES-256 with a key derived from the Windows machine GUID (`HKLM\SOFTWARE\Microsoft\Cryptography\MachineGuid`) passed through SHA-256
+  - Store the `license_jwt` encrypted in `%APPDATA%\MetaVisage\license.cache` using the same derivation scheme
+  - Verify the JWT signature using `LICENSE_JWT_SECRET` (embedded as a compile-time constant, never committed to the repository)
+  - Transition auth state to `Authenticated` and dismiss the sign-in prompt, revealing the main application
+- [ ] On app launch with a valid cached session, skip the browser flow entirely and load the cached `license_jwt` directly — no network call needed until the 24-hour refresh timer fires
+
+#### Story 6.4: Token Refresh & Ongoing Validation
+**Background:** Supabase access tokens are short-lived. The app uses `POST /api/desktop/token` (authenticated with the Supabase access token) to get a fresh license JWT, replacing the license-key-based `POST /api/license/validate` flow from the original plan.
+
+**Tasks:**
+- [ ] Implement `LicenseManager::RefreshLicenseJWT()` using `QNetworkAccessManager`:
+  - `POST https://metavisage.io/api/desktop/token` with `Authorization: Bearer {access_token}`
+  - Parse the response: extract `token`, `tier`, `conversions_used`, `conversions_limit`, `conversions_reset_at`
+  - Update the cached `license_jwt`, in-memory tier, and usage counters
+  - On `401 Unauthorized` (access token expired): use the stored refresh token to obtain a new access token via the Supabase client library, then retry `RefreshLicenseJWT()` once with the fresh access token; if the refresh token is also invalid, transition to `Unauthenticated` and prompt re-authentication
+  - On `403 Forbidden` (subscription inactive/cancelled/past due): clear the license cache, transition to `Inactive`, and show a non-blocking banner: "Your subscription is inactive. [Manage at metavisage.io]"
+  - On `404 Not Found` (no active license): same treatment as `403 Forbidden`
+  - On `429 Too Many Requests`: respect `Retry-After`; retry silently (rate limit is 20 req/min)
+  - On `500`: retry with exponential backoff (1s, 2s, 4s, max 30s); fall back to cached JWT
+- [ ] Set up a 24-hour `QTimer` to trigger `RefreshLicenseJWT()` in the background while the app is running; failures within the 7-day grace window fall back to the cached JWT silently
+- [ ] For launch-time validation, `POST /api/license/validate` also accepts a Supabase access token as the Bearer credential (same response shape as `/api/desktop/token`) — use this endpoint on launch to get an immediate fresh JWT before the timer fires
+
+#### Story 6.5: Offline Grace Period
+**Background:** The cached license JWT allows the app to function for up to 7 days without network access.
+
+**Tasks:**
+- [ ] On app launch, if the network is unavailable or all token refresh attempts fail: load and decrypt the cached `license_jwt` from `%APPDATA%\MetaVisage\license.cache`
+- [ ] Verify the JWT signature against `LICENSE_JWT_SECRET` and check the `exp` claim — if within the 7-day window, grant full access using the cached tier and feature flags; show a non-blocking status bar notice: "Offline mode — using cached license"
+- [ ] If the cached JWT is expired and all refresh attempts fail: show a blocking dialog ("No internet connection and your offline license has expired. Please connect to the internet to continue.") with a "Retry" button that re-attempts the refresh flow
+- [ ] On a successful online refresh after an offline period: clear the offline notice and update the cache silently
+
+#### Story 6.6: License Status UI
+**Background:** Users need to see their current session and license status from within the application.
+
+**Tasks:**
+- [ ] Add a "Account & License" item to the `Help` menu that opens a `LicenseStatusDialog`
+- [ ] `LicenseStatusDialog` displays: signed-in account email, current tier name, conversions used / conversions limit, reset date, validation status (Online / Offline – Grace Period / Inactive), and a "Manage Subscription" button that opens `https://metavisage.io/dashboard`
+- [ ] Add a "Sign Out" button in the dialog that clears both the session cache and license cache, then transitions to `Unauthenticated` — requires confirmation ("Signing out will require you to sign in again to use MetaVisage. Continue?")
 - [ ] Add a small persistent tier indicator to the status bar (e.g. "Free", "Indie", "Pro") so users always know which tier they are on
 
 ### Acceptance Criteria
-- [ ] First-launch license entry dialog appears when no cached JWT exists
-- [ ] Entering a valid license key validates successfully and stores the JWT
-- [ ] "Continue with Free Tier" button functions correctly for free accounts
-- [ ] `POST /api/license/validate` is called on launch and every 24 hours
-- [ ] All documented error codes produce appropriate user-facing messages
-- [ ] The cached JWT is encrypted and stored in `%APPDATA%\MetaVisage\license.cache`
-- [ ] App functions offline for up to 7 days using the cached JWT
-- [ ] App blocks access and prompts reconnection when the cached JWT is expired and offline
-- [ ] `403` errors clear the cache and block/downgrade access
-- [ ] `Help > License` opens the `LicenseStatusDialog` with correct information
+- [ ] First launch with no cached session shows the sign-in prompt screen (no license key field)
+- [ ] Clicking "Sign In / Create Account" opens the system browser to `https://metavisage.io/desktop-auth/init?state=...`
+- [ ] The app shows a "Waiting for sign-in..." state while the browser is open
+- [ ] The `metavisage://` deep link is intercepted correctly whether the app is newly launched or already running
+- [ ] A mismatched `state` parameter aborts the flow and shows an error
+- [ ] An expired or already-used exchange code shows a clear error and restarts the flow
+- [ ] Successful code exchange stores encrypted session and license cache files
+- [ ] Subsequent launches with a valid cache skip the browser flow entirely
+- [ ] `POST /api/desktop/token` is called every 24 hours to refresh the license JWT
+- [ ] An expired Supabase access token triggers a silent refresh token exchange before retrying
+- [ ] A `403` or `404` from the token endpoint shows the inactive subscription banner
+- [ ] App functions offline for up to 7 days using the cached JWT, with a status bar notice
+- [ ] Expired offline cache shows a blocking reconnection dialog
+- [ ] `Help > Account & License` opens `LicenseStatusDialog` with correct account and usage data
+- [ ] "Sign Out" clears all cached credentials and returns to the sign-in prompt
 - [ ] Tier badge appears in the status bar
 
 ---
@@ -492,20 +689,22 @@ This sprint plan covers the v2.0 release of MetaVisage. It addresses all v1.0.0 
 ### Stories
 
 #### Story 8.1: Inno Setup Installer
-**Background:** v1.0.0 had no installer — users received raw application files. An installer is required for professional distribution and for WinSparkle to function correctly.
+**Background:** v1.0.0 had no installer — users received raw application files. An installer is required for professional distribution, for WinSparkle to function correctly, and critically, to register the `metavisage://` custom URL scheme that the Sprint 6 auth flow depends on.
 
 **Tasks:**
 - [ ] Install and configure Inno Setup 6.x
 - [ ] Write the Inno Setup script (`installer/metavisage_setup.iss`):
   - Application name, version, publisher metadata
   - Install directory: `%PROGRAMFILES%\MetaVisage`
-  - Bundle all Qt DLLs, Assimp DLL, and application assets (shaders, models, preset thumbnails, brush previews)
+  - Bundle all Qt DLLs, Assimp DLL, WinSparkle DLL, and application assets (shaders, models, preset thumbnails, brush previews)
   - Create Start Menu shortcuts
   - Create Desktop shortcut (optional, user-selectable during install)
   - Register application in Windows `Add or Remove Programs`
-  - Uninstaller that cleanly removes all installed files but does not delete `%APPDATA%\MetaVisage` (preserving projects, license cache, and user presets)
+  - Uninstaller that cleanly removes all installed files but does not delete `%APPDATA%\MetaVisage` (preserving projects, session cache, license cache, and user presets)
+- [ ] Register the `metavisage://` custom URL scheme in the Inno Setup `[Registry]` section so that deep links from the browser auth flow fire correctly after installation. The uninstaller must also remove these registry entries (`Flags: uninsdeletekey`)
 - [ ] Automate installer build via a PowerShell script (`package-release.ps1`) that runs the Inno Setup compiler after the MSVC Release build
 - [ ] Test installer on a clean Windows 10 and Windows 11 VM with no Qt or MSVC redistributables pre-installed
+- [ ] On the test VMs, verify the full auth flow end-to-end: install → launch → sign-in browser opens → portal redirects → `metavisage://` deep link fires → app receives the URI and completes authentication
 
 #### Story 8.2: WinSparkle Auto-Update
 **Background:** There is currently no mechanism for users to receive application updates. WinSparkle provides a standard Sparkle-compatible update check and download flow for Windows applications.
@@ -545,8 +744,10 @@ This sprint plan covers the v2.0 release of MetaVisage. It addresses all v1.0.0 
 
 ### Acceptance Criteria
 - [ ] `MetaVisage_Setup_2.0.0.exe` installs the application cleanly on Windows 10 and Windows 11
+- [ ] `metavisage://` URL scheme is registered in the Windows registry after installation and removed cleanly by the uninstaller
+- [ ] Full auth flow works end-to-end on a clean install: launch → browser sign-in → portal redirect → deep link fires → app authenticates
 - [ ] Installed application launches, validates license, and completes the full workflow
-- [ ] Uninstaller removes the application and does not delete user data in `%APPDATA%\MetaVisage`
+- [ ] Uninstaller removes the application and registry entries but does not delete user data in `%APPDATA%\MetaVisage`
 - [ ] `Help > Check for Updates` triggers a WinSparkle update check
 - [ ] WinSparkle performs a background check on launch
 - [ ] Free, Indie, and Pro tier workflows each behave correctly per their feature flags
@@ -560,19 +761,27 @@ This sprint plan covers the v2.0 release of MetaVisage. It addresses all v1.0.0 
 
 ## Notes
 
+**Framework Migration (Sprints 3.5 & 3.6):**
+- The portions of the codebase that transfer to the new stack without modification are: all GLSL shaders, all VBO/IBO/VAO rendering code, `Renderer`, `MeshRenderer`, `PointRenderer`, `ShaderManager`, `GridRenderer`, the entire `core/` data model (`Mesh`, `Transform`, `Project`, `Camera`), `ProjectSerializer`, all deformation code (`RBFInterpolator` removal notwithstanding, `NRICPDeformer`, `MeshDeformer`), all sculpting brushes, `RayCaster`, and `BVH`/`SpatialHash`. These represent the majority of the codebase by line count — the migration is a UI and hosting layer rewrite, not a ground-up rebuild.
+- Dear ImGui's docking API (enabled via `ImGuiConfigFlags_DockingEnable`) is used to create the stable sidebar + viewport layout. The docking branch has been merged into Dear ImGui's main branch as of v1.89 and is stable for production use.
+- The `stb_image.h` header may already be present in the project (it is commonly bundled with ImGui examples). Confirm before adding it as a separate vcpkg dependency.
+
 **Deferred to Post-v2.0:**
 - Orientation gizmo click-to-snap-view interaction
 - Stage 1 numeric transform spinboxes (editable)
 - Batch processing (reserved for Studio tier, per PRD-WebPortal.md)
-- macOS and Linux support
+- macOS and Linux support (GLFW and ImGui are cross-platform; a future macOS/Linux port is more feasible on this stack than it was on Qt without a commercial license)
 - Automated/ML-assisted point placement
 - Annual billing and team accounts (handled by web portal in a future phase)
 
 **Dependency Notes:**
-- Sprint 6 and 7 depend on the web portal's license API (`/api/license/validate` and `/api/license/conversion`) being deployed to production before or concurrent with this work. Staging environment (`https://staging.metavisage.io`) should be used for integration testing throughout Sprints 6–7.
+- Sprint 6 depends on the web portal's `/desktop-auth/init`, `/desktop-auth/success`, `POST /api/desktop/exchange`, `POST /api/desktop/token`, and `POST /api/license/validate` endpoints being deployed to the staging environment (`https://staging.metavisage.io`) before or concurrent with desktop development. Coordinate with the web team to confirm staging availability at the start of Sprint 6.
+- The Named Pipe single-instance implementation (Story 3.6.4) and the `metavisage://` deep link interception (Story 6.2) are closely related. The pipe server thread started in 3.6.4 is the same thread that receives forwarded deep link URIs in 6.2 — treat them as a single mechanism, not two separate ones. The pipe server must be running before the auth flow can handle already-running instance redirects.
+- The `metavisage://` URL scheme is registered by the Inno Setup installer (Sprint 8), but developers can manually add the registry entry on their dev machines during Sprint 6 to test the deep link interception without waiting for the installer.
 - Sprint 8 WinSparkle integration requires the `appcast.xml` endpoint to be live on `metavisage.io` before release testing can be completed.
-- The `LICENSE_JWT_SECRET` shared secret must be agreed upon between the desktop and web teams before Sprint 6 begins and should be provided as a build-time constant via a secure mechanism (not committed to the repository).
+- The `LICENSE_JWT_SECRET` shared secret must be agreed upon between the desktop and web teams before Sprint 6 begins and provided as a build-time compile constant via a secure mechanism — never committed to the repository.
 
 **Risk Mitigation:**
 - The "cottage cheese face" artifact (Sprint 5.2) has an open-ended investigation scope. If the root cause is not resolved within Sprint 5, apply a conservative parameter warning as a stopgap and schedule a dedicated algorithm spike in a future sprint.
 - Feature flag enforcement (Sprint 7) must be tested against all three tiers before release; enlist web team support to provision test accounts at each tier for QA.
+- If the ImGui docking layout proves unstable or difficult to constrain to the desired sidebar-fixed / viewport-fills-remaining layout, a fallback approach is to use a non-docked layout with manually computed `ImGui::SetNextWindowPos` and `ImGui::SetNextWindowSize` calls each frame — simpler but requires manual resize tracking.

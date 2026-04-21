@@ -53,8 +53,6 @@ Renderer::~Renderer() {
 }
 
 bool Renderer::Initialize() {
-    initializeOpenGLFunctions();
-
     shaderManager_ = std::make_unique<ShaderManager>();
 
     // Load shaders

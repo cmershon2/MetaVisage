@@ -14,7 +14,6 @@ MeshRenderer::MeshRenderer()
       indexCount_(0),
       vertexCount_(0),
       hasVertexColors_(false) {
-    initializeOpenGLFunctions();
 }
 
 MeshRenderer::~MeshRenderer() {

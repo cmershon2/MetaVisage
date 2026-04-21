@@ -1,7 +1,7 @@
 #ifndef RENDERER_H
 #define RENDERER_H
 
-#include <QOpenGLFunctions_4_3_Core>
+#include <GL/glew.h>
 #include <memory>
 #include <map>
 #include <vector>
@@ -18,7 +18,7 @@ class MeshRenderer;
 class Project;
 class TextureData;
 
-class Renderer : protected QOpenGLFunctions_4_3_Core {
+class Renderer {
 public:
     Renderer();
     ~Renderer();

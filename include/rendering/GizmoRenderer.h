@@ -1,7 +1,7 @@
 #ifndef GIZMORENDERER_H
 #define GIZMORENDERER_H
 
-#include <QOpenGLFunctions_4_3_Core>
+#include <GL/glew.h>
 #include <vector>
 #include <map>
 #include <string>
@@ -37,7 +37,7 @@ struct GizmoModel {
     std::vector<GizmoSubMesh> subMeshes;
 };
 
-class GizmoRenderer : protected QOpenGLFunctions_4_3_Core {
+class GizmoRenderer {
 public:
     GizmoRenderer();
     ~GizmoRenderer();

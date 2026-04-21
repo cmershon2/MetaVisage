@@ -1,0 +1,205 @@
+#ifndef METAVISAGE_VIEWPORT_H
+#define METAVISAGE_VIEWPORT_H
+
+#include <QString>
+#include <functional>
+#include <memory>
+
+#include "core/Camera.h"
+#include "core/Types.h"
+#include "core/Transform.h"
+#include "rendering/GizmoRenderer.h"
+#include "sculpting/BrushStroke.h"
+
+namespace MetaVisage {
+
+class Renderer;
+class Project;
+class TextureData;
+class Mesh;
+class SculptBrush;
+class SmoothBrush;
+class GrabBrush;
+class PushPullBrush;
+class InflateBrush;
+class MaskBrush;
+
+// Plain C++ viewport. Hosted inside an ImGui region by ViewportHost; the
+// Render() call runs the 3D pass in the caller's current GL context, scissored
+// to the pixel rectangle provided. Input handlers are stubs until Story 3.5.4
+// wires GLFW callbacks. Sculpt/mask/point business logic bodies return in
+// Sprint 3.6 when the StageManager and sidebar UI come back.
+class Viewport {
+public:
+    Viewport();
+    ~Viewport();
+
+    Viewport(const Viewport&) = delete;
+    Viewport& operator=(const Viewport&) = delete;
+
+    // Must be called once the GL context is current (AppWindow after GLEW init).
+    bool Initialize();
+
+    // Queue ImGui overlays (label, axis gizmo labels, point labels, active
+    // border) for the given pixel rect. Called during ImGui frame build.
+    void DrawOverlays(float x, float y, float w, float h);
+
+    // Execute the 3D pass inside the pixel rectangle (x,y from top-left of the
+    // framebuffer, w/h in pixels). fbHeight is the full framebuffer height for
+    // the GL Y-flip. Called after ImGui::Render, before the ImGui draw pass.
+    void RenderGL(float x, float y, float w, float h, int fbHeight);
+
+    // --- Project / render config ---
+    void SetProject(Project* project) { project_ = project; }
+    Camera* GetCamera() { return camera_.get(); }
+    const Camera& GetCameraConst() const { return *camera_; }
+
+    void SetShadingMode(ShadingMode mode);
+    ShadingMode GetShadingMode() const;
+
+    void SetRenderFilter(RenderFilter filter);
+    RenderFilter GetRenderFilter() const { return renderFilter_; }
+
+    void SyncCameraFrom(const Camera& other);
+
+    void SetActive(bool active) { isActive_ = active; }
+    bool IsActive() const { return isActive_; }
+
+    void SetViewportLabel(const QString& label) { viewportLabel_ = label; }
+
+    // --- Transform mode (Alignment stage) ---
+    TransformMode GetTransformMode() const { return transformMode_; }
+    AxisConstraint GetAxisConstraint() const { return axisConstraint_; }
+    GizmoAxis GetHoveredGizmoAxis() const { return hoveredGizmoAxis_; }
+    GizmoAxis GetActiveGizmoAxis() const { return activeGizmoAxis_; }
+    void SetTransformMode(TransformMode mode);
+    void CancelTransform();
+
+    // --- Point reference (Stage 2) ---
+    void SetSelectedPointIndex(int index);
+    int GetSelectedPointIndex() const { return selectedPointIndex_; }
+    void SetPointSize(float size);
+
+    // --- Morph stage ---
+    void SetMorphPreviewMode(MorphPreviewMode mode);
+    void InvalidateMesh(const Mesh* mesh);
+    void UploadHeatMapColors(const Mesh* mesh,
+                             const std::vector<float>& displacements,
+                             float maxDisplacement);
+    void UploadMeshTexture(const Mesh* mesh, const TextureData& texture);
+
+    // --- Sculpting (Touch Up) ---
+    void SetBrushType(BrushType type);
+    void SetBrushRadius(float radius);
+    void SetBrushStrength(float strength);
+    void SetBrushFalloff(FalloffType falloff);
+    BrushType GetBrushType() const { return activeBrushType_; }
+    float GetBrushRadius() const;
+    float GetBrushStrength() const;
+    void RefreshMeshGPUData(Mesh* mesh);
+    void SetSculptSymmetry(bool enabled, Axis axis);
+
+    // --- Mask painting (Morph) ---
+    void SetMaskPaintingMode(bool active) { isMaskPainting_ = active; }
+    bool IsMaskPainting() const { return isMaskPainting_; }
+    void SetMaskBrushRadius(float radius);
+    void SetMaskEraseMode(bool erase);
+    void SetMaskData(std::vector<bool>* mask);
+    void UploadMaskColors(const Mesh* mesh, const std::vector<bool>& mask);
+    void SetShowMask(bool show);
+
+    // --- Target overlay (Touch Up) ---
+    void SetShowTargetOverlay(bool show) { showTargetOverlay_ = show; }
+
+    // --- Input (stubs — Story 3.5.4 wires bodies) ---
+    // All coordinates are viewport-local pixels (0..width, 0..height), Y-down
+    // to match GLFW cursor coordinates. Callers must filter on
+    // !io.WantCaptureMouse / !io.WantCaptureKeyboard before forwarding.
+    void OnMouseButton(int button, int action, int mods, float x, float y);
+    void OnMouseMove(float x, float y);
+    void OnScroll(float xOffset, float yOffset);
+    void OnKey(int key, int scancode, int action, int mods);
+
+    // --- Callbacks (replace Qt signals) ---
+    std::function<void(TransformMode, AxisConstraint)> OnTransformModeChanged;
+    std::function<void()> OnTargetTransformChanged;
+    std::function<void()> OnCameraChanged;
+    std::function<void(PointSide, Vector3, int)> OnPointPlaced;
+    std::function<void(int)> OnPointSelected;
+    std::function<void()> OnPointDeleteRequested;
+    std::function<void(float)> OnBrushRadiusChanged;
+    std::function<void(Transform, Transform)> OnTransformApplied;
+    std::function<void(BrushStroke)> OnSculptStrokeCompleted;
+    std::function<void()> OnMaskStrokeCompleted;
+
+private:
+    // Overlay drawing (ImGui draw list)
+    void DrawViewportLabelOverlay(float x, float y);
+    void DrawOrientationGizmoOverlay(float x, float y, float w);
+    void DrawPointLabelsOverlay(float x, float y, float w, float h);
+    void DrawActiveBorderOverlay(float x, float y, float w, float h);
+
+    bool IsGizmoVisible() const;
+    Vector3 GetGizmoPosition() const;
+
+    std::unique_ptr<Camera> camera_;
+    std::unique_ptr<Renderer> renderer_;
+    Project* project_ = nullptr;
+
+    // Transform tool state
+    TransformMode transformMode_ = TransformMode::None;
+    AxisConstraint axisConstraint_ = AxisConstraint::None;
+    bool isTransforming_ = false;
+    Transform transformBeforeState_;
+
+    // Camera drag state (Story 3.5.4 — wired via GLFW callbacks routed through
+    // ViewportHost). Coordinates are screen-coord pixels (local to the
+    // viewport rect), matching GLFW cursor coordinates — not framebuffer px.
+    bool isOrbiting_ = false;
+    bool isPanning_ = false;
+    float lastMouseX_ = 0.0f;
+    float lastMouseY_ = 0.0f;
+
+    // Render filter + active/label
+    RenderFilter renderFilter_ = RenderFilter::All;
+    bool isActive_ = false;
+    QString viewportLabel_;
+
+    // Point reference
+    int selectedPointIndex_ = -1;
+
+    // Sculpt brushes (kept so Setters can tune them; strokes re-wire in 3.5.4)
+    BrushType activeBrushType_ = BrushType::Smooth;
+    std::unique_ptr<SmoothBrush> smoothBrush_;
+    std::unique_ptr<GrabBrush> grabBrush_;
+    std::unique_ptr<PushPullBrush> pushPullBrush_;
+    std::unique_ptr<InflateBrush> inflateBrush_;
+    bool isSculpting_ = false;
+    BrushStroke currentStroke_;
+    Vector3 lastBrushWorldPos_;
+    bool brushOnMesh_ = false;
+    bool sculptSymmetryEnabled_ = false;
+    Axis sculptSymmetryAxis_ = Axis::X;
+
+    // Mask painting
+    std::unique_ptr<MaskBrush> maskBrush_;
+    bool isMaskPainting_ = false;
+    bool isMaskStroking_ = false;
+
+    // Target overlay in Touch Up
+    bool showTargetOverlay_ = false;
+
+    // Gizmo hover/active
+    GizmoAxis hoveredGizmoAxis_ = GizmoAxis::None;
+    GizmoAxis activeGizmoAxis_ = GizmoAxis::None;
+
+    // Last render rect (for overlay-only redraws & input hit testing)
+    float lastX_ = 0.0f;
+    float lastY_ = 0.0f;
+    float lastW_ = 0.0f;
+    float lastH_ = 0.0f;
+};
+
+} // namespace MetaVisage
+
+#endif // METAVISAGE_VIEWPORT_H

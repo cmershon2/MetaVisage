@@ -1,0 +1,1 @@
+- [Codebase Conventions](conventions.md) — Qt transitional coupling, C++ patterns, and PR review anti-patterns observed in Sprint 3.5

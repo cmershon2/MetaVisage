@@ -21,7 +21,6 @@ Makefile
 
 # IDE files
 .vscode/
-.claude
 .idea/
 *.pro.user
 *.vcxproj
@@ -52,4 +51,6 @@ desktop.ini
 # User config
 config.ini
 .settings
-.claude
+
+# Claude Code runtime artifacts (per-session session ID + PID)
+.claude/scheduled_tasks.lock

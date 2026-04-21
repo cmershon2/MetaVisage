@@ -15,7 +15,6 @@ PointRenderer::~PointRenderer() {
 
 void PointRenderer::Initialize() {
     if (initialized_) return;
-    initializeOpenGLFunctions();
     initialized_ = true;
 }
 
