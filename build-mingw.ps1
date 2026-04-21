@@ -61,7 +61,13 @@ $CMakeArgs = @(
     "-DCMAKE_MAKE_PROGRAM=`"$MinGWPath/bin/mingw32-make.exe`""
 )
 
-# Add vcpkg toolchain if specified
+# Add vcpkg toolchain if specified.
+#
+# Note: with the default x64-windows triplet, vcpkg ships MSVC-built .libs
+# that do not link against MinGW's GCC. Sprint 3.5.2 onward requires ImGui
+# symbols in the executable, so MSVC is the authoritative toolchain. See
+# build-msvc.ps1. This script is retained for pre-3.5.2 targets and for any
+# future cross-toolchain experimentation via custom triplets.
 if ($VcpkgToolchain -ne "") {
     Write-Host "Using vcpkg toolchain: $VcpkgToolchain" -ForegroundColor Cyan
     $CMakeArgs += "-DCMAKE_TOOLCHAIN_FILE=`"$VcpkgToolchain`""

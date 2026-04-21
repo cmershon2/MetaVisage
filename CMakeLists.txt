@@ -88,11 +88,12 @@ include_directories(
 )
 
 # ---------------------------------------------------------------------------
-# Sources — Sprint 3.5.1 scope
+# Sources — Sprint 3.5.2 scope
 # ---------------------------------------------------------------------------
-# UI files (src/ui/*, src/main.cpp, src/utils/ErrorHelper.cpp) are excluded
-# while the Qt UI layer is being replaced. They return in Stories 3.5.2
-# (main.cpp + AppWindow), 3.5.3 (Viewport), and 3.6 (sidebars + dialogs).
+# The remaining Qt Widgets UI files (MainWindow, SidebarWidget, dialogs,
+# ViewportWidget, ViewportContainer, ErrorHelper) are still excluded while
+# their ImGui replacements are built. They return in Story 3.5.3 (Viewport)
+# and Sprint 3.6 (sidebars + menus + dialogs).
 
 set(CORE_SOURCES
     src/core/Mesh.cpp
@@ -126,6 +127,7 @@ set(CORE_SOURCES
 )
 
 set(CORE_HEADERS
+    include/ui/AppWindow.h
     include/ui/MainWindow.h
     include/ui/ViewportWidget.h
     include/ui/ViewportContainer.h
@@ -164,14 +166,28 @@ set(CORE_HEADERS
     include/baking/TextureWriter.h
 )
 
-# NOTE: UI-layer headers (include/ui/*.h) are listed above for IDE visibility
-# but their corresponding .cpp files are intentionally absent from CORE_SOURCES
-# for Sprint 3.5.1 — they compile again in Sprint 3.6.
+# NOTE: Remaining UI-layer headers (MainWindow, ViewportWidget,
+# ViewportContainer, SidebarWidget) are listed above for IDE visibility but
+# their .cpp files are intentionally absent from CORE_SOURCES — they compile
+# again in Story 3.5.3 (Viewport) and Sprint 3.6 (sidebars + dialogs).
 
-# Build a static library of non-UI translation units. Story 3.5.2 swaps this
-# back to add_executable(MetaVisage ...) linked against this library plus the
-# new main.cpp + AppWindow.
+# Static library of engine + rendering translation units, consumed by the
+# executable target below.
 add_library(${PROJECT_NAME}Core STATIC ${CORE_SOURCES} ${CORE_HEADERS})
+
+# Sprint 3.5.2: application shell — GLFW window, GL context, ImGui frame.
+add_executable(${PROJECT_NAME}
+    src/main.cpp
+    src/ui/AppWindow.cpp
+)
+target_link_libraries(${PROJECT_NAME}
+    PRIVATE
+        ${PROJECT_NAME}Core
+        imgui::imgui
+        glfw
+        GLEW::GLEW
+        OpenGL::GL
+)
 
 # ---------------------------------------------------------------------------
 # Link
@@ -200,8 +216,10 @@ endif()
 # Compiler warnings
 if(MSVC)
     target_compile_options(${PROJECT_NAME}Core PRIVATE /W4)
+    target_compile_options(${PROJECT_NAME} PRIVATE /W4)
 else()
     target_compile_options(${PROJECT_NAME}Core PRIVATE -Wall -Wextra -pedantic)
+    target_compile_options(${PROJECT_NAME} PRIVATE -Wall -Wextra -pedantic)
 endif()
 
 # ---------------------------------------------------------------------------
@@ -217,4 +235,5 @@ else()
          DESTINATION ${CMAKE_RUNTIME_OUTPUT_DIRECTORY})
 endif()
 
-# Installation is deferred until Story 3.5.2 reintroduces the executable target.
+# Installation rules remain deferred until Sprint 3.6 reintroduces the full
+# UI surface (menus, dialogs, sidebars) needed for distribution packaging.
