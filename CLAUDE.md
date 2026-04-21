@@ -1,336 +1,115 @@
-# CLAUDE.md - MetaVisage Project Guide
+# MetaVisage
 
-## Project Overview
+Windows desktop application for automated MetaHuman mesh morphing. Wraps MetaHuman head meshes to custom head models for Unreal Engine 5.x, providing a commercial alternative to enterprise mesh-wrapping tools.
 
-**MetaVisage** is an open-source desktop application for automated MetaHuman mesh morphing. It enables users to wrap MetaHuman head meshes to custom head models for use in Unreal Engine, providing a free alternative to expensive commercial solutions like Faceform's Wrapped ($500/month).
+**Platform**: Windows 10/11 (64-bit) · **Language**: C++17 · **Status**: v2.0 in development (proprietary)
 
-**License:** MIT
-**Platform:** Windows 10/11 (64-bit)
-**Status:** MVP Development Phase
-**Author:** Casey Mershon
-
-## Core Purpose
-
-This tool addresses the significant cost barrier in creating custom MetaHuman heads by providing a complete workflow for:
-1. Aligning custom head meshes with MetaHuman base meshes
-2. Defining correspondence points between meshes
-3. Automatically morphing the MetaHuman mesh to match the custom head
-4. Refining the result with sculpting tools
-5. Exporting Unreal Engine-ready assets
+See @.claude/context/product-vision.md for strategic goals and current state.
 
 ## Technical Stack
 
-### Development Framework
-- **Language:** C++17 or later
-- **UI Framework:** Qt 6.x (cross-platform ready) or Dear ImGui
-- **Graphics API:** OpenGL 4.3+
+- **UI Framework**: Migrating from Qt 6.x → Dear ImGui + GLFW (Sprint 3.5–3.6)
+- **Graphics API**: OpenGL 4.3+
+- **Mesh I/O**: Assimp (FBX, OBJ, GLTF)
+- **Mesh Processing**: libigl / OpenMesh / CGAL
+- **Deformation**: NRICP (replaces v1.0 RBF/TPS) · custom implementation using Eigen
+- **Math**: Eigen / GLM
+- **Serialization**: nlohmann/json for `.mmproj` project files
+- **Installer**: Inno Setup · **Auto-update**: WinSparkle
 
-### Key Libraries
-- **Mesh I/O:** Assimp (FBX, OBJ, GLTF support)
-- **Mesh Processing:** libigl, OpenMesh, or CGAL
-- **Deformation:** Custom RBF/TPS implementation using Eigen
-- **Math:** GLM or Eigen for linear algebra
-- **Serialization:** JSON (nlohmann/json) for project files
+> **Algorithm secrecy**: Do not reference NRICP by name in user-facing UI text, logs, documentation, or error messages. Internal code comments and sprint docs are fine.
 
-### Hardware Requirements
-- **Processor:** Intel i5/AMD Ryzen 5 or better
-- **RAM:** 8GB minimum, 16GB recommended
-- **Graphics:** DirectX 11 compatible GPU with 2GB VRAM
-- **Display:** 1920x1080 minimum resolution
+## Architecture
 
-## Architecture Overview
-
-The application follows a **layered architecture**:
+Layered architecture — keep concerns separated across layers:
 
 ```
-┌─────────────────────────────────────┐
-│        Presentation Layer           │
-│  (Qt Widgets / ImGui Interface)     │
-├─────────────────────────────────────┤
-│         Application Layer           │
-│  (Workflow Controllers, Commands)   │
-├─────────────────────────────────────┤
-│          Domain Layer               │
-│  (Mesh Processing, Deformation)     │
-├─────────────────────────────────────┤
-│       Infrastructure Layer          │
-│  (File I/O, Rendering, Persistence) │
-└─────────────────────────────────────┘
+Presentation  → ImGui widgets (MainWindow, ViewportWidget, SidebarWidget)
+Application   → StageManager, stage controllers, CommandManager (undo/redo)
+Domain        → Mesh engine, deformation algorithm, sculpting engine
+Infrastructure → File I/O, OpenGL renderer, project persistence
 ```
 
-### Key Components
-1. **UI Layer:** MainWindow, ViewportWidget, SidebarWidget
-2. **Workflow Controller:** StageManager, stage-specific controllers
-3. **Command Manager:** Undo/redo implementation (Command pattern)
-4. **Mesh Engine:** Loading, validation, optimization, export
-5. **Deformation Algorithm:** RBF interpolation with TPS kernel
-6. **Sculpting Engine:** Brush-based mesh editing tools
-7. **Renderer:** OpenGL-based 3D visualization
-8. **Project Manager:** Save/load functionality
+Key components: Mesh Engine (load/validate/optimize/export), Deformation Algorithm (NRICP with Quick Wrap / Fantasy Wrap presets), Sculpting Engine (brush-based editing), Renderer (OpenGL), Project Manager (save/load `.mmproj`).
 
 ## Four-Stage Workflow
 
-### Stage 1: Alignment
-- Load morph mesh (MetaHuman head) and target mesh (custom head)
-- Transform target mesh to align with morph mesh using:
-  - Move tool (G key)
-  - Rotate tool (R key)
-  - Scale tool (S key)
-- Visual gizmos with Blender-style controls
-- Transform locks to X/Y/Z axes
+1. **Alignment** — transform target mesh to align with morph mesh (Move/Rotate/Scale gizmos, X/Y/Z locks)
+2. **Point Reference** — place correspondence points across dual synchronized viewports; symmetry mode mirrors points across an axis
+3. **Morph** — deformation with Quick Wrap / Fantasy Wrap presets, tunable stiffness/rigidity/sampling parameters, vertex masking, threaded computation
+4. **Touch Up** — sculpting brushes (Smooth, Grab, Push/Pull, Inflate/Deflate) with radius/strength/falloff and symmetry
 
-### Stage 2: Point Reference
-- Dual synchronized viewports (target mesh left, morph mesh right)
-- Place correspondence points by clicking mesh surfaces
-- Points auto-numbered sequentially
-- Symmetry mode for mirrored point placement
-- Point counts must match before proceeding
-- Camera movements synchronized across both viewports
+See the sprint plan for active stage-specific work.
 
-### Stage 3: Morph
-- RBF deformation algorithm with adjustable parameters:
-  - Stiffness (0.0-1.0): Controls mesh rigidity
-  - Smoothness (0.0-1.0): Blends point influence regions
-  - Kernel type: TPS, Gaussian, or Multiquadric
-- Threaded computation with progress indication
-- Preview modes: original, deformed, overlay, heat map
-- Preserves topology, UVs, and normals
+## Mesh Data Integrity (Non-Negotiable)
 
-### Stage 4: Touch Up
-- Sculpting brushes for mesh refinement:
-  - **Smooth Brush:** Average vertex positions
-  - **Grab Brush:** Move vertices with falloff
-  - **Push/Pull Brush:** Move along surface normal
-  - **Inflate/Deflate Brush:** Expand/contract surface
-- Brush parameters: radius, strength, falloff
-- Symmetry mode for mirrored sculpting
-- MatCap shading for detail visualization
+Topology, UVs, and normals must survive the full pipeline unmodified. Any regression is P0.
 
-## File Format Support
+- Import preserves vertex ordering, face indices, UV coordinates, and normals
+- Morphing operates on vertex positions only — never retopologizes
+- Export writes Unreal Engine-compatible FBX (Y-up, geometry + UVs + normals + materials)
 
-### Import
-- **FBX** (primary MetaHuman format)
-- **OBJ** (universal mesh format)
-- **GLTF** (modern 3D format)
+## Key Conventions
 
-### Export
-- **FBX** with Unreal Engine naming conventions
-- Includes: geometry, UVs, normals, materials
-- Y-up coordinate system
-- Optional triangulation
+- **Heavy operations run on worker threads** — mesh loading, deformation, and export must not block the UI thread.
+- **All user actions are Commands** — implement undo/redo via the Command pattern for every mutating action.
+- **Smart pointers for ownership** — `unique_ptr` / `shared_ptr`; no raw `new`/`delete` in new code.
+- **Blender-style viewport controls** — MMB orbit, Shift+MMB pan, scroll zoom, numpad for ortho views, G/R/S for transform, X/Y/Z for axis constraints, `[`/`]` for brush radius. Consistency with Blender is a deliberate UX choice — do not invent alternate bindings.
+- **Dark theme only** — force the dark palette at launch regardless of OS theme; v1.0 light-mode bleed-through was a reported bug.
+- **Performance target** — 30+ FPS for meshes under 100k vertices. Profile before optimizing, but treat regressions below this threshold as bugs.
 
-### Project Files
-- `.mmproj` format (JSON or binary)
-- Stores: mesh references, transforms, point correspondences, viewport state
-- Compression support using zlib
+## File Formats
 
-## Data Model
+- **Import**: FBX (primary), OBJ, GLTF
+- **Export**: FBX with Unreal Engine naming conventions — Y-up, optional triangulation, includes geometry + UVs + normals + materials
+- **Project files**: `.mmproj` (JSON), optional zlib compression
 
-### Core Classes
-```cpp
-class Project {
-    string projectName, projectPath;
-    DateTime created, lastModified;
-    MeshReference morphMesh, targetMesh;
-    AlignmentData alignment;
-    PointReferenceData pointReference;
-    MorphData morph;
-    ViewportState viewportState;
-    UndoStack undoHistory;
-};
+## Web Team Integration (v2.0)
 
-class Mesh {
-    vector<Vector3> vertices, normals;
-    vector<Vector2> uvs;
-    vector<Face> faces;
-    vector<Material> materials;
-    BoundingBox bounds;
-};
+Licensing, auth, and updates depend on the web team's API contract. When working on these features, read the relevant spec first:
 
-class PointCorrespondence {
-    int pointID;
-    Vector3 morphMeshPosition, targetMeshPosition;
-    int morphMeshVertexIndex, targetMeshVertexIndex;
-    bool isSymmetric;
-    int symmetricPairID;
-};
-```
+- @.claude/context/DESKTOP_APP_INTEGRATION.md — licensing API contract (activation, tier lookup, feature flags)
+- @.claude/context/DESKTOP_AUTH_FLOW.md — browser-based OAuth flow
+- @.claude/context/DESKTOP_UPDATE_FLOW.md — WinSparkle update flow
 
-## Development Phases (24 weeks / 12 sprints)
+## Standards
 
-1. **Sprint 1-2:** Foundation & basic rendering
-2. **Sprint 3:** Alignment stage
-3. **Sprint 4-5:** Point Reference stage
-4. **Sprint 6-7:** Morph stage with RBF deformation
-5. **Sprint 8-9:** Touch Up stage with sculpting
-6. **Sprint 10:** Export & project management
-7. **Sprint 11:** Polish, undo/redo, optimization
-8. **Sprint 12:** Testing & release preparation
+See @.claude/rules/code-style.md for coding conventions.
+See @.claude/rules/testing.md for testing requirements.
+See @.claude/rules/security.md for security guidelines.
+See @.claude/rules/git-workflow.md for git workflow.
 
-## UI Specifications
+## Agents
 
-### Color Scheme (Dark Theme)
-- **Primary:** #2C3E50 (dark blue-gray)
-- **Secondary:** #34495E (lighter blue-gray)
-- **Accent:** #3498DB (blue for interactive elements)
-- **Success:** #2ECC71 (green)
-- **Warning:** #F39C12 (orange)
-- **Error:** #E74C3C (red)
+- `code-reviewer` — Invoked by `/review-pr`. Read-only, learns project conventions over time.
+- `architect` — Answers questions about how the codebase works. Read-only, builds a structural map in memory.
+- `test-writer` — Writes tests for existing code, matching project test patterns.
+- `dependency-auditor` — Scans dependencies for vulnerabilities. Read-only, tracks deferred issues in memory.
 
-### Camera Controls (Blender-style)
-- **Orbit:** Middle mouse button drag
-- **Pan:** Shift + Middle mouse drag
-- **Zoom:** Scroll wheel
-- **Orthographic views:** Numpad 1 (front), 3 (right), 7 (top)
-- **Toggle perspective/ortho:** Numpad 5
-- **Reset camera:** Home key
-- **Focus on selection:** F key
+## Available Skills
 
-### Keyboard Shortcuts
-- **New Project:** Ctrl+N
-- **Open Project:** Ctrl+O
-- **Save Project:** Ctrl+S
-- **Export Mesh:** Ctrl+E
-- **Undo:** Ctrl+Z
-- **Redo:** Ctrl+Shift+Z
-- **Move Tool:** G
-- **Rotate Tool:** R
-- **Scale Tool:** S
-- **Axis Constraints:** X, Y, Z keys
-- **Brush Radius:** [ and ] keys
+- `/commit` — Generate a semantic commit message
+- `/write-pr [base-branch]` — Open a PR from the current branch
+- `/review-pr [pr-number|branch]` — Review a pull request in an isolated agent context
+- `/sprint-planner` — Seed a per-sprint file from the aggregated sprint plan at the start of each sprint
+- `/sprint-retrospective` — Facilitate a sprint retrospective
+- `/product-backlog` — Add, update, complete, or reprioritize backlog items
+- `/update-context` — Sync CLAUDE.md, product-vision.md, and README.md after a sprint
+- `/find-skills` — Discover and install community skills
+- `/create-skill [description]` — Scaffold a new skill
 
-## Success Criteria
+## Key Documents
 
-### Primary
-- All four workflow stages are functional
-- Complete pipeline from alignment to export works
-- Exported meshes load correctly in Unreal Engine 5.x
-- Topology and UV integrity maintained
-- Viewport maintains 30+ FPS for typical meshes (<100k vertices)
-- Morphing completes in <30 seconds for standard configurations
-- Experienced 3D artists can complete workflow in <30 minutes
-
-### Quality Outputs
-- Morphed meshes maintain topology integrity
-- UV coordinates preserved correctly
-- Deformation quality comparable to commercial tools
-- No visual artifacts in standard use cases
-
-## What's In Scope (MVP)
-
-- Windows desktop application
-- Import/export for FBX, OBJ, GLTF
-- Four-stage workflow
-- Interactive 3D viewport with Blender-style controls
-- Point-based correspondence with symmetry support
-- RBF/TPS mesh deformation
-- Basic sculpting tools
-- Project save/load
-- Undo/redo system
-- Export with geometry, UVs, normals, materials
-
-## What's Out of Scope (MVP)
-
-- Texture/material editing
-- macOS and Linux support
-- Direct Unreal Engine integration
-- Automated point placement (AI/ML)
-- Auto-save functionality
-- Hair or body mesh morphing
-- Real-time preview during morphing
-- Multi-mesh batch processing
-
-## Future Enhancements (Post-MVP)
-
-### High Priority
-1. Auto-save and crash recovery
-2. Texture/material editing
-3. Automated point placement with ML
-4. Advanced deformation options
-5. Batch processing
-
-### Medium Priority
-1. macOS and Linux support
-2. Advanced sculpting tools (crease, pinch, masking)
-3. Hair and body mesh support
-4. Real-time deformation preview
-5. Plugin architecture
-
-### Low Priority
-1. Direct Unreal Engine integration
-2. Cloud rendering
-3. VR sculpting support
-4. Animation/blend shape support
-
-## Development Guidelines
-
-### When Assisting with This Project
-
-1. **Prioritize Core Functionality:** Focus on the four-stage workflow and essential features before adding extras
-2. **Maintain Architecture:** Follow the layered architecture pattern
-3. **Performance Matters:** Target 30+ FPS for typical meshes, optimize early
-4. **UE Compatibility:** Always test exports work with Unreal Engine
-5. **User Experience:** Implement Blender-style controls as specified for familiarity
-6. **Preserve Mesh Data:** Topology, UVs, and normals must remain intact through the entire pipeline
-7. **Thread Heavy Operations:** Mesh loading, deformation, and export should run on worker threads
-8. **Implement Undo/Redo:** Use Command pattern for all user actions
-
-### Code Quality Standards
-- Smart pointers (unique_ptr, shared_ptr) for memory management
-- Clear separation of concerns across layers
-- Comprehensive error handling with user-friendly messages
-- Logging system for debugging
-- No technical debt in core algorithms
-
-### Testing Requirements
-- Test with various mesh types and polygon counts (1k-100k+ vertices)
-- Validate UV preservation throughout workflow
-- Test all transform and sculpting tools
-- Verify export to Unreal Engine 5.x
-- Memory leak detection
-- Cross-platform build testing (when applicable)
-
-## Key Files
-
-- **docs/PRD.md:** Complete Product Requirements Document with detailed specifications
-- **docs/SPRINT_PLAN.md:** 12-sprint development roadmap with tasks and acceptance criteria
-- **CLAUDE.md:** This file - project guide for AI assistants
-
-## Target Audience
-
-- **Indie Game Developers:** Solo developers and small teams creating custom characters
-- **3D Artists:** Mid to expert-level artists working with Unreal Engine MetaHumans
-- **Virtual Production Studios:** Small studios needing custom digital humans
-
-### User Characteristics
-- Intermediate to expert 3D artists
-- Comfortable with 3D software (Blender, Maya, etc.)
-- Familiar with MetaHuman workflow and Unreal Engine
-- Creating 1-10 custom characters per project
+- [Product Vision](./.claude/context/product-vision.md) — strategic goals and current state
+- [PRD](./.claude/context/PRD.md) — v1.0 requirements (still the authority for workflow spec)
+- [Sprint Plan (aggregated)](./.claude/context/sprints/SPRINT_PLAN.md) — v2.0 roadmap
+- [v1.0.0 Feedback](./.claude/context/Version%201.0.0%20Feedback.md) — source of v2.0 scope
+- [Product Backlog](./.claude/context/development/product_backlog.md) — items not yet committed to a sprint
 
 ## Glossary
 
-- **MetaHuman:** Epic Games' system for creating realistic digital humans in Unreal Engine
-- **Morph Mesh:** The base MetaHuman head mesh that will be deformed
-- **Target Mesh:** The custom head model that the morph mesh will conform to
-- **Point Correspondence:** Matching points on two meshes indicating the same anatomical location
-- **TPS (Thin-Plate Spline):** An interpolation method for smooth deformations
-- **RBF (Radial Basis Function):** A mathematical function used for scattered data interpolation
-- **ARAP (As-Rigid-As-Possible):** A deformation technique that preserves local rigidity
-- **UV Coordinates:** 2D texture coordinates mapped to 3D mesh surface
-- **Topology:** The connectivity structure of a mesh (how vertices connect to form faces)
-
-## Contributing
-
-This is an open-source project under the MIT license. Contributions are welcome following standard practices:
-- Fork the repository
-- Create feature branches
-- Write clean, documented code
-- Test thoroughly
-- Submit pull requests with clear descriptions
-
-## Questions or Issues?
-
-Refer to the detailed specifications in:
-- **docs/PRD.md** for complete requirements
-- **docs/SPRINT_PLAN.md** for implementation roadmap
+- **MetaHuman** — Epic Games' digital human system in Unreal Engine
+- **Morph Mesh** — the base MetaHuman head mesh being deformed
+- **Target Mesh** — the custom head model the morph mesh is wrapped to
+- **Point Correspondence** — matching points marking the same anatomical location on both meshes
+- **Quick Wrap / Fantasy Wrap** — v2.0 presets; Quick Wrap sets rigidity to 1 for human-like characters, Fantasy Wrap uses the default parameters for dramatic features (pointed ears, large noses)

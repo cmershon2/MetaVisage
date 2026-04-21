@@ -18,13 +18,15 @@ This document describes how the MetaVisage desktop application should integrate 
 
 ## Authentication
 
-All API requests are authenticated via a **Bearer token** using the user's **license key**.
+All API requests are authenticated via a **Bearer token** using the user's **Supabase access token** obtained during the desktop auth handoff.
 
-The license key is a 32-character hex string assigned to each user on account creation. Users can find their license key in their account dashboard on the web portal.
+The access token is issued by the web portal at the end of the `metavisage://` deep-link auth flow (see `docs/DESKTOP_AUTH_FLOW.md`). The desktop app stores the access token (and refresh token) locally and refreshes it via the standard Supabase Auth refresh endpoint when it expires.
 
 ```
-Authorization: Bearer <license_key>
+Authorization: Bearer <supabase_access_token>
 ```
+
+The `license_key` returned by `/api/license/validate` is informational (shown in the user's account dashboard) — it is **not** used as a credential.
 
 ---
 
@@ -38,7 +40,7 @@ Called on app launch and periodically (recommended: every 24 hours) to obtain a 
 
 ```http
 POST /api/license/validate
-Authorization: Bearer <license_key>
+Authorization: Bearer <supabase_access_token>
 Content-Type: application/json
 ```
 
@@ -70,7 +72,7 @@ No request body is required.
 
 | Status | Error Code       | Meaning                                               |
 | ------ | ---------------- | ----------------------------------------------------- |
-| 401    | `unauthorized`   | Invalid or missing license key                        |
+| 401    | `unauthorized`   | Invalid, expired, or missing access token             |
 | 403    | `inactive`       | Subscription cancelled or unpaid                      |
 | 403    | `expired`        | Payment is past due — user must update payment method |
 | 404    | `not_found`      | No active license or subscription found               |
@@ -96,7 +98,7 @@ Called by the desktop app **after each successful conversion** to increment the 
 
 ```http
 POST /api/license/conversion
-Authorization: Bearer <license_key>
+Authorization: Bearer <supabase_access_token>
 Content-Type: application/json
 ```
 
@@ -124,7 +126,7 @@ No request body is required.
 
 | Status | Error Code       | Meaning                                              |
 | ------ | ---------------- | ---------------------------------------------------- |
-| 401    | `unauthorized`   | Invalid or missing license key                       |
+| 401    | `unauthorized`   | Invalid, expired, or missing access token            |
 | 403    | `limit_reached`  | Monthly conversion limit has been reached            |
 | 404    | `not_found`      | No active license found                              |
 | 429    | `rate_limited`   | Too many requests — respect the `Retry-After` header |
@@ -195,15 +197,15 @@ The `token` returned by the validation endpoint is a signed JWT that the desktop
 
 ### Feature Flags
 
-| Flag                  | Type    | Values                                                       |     |
-| --------------------- | ------- | ------------------------------------------------------------ | --- |
-| `conversions_limit`   | number  | `3` (free), `20` (indie), `60` (pro)                         |     |
-| `custom_head_upload`  | boolean | `false` (free), `true` (indie/pro)                           |     |
-| `texture_transfer`    | string  | `"none"` (free), `"albedo"` (indie), `"albedo_normal"` (pro) |     |
-| `morphing_parameters` | string  | `"presets"` (free), `"full"` (indie/pro)                     |     |
-| `masking`             | boolean | `false` (free), `true` (indie/pro)                           |     |
-| `touchup_tools`       | string  | `"basic_smooth"` (free), `"basic"` (indie), `"full"` (pro)   |     |
-| `batch_processing`    | boolean | `false` (all tiers — reserved for Studio)                    |     |
+| Flag                  | Type    | Values                                                       |
+| --------------------- | ------- | ------------------------------------------------------------ |
+| `conversions_limit`   | number  | `3` (free), `20` (indie), `60` (pro)                         |
+| `custom_head_upload`  | boolean | `false` (free), `true` (indie/pro)                           |
+| `texture_transfer`    | string  | `"none"` (free), `"albedo"` (indie), `"albedo_normal"` (pro) |
+| `morphing_parameters` | string  | `"presets"` (free), `"full"` (indie/pro)                     |
+| `masking`             | boolean | `false` (free), `true` (indie/pro)                           |
+| `touchup_tools`       | string  | `"basic_smooth"` (free), `"basic"` (indie), `"full"` (pro)   |
+| `batch_processing`    | boolean | `false` (all tiers — reserved for Studio)                    |
 
 ---
 
@@ -315,7 +317,7 @@ The desktop app should respect the `Retry-After` header and implement exponentia
 ## Error Handling Recommendations
 
 1. **Network errors**: Retry with exponential backoff (1s, 2s, 4s, max 30s). Fall back to cached JWT if available.
-2. **401 Unauthorized**: The license key is invalid. Prompt user to re-enter or re-authenticate via the web portal.
+2. **401 Unauthorized**: The access token is invalid or expired. Refresh the token via the Supabase refresh endpoint, or re-trigger the `metavisage://` auth flow if the refresh token has also expired.
 3. **403 Inactive/Expired**: Show a clear message directing the user to the web portal to manage their subscription.
 4. **403 Limit Reached**: Show remaining time until `conversions_reset_at` and suggest upgrading.
 5. **429 Rate Limited**: Wait for the duration specified in `Retry-After` before retrying.
