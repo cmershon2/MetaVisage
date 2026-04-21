@@ -152,6 +152,14 @@ private:
     bool isTransforming_ = false;
     Transform transformBeforeState_;
 
+    // Camera drag state (Story 3.5.4 — wired via GLFW callbacks routed through
+    // ViewportHost). Coordinates are screen-coord pixels (local to the
+    // viewport rect), matching GLFW cursor coordinates — not framebuffer px.
+    bool isOrbiting_ = false;
+    bool isPanning_ = false;
+    float lastMouseX_ = 0.0f;
+    float lastMouseY_ = 0.0f;
+
     // Render filter + active/label
     RenderFilter renderFilter_ = RenderFilter::All;
     bool isActive_ = false;

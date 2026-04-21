@@ -16,7 +16,7 @@
 | 1 | **Story 3.5.1: Dependency & Build System Overhaul** | 5 | None | [x] |
 | 2 | **Story 3.5.2: Application Entry Point & Main Loop** | 8 | Story 3.5.1 | [x] |
 | 3 | **Story 3.5.3: OpenGL Context & Viewport Rendering** | 8 | Story 3.5.2 | [x] |
-| 4 | **Story 3.5.4: Input Handling** | 5 | Story 3.5.2 | [ ] |
+| 4 | **Story 3.5.4: Input Handling** | 5 | Story 3.5.2 | [x] |
 
 > Stories are pulled from the aggregated plan at [SPRINT_PLAN.md](./SPRINT_PLAN.md) §Sprint 3.5. This is framework-migration work, not product-backlog work — `product_backlog.md` is unchanged by this sprint.
 
@@ -74,7 +74,19 @@
 
 ## Sprint Outcome
 
-**Status**: In Progress
-**Velocity (Actual)**: —
+**Status**: Implementation Complete (pending full-workflow parity smoke-test in 3.6)
+**Velocity (Actual)**: 26/26 points committed landed in source (3.5.1, 3.5.2, 3.5.3, 3.5.4 all [x])
 **Carryover**: —
-**Notes**: —
+**Notes**:
+- All four stories implemented and built clean under MSVC Release.
+- Runtime-verified: GLFW window + dark theme, ImGui debug HUD, viewport GL pass
+  with grid, axis-label orientation gizmo, GL-state-isolated 3D pass, camera
+  orbit (MMB) / pan (Shift+MMB) / zoom (scroll), Home/F/Numpad/Esc shortcuts,
+  ImGui input gating working (debug HUD captures its own mouse, viewport owns
+  the rest).
+- Deferred-to-3.6 (no project/mesh loader in 3.5 runtime): visual parity check
+  for loaded meshes, point markers, brush cursor, dual-viewport Stage 2 sync.
+  These handler bodies early-return on null project in Sprint 3 too, so they
+  wait for the sidebar + loader UI to come back.
+- Qt6::Core still linked (QString/QFile/QJson in core/io/deformation/baking).
+  Full Qt-free cut tracked as "Qt6Core Removal" backlog item.

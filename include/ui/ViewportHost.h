@@ -45,6 +45,17 @@ public:
     void SetSelectedPointIndex(int index);
     void SetPointSize(float size);
 
+    // --- Input routing (Story 3.5.4) ---
+    // Coordinates are in screen-coord pixels (GLFW cursor space), top-left
+    // origin. Callers (AppWindow GLFW callbacks) must gate on ImGui capture
+    // flags before forwarding. Drag capture: once a mouse button goes down
+    // over a viewport, subsequent moves/release route to the same viewport
+    // even if the cursor leaves its rect.
+    void ForwardMouseButton(int button, int action, int mods, double sx, double sy);
+    void ForwardMouseMove(double sx, double sy);
+    void ForwardScroll(double xOffset, double yOffset, double sx, double sy);
+    void ForwardKey(int key, int scancode, int action, int mods);
+
 private:
     void WireCameraSync();
 
@@ -58,6 +69,18 @@ private:
     // pixels, top-left origin. lastLeftW_ <= 0 means "no layout this frame."
     float lastLeftX_ = 0.0f, lastLeftY_ = 0.0f, lastLeftW_ = 0.0f, lastLeftH_ = 0.0f;
     float lastRightX_ = 0.0f, lastRightY_ = 0.0f, lastRightW_ = 0.0f, lastRightH_ = 0.0f;
+
+    // Rects captured during BuildLayout in GLFW screen-coord pixels. Used for
+    // cursor hit-testing (GLFW cursor pos isn't framebuffer-scaled).
+    float leftScrX_ = 0.0f, leftScrY_ = 0.0f, leftScrW_ = 0.0f, leftScrH_ = 0.0f;
+    float rightScrX_ = 0.0f, rightScrY_ = 0.0f, rightScrW_ = 0.0f, rightScrH_ = 0.0f;
+
+    // Drag capture: set on mouse-press, cleared on all-buttons-released.
+    Viewport* capturedViewport_ = nullptr;
+    int pressedButtons_ = 0;
+
+    Viewport* HitTest(double sx, double sy) const;
+    void ToLocal(Viewport* vp, double sx, double sy, float& outX, float& outY) const;
 };
 
 } // namespace MetaVisage

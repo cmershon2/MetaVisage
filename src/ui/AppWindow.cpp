@@ -73,7 +73,10 @@ bool AppWindow::Initialize(int width, int height, const char* title) {
 
     ApplyDarkTheme();
 
-    if (!ImGui_ImplGlfw_InitForOpenGL(window_, true)) {
+    // install_callbacks=false — we install our own GLFW callbacks below and
+    // forward to ImGui_ImplGlfw_* inside them so we can gate viewport input on
+    // ImGui's WantCapture flags without fighting the backend's chain logic.
+    if (!ImGui_ImplGlfw_InitForOpenGL(window_, false)) {
         MV_LOG_CRITICAL("ImGui_ImplGlfw_InitForOpenGL failed");
         return false;
     }
@@ -93,6 +96,46 @@ bool AppWindow::Initialize(int width, int height, const char* title) {
         MV_LOG_CRITICAL("ViewportHost initialization failed");
         return false;
     }
+
+    glfwSetWindowUserPointer(window_, this);
+
+    glfwSetWindowFocusCallback(window_, ImGui_ImplGlfw_WindowFocusCallback);
+    glfwSetCursorEnterCallback(window_, ImGui_ImplGlfw_CursorEnterCallback);
+    glfwSetCharCallback(window_, ImGui_ImplGlfw_CharCallback);
+
+    glfwSetMouseButtonCallback(window_, [](GLFWwindow* w, int button, int action, int mods) {
+        ImGui_ImplGlfw_MouseButtonCallback(w, button, action, mods);
+        auto* self = static_cast<AppWindow*>(glfwGetWindowUserPointer(w));
+        if (!self || !self->viewportHost_) return;
+        if (ImGui::GetIO().WantCaptureMouse) return;
+        double sx, sy; glfwGetCursorPos(w, &sx, &sy);
+        self->viewportHost_->ForwardMouseButton(button, action, mods, sx, sy);
+    });
+
+    glfwSetCursorPosCallback(window_, [](GLFWwindow* w, double sx, double sy) {
+        ImGui_ImplGlfw_CursorPosCallback(w, sx, sy);
+        auto* self = static_cast<AppWindow*>(glfwGetWindowUserPointer(w));
+        if (!self || !self->viewportHost_) return;
+        if (ImGui::GetIO().WantCaptureMouse) return;
+        self->viewportHost_->ForwardMouseMove(sx, sy);
+    });
+
+    glfwSetScrollCallback(window_, [](GLFWwindow* w, double xOff, double yOff) {
+        ImGui_ImplGlfw_ScrollCallback(w, xOff, yOff);
+        auto* self = static_cast<AppWindow*>(glfwGetWindowUserPointer(w));
+        if (!self || !self->viewportHost_) return;
+        if (ImGui::GetIO().WantCaptureMouse) return;
+        double sx, sy; glfwGetCursorPos(w, &sx, &sy);
+        self->viewportHost_->ForwardScroll(xOff, yOff, sx, sy);
+    });
+
+    glfwSetKeyCallback(window_, [](GLFWwindow* w, int key, int scancode, int action, int mods) {
+        ImGui_ImplGlfw_KeyCallback(w, key, scancode, action, mods);
+        auto* self = static_cast<AppWindow*>(glfwGetWindowUserPointer(w));
+        if (!self || !self->viewportHost_) return;
+        if (ImGui::GetIO().WantCaptureKeyboard) return;
+        self->viewportHost_->ForwardKey(key, scancode, action, mods);
+    });
 
     return true;
 }

@@ -12,8 +12,13 @@
 #include "utils/Logger.h"
 #include "utils/RayCaster.h"
 
+#include "core/Mesh.h"
+
 #include <GL/glew.h>
+#include <GLFW/glfw3.h>
 #include <imgui.h>
+
+#include <algorithm>
 
 #include <cmath>
 #include <cstdio>
@@ -194,11 +199,210 @@ void Viewport::SetShowMask(bool show) {
     if (renderer_) renderer_->SetShowMask(show);
 }
 
-// --- Input stubs (bodies land in Story 3.5.4) ---
-void Viewport::OnMouseButton(int, int, int, float, float) {}
-void Viewport::OnMouseMove(float, float) {}
-void Viewport::OnScroll(float, float) {}
-void Viewport::OnKey(int, int, int, int) {}
+// --- Input (Story 3.5.4) ---
+// Coordinates arrive in viewport-local screen-coord pixels. Sculpt/mask/point
+// LMB handlers and gizmo drag are deferred to Sprint 3.6 — they early-return
+// on null project anyway, and the project/mesh/stage infrastructure returns
+// alongside the sidebars and dialogs.
+
+void Viewport::OnMouseButton(int button, int action, int /*mods*/, float x, float y) {
+    lastMouseX_ = x;
+    lastMouseY_ = y;
+
+    if (button == GLFW_MOUSE_BUTTON_MIDDLE) {
+        if (action == GLFW_PRESS) {
+            ImGuiIO& io = ImGui::GetIO();
+            if (io.KeyShift) {
+                isPanning_ = true;
+            } else {
+                isOrbiting_ = true;
+            }
+        } else if (action == GLFW_RELEASE) {
+            isOrbiting_ = false;
+            isPanning_ = false;
+        }
+    }
+
+    // LMB handling (gizmo drag, sculpt/mask/point click) returns in Sprint 3.6
+    // with the StageManager and loaded project.
+}
+
+void Viewport::OnMouseMove(float x, float y) {
+    float dx = x - lastMouseX_;
+    float dy = y - lastMouseY_;
+    lastMouseX_ = x;
+    lastMouseY_ = y;
+
+    if (isOrbiting_) {
+        camera_->Orbit(dx, dy);
+        if (OnCameraChanged) OnCameraChanged();
+    } else if (isPanning_) {
+        camera_->Pan(dx, dy);
+        if (OnCameraChanged) OnCameraChanged();
+    }
+    // Gizmo hover / sculpt cursor hover wires up in Sprint 3.6.
+}
+
+void Viewport::OnScroll(float /*xOffset*/, float yOffset) {
+    if (yOffset == 0.0f) return;
+    camera_->Zoom(yOffset);
+    if (OnCameraChanged) OnCameraChanged();
+}
+
+void Viewport::OnKey(int key, int /*scancode*/, int action, int mods) {
+    if (action != GLFW_PRESS && action != GLFW_REPEAT) return;
+
+    const bool noMods = (mods & (GLFW_MOD_SHIFT | GLFW_MOD_CONTROL |
+                                  GLFW_MOD_ALT | GLFW_MOD_SUPER)) == 0;
+
+    bool inAlignment = project_ && project_->GetCurrentStage() == WorkflowStage::Alignment;
+    bool inPointRef  = project_ && project_->GetCurrentStage() == WorkflowStage::PointReference;
+    bool inTouchUp   = project_ && project_->GetCurrentStage() == WorkflowStage::TouchUp;
+    bool hasTarget   = project_ && project_->GetTargetMesh().isLoaded;
+
+    switch (key) {
+        case GLFW_KEY_G:
+            if (inAlignment && hasTarget) SetTransformMode(TransformMode::Move);
+            break;
+        case GLFW_KEY_R:
+            if (inAlignment && hasTarget) SetTransformMode(TransformMode::Rotate);
+            break;
+        case GLFW_KEY_S:
+            if (inAlignment && hasTarget) SetTransformMode(TransformMode::Scale);
+            break;
+
+        case GLFW_KEY_X:
+            if (transformMode_ != TransformMode::None) {
+                axisConstraint_ = (axisConstraint_ == AxisConstraint::X)
+                    ? AxisConstraint::None : AxisConstraint::X;
+                if (OnTransformModeChanged) OnTransformModeChanged(transformMode_, axisConstraint_);
+            }
+            break;
+        case GLFW_KEY_Y:
+            if (transformMode_ != TransformMode::None) {
+                axisConstraint_ = (axisConstraint_ == AxisConstraint::Y)
+                    ? AxisConstraint::None : AxisConstraint::Y;
+                if (OnTransformModeChanged) OnTransformModeChanged(transformMode_, axisConstraint_);
+            }
+            break;
+        case GLFW_KEY_Z:
+            if (transformMode_ != TransformMode::None) {
+                axisConstraint_ = (axisConstraint_ == AxisConstraint::Z)
+                    ? AxisConstraint::None : AxisConstraint::Z;
+                if (OnTransformModeChanged) OnTransformModeChanged(transformMode_, axisConstraint_);
+            }
+            break;
+
+        case GLFW_KEY_LEFT_BRACKET:
+            if (inTouchUp) {
+                float r = GetBrushRadius();
+                float step = std::max(0.1f, r * 0.1f);
+                float nr = std::max(0.1f, r - step);
+                SetBrushRadius(nr);
+                if (OnBrushRadiusChanged) OnBrushRadiusChanged(nr);
+            }
+            break;
+        case GLFW_KEY_RIGHT_BRACKET:
+            if (inTouchUp) {
+                float r = GetBrushRadius();
+                float step = std::max(0.1f, r * 0.1f);
+                float nr = std::min(100.0f, r + step);
+                SetBrushRadius(nr);
+                if (OnBrushRadiusChanged) OnBrushRadiusChanged(nr);
+            }
+            break;
+
+        case GLFW_KEY_ESCAPE:
+            if (transformMode_ != TransformMode::None) {
+                CancelTransform();
+            } else if (inPointRef && selectedPointIndex_ >= 0) {
+                SetSelectedPointIndex(-1);
+                if (OnPointSelected) OnPointSelected(-1);
+            }
+            break;
+
+        case GLFW_KEY_DELETE:
+            if (inPointRef && selectedPointIndex_ >= 0) {
+                if (OnPointDeleteRequested) OnPointDeleteRequested();
+            }
+            break;
+
+        case GLFW_KEY_HOME:
+            camera_->Reset();
+            if (OnCameraChanged) OnCameraChanged();
+            break;
+
+        case GLFW_KEY_KP_1:
+            if (noMods) {
+                camera_->SetProjectionMode(ProjectionMode::OrthographicFront);
+                camera_->SetPosition(Vector3(0.0f, 0.0f, 5.0f));
+                camera_->SetTarget(Vector3(0.0f, 0.0f, 0.0f));
+                if (OnCameraChanged) OnCameraChanged();
+            }
+            break;
+        case GLFW_KEY_KP_3:
+            if (noMods) {
+                camera_->SetProjectionMode(ProjectionMode::OrthographicRight);
+                camera_->SetPosition(Vector3(5.0f, 0.0f, 0.0f));
+                camera_->SetTarget(Vector3(0.0f, 0.0f, 0.0f));
+                if (OnCameraChanged) OnCameraChanged();
+            }
+            break;
+        case GLFW_KEY_KP_7:
+            if (noMods) {
+                camera_->SetProjectionMode(ProjectionMode::OrthographicTop);
+                camera_->SetPosition(Vector3(0.0f, 5.0f, 0.0f));
+                camera_->SetTarget(Vector3(0.0f, 0.0f, 0.0f));
+                if (OnCameraChanged) OnCameraChanged();
+            }
+            break;
+        case GLFW_KEY_KP_5:
+            if (noMods) {
+                camera_->SetProjectionMode(
+                    camera_->GetProjectionMode() == ProjectionMode::Perspective
+                        ? ProjectionMode::OrthographicFront
+                        : ProjectionMode::Perspective);
+                if (OnCameraChanged) OnCameraChanged();
+            }
+            break;
+
+        case GLFW_KEY_F: {
+            BoundingBox combined;
+            bool has = false;
+            auto addMesh = [&](const MeshReference& mr) {
+                if (!mr.isLoaded || !mr.mesh) return;
+                const BoundingBox& b = mr.mesh->GetBounds();
+                Vector3 c = b.Center();
+                Vector3 p = mr.transform.GetPosition();
+                Vector3 tc(c.x + p.x, c.y + p.y, c.z + p.z);
+                Vector3 hs((b.max.x - b.min.x) * 0.5f,
+                           (b.max.y - b.min.y) * 0.5f,
+                           (b.max.z - b.min.z) * 0.5f);
+                BoundingBox tb;
+                tb.min = Vector3(tc.x - hs.x, tc.y - hs.y, tc.z - hs.z);
+                tb.max = Vector3(tc.x + hs.x, tc.y + hs.y, tc.z + hs.z);
+                if (!has) { combined = tb; has = true; }
+                else {
+                    combined.min.x = std::min(combined.min.x, tb.min.x);
+                    combined.min.y = std::min(combined.min.y, tb.min.y);
+                    combined.min.z = std::min(combined.min.z, tb.min.z);
+                    combined.max.x = std::max(combined.max.x, tb.max.x);
+                    combined.max.y = std::max(combined.max.y, tb.max.y);
+                    combined.max.z = std::max(combined.max.z, tb.max.z);
+                }
+            };
+            if (project_) {
+                addMesh(project_->GetMorphMesh());
+                addMesh(project_->GetTargetMesh());
+            }
+            if (has) camera_->FocusOnBounds(combined);
+            else     camera_->Reset();
+            if (OnCameraChanged) OnCameraChanged();
+            break;
+        }
+        default: break;
+    }
+}
 
 // --- Gizmo helpers ---
 
