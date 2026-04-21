@@ -9,7 +9,9 @@ set(CMAKE_AUTOUIC ON)
 
 # Find Qt6 - check common installation paths
 if(NOT DEFINED CMAKE_PREFIX_PATH)
-    if(EXISTS "C:/Qt/6.10.1/msvc2022_64")
+    if(EXISTS "C:/Qt/6.10.3/msvc2022_64")
+        list(APPEND CMAKE_PREFIX_PATH "C:/Qt/6.10.3/msvc2022_64")
+    elseif(EXISTS "C:/Qt/6.10.1/msvc2022_64")
         list(APPEND CMAKE_PREFIX_PATH "C:/Qt/6.10.1/msvc2022_64")
     endif()
 endif()
@@ -38,7 +40,7 @@ if(assimp_FOUND)
     message(STATUS "Assimp found - mesh loading enabled")
     add_compile_definitions(HAVE_ASSIMP)
 else()
-    message(WARNING "Assimp not found - mesh loading will be disabled. Install with: vcpkg install assimp:x64-mingw-dynamic")
+    message(WARNING "Assimp not found - mesh loading will be disabled. Install with: vcpkg install assimp:x64-windows")
 endif()
 
 # Find OpenMP for parallel computation

@@ -1,7 +1,7 @@
 param(
     [switch]$Clean,
     [switch]$Deploy,
-    [string]$QtPath = "C:/Qt/6.10.1/msvc2022_64",
+    [string]$QtPath = "C:/Qt/6.10.3/msvc2022_64",
     [string]$VcpkgToolchain = "",
     [string]$BuildType = "Release"
 )
