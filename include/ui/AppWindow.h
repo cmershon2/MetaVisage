@@ -28,7 +28,11 @@ private:
     void RenderFrame(int fbWidth, int fbHeight);
 
     GLFWwindow* window_ = nullptr;
-    bool imguiInitialized_ = false;
+    // Init progress — Shutdown() consults each flag so a partial failure in
+    // Initialize() still unwinds only what actually succeeded.
+    bool imguiContextCreated_ = false;
+    bool imguiGlfwInitialized_ = false;
+    bool imguiOpenGLInitialized_ = false;
     std::unique_ptr<ViewportHost> viewportHost_;
 };
 

@@ -56,6 +56,12 @@ public:
     void ForwardScroll(double xOffset, double yOffset, double sx, double sy);
     void ForwardKey(int key, int scancode, int action, int mods);
 
+    // True while at least one mouse button is held down over a viewport. Used
+    // by AppWindow callbacks to bypass the ImGui WantCaptureMouse gate for
+    // move + release events — otherwise a drag that crosses over the debug
+    // HUD permanently strands the viewport in orbit/pan state.
+    bool IsDragging() const { return capturedViewport_ != nullptr; }
+
 private:
     void WireCameraSync();
 

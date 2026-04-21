@@ -51,3 +51,6 @@ desktop.ini
 # User config
 config.ini
 .settings
+
+# Claude Code runtime artifacts (per-session session ID + PID)
+.claude/scheduled_tasks.lock

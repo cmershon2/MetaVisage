@@ -67,6 +67,7 @@ bool AppWindow::Initialize(int width, int height, const char* title) {
 
     IMGUI_CHECKVERSION();
     ImGui::CreateContext();
+    imguiContextCreated_ = true;
     ImGuiIO& io = ImGui::GetIO();
     io.ConfigFlags |= ImGuiConfigFlags_NavEnableKeyboard;
     io.IniFilename = nullptr; // don't persist imgui.ini in cwd
@@ -78,13 +79,17 @@ bool AppWindow::Initialize(int width, int height, const char* title) {
     // ImGui's WantCapture flags without fighting the backend's chain logic.
     if (!ImGui_ImplGlfw_InitForOpenGL(window_, false)) {
         MV_LOG_CRITICAL("ImGui_ImplGlfw_InitForOpenGL failed");
+        Shutdown();
         return false;
     }
+    imguiGlfwInitialized_ = true;
+
     if (!ImGui_ImplOpenGL3_Init("#version 430 core")) {
         MV_LOG_CRITICAL("ImGui_ImplOpenGL3_Init failed");
+        Shutdown();
         return false;
     }
-    imguiInitialized_ = true;
+    imguiOpenGLInitialized_ = true;
 
     MV_LOG_INFO(QString("AppWindow initialized: %1x%2, GL %3, GLSL %4")
         .arg(width).arg(height)
@@ -94,6 +99,8 @@ bool AppWindow::Initialize(int width, int height, const char* title) {
     viewportHost_ = std::make_unique<ViewportHost>();
     if (!viewportHost_->Initialize()) {
         MV_LOG_CRITICAL("ViewportHost initialization failed");
+        viewportHost_.reset();
+        Shutdown();
         return false;
     }
 
@@ -103,11 +110,17 @@ bool AppWindow::Initialize(int width, int height, const char* title) {
     glfwSetCursorEnterCallback(window_, ImGui_ImplGlfw_CursorEnterCallback);
     glfwSetCharCallback(window_, ImGui_ImplGlfw_CharCallback);
 
+    // Mouse gating: the ImGui WantCaptureMouse gate applies only when no drag
+    // is in progress. Once a button is held over a viewport, subsequent
+    // move/release events bypass the gate — otherwise a drag that crosses
+    // into the debug HUD permanently strands the viewport in orbit/pan state
+    // (no RELEASE reaches Viewport::OnMouseButton to clear isOrbiting_).
     glfwSetMouseButtonCallback(window_, [](GLFWwindow* w, int button, int action, int mods) {
         ImGui_ImplGlfw_MouseButtonCallback(w, button, action, mods);
         auto* self = static_cast<AppWindow*>(glfwGetWindowUserPointer(w));
         if (!self || !self->viewportHost_) return;
-        if (ImGui::GetIO().WantCaptureMouse) return;
+        const bool gate = !self->viewportHost_->IsDragging();
+        if (action == GLFW_PRESS && gate && ImGui::GetIO().WantCaptureMouse) return;
         double sx, sy; glfwGetCursorPos(w, &sx, &sy);
         self->viewportHost_->ForwardMouseButton(button, action, mods, sx, sy);
     });
@@ -116,7 +129,7 @@ bool AppWindow::Initialize(int width, int height, const char* title) {
         ImGui_ImplGlfw_CursorPosCallback(w, sx, sy);
         auto* self = static_cast<AppWindow*>(glfwGetWindowUserPointer(w));
         if (!self || !self->viewportHost_) return;
-        if (ImGui::GetIO().WantCaptureMouse) return;
+        if (!self->viewportHost_->IsDragging() && ImGui::GetIO().WantCaptureMouse) return;
         self->viewportHost_->ForwardMouseMove(sx, sy);
     });
 
@@ -220,11 +233,20 @@ void AppWindow::RenderFrame(int /*fbWidth*/, int /*fbHeight*/) {
 }
 
 void AppWindow::Shutdown() {
-    if (imguiInitialized_) {
+    // Unwind in reverse init order, consulting each flag so a partial
+    // Initialize() failure still produces a clean teardown.
+    viewportHost_.reset();
+    if (imguiOpenGLInitialized_) {
         ImGui_ImplOpenGL3_Shutdown();
+        imguiOpenGLInitialized_ = false;
+    }
+    if (imguiGlfwInitialized_) {
         ImGui_ImplGlfw_Shutdown();
+        imguiGlfwInitialized_ = false;
+    }
+    if (imguiContextCreated_) {
         ImGui::DestroyContext();
-        imguiInitialized_ = false;
+        imguiContextCreated_ = false;
     }
     if (window_) {
         glfwDestroyWindow(window_);
