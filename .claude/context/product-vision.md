@@ -6,7 +6,7 @@ description: Strategic vision, target users, and current state for MetaVisage �
 # Product Vision
 
 **Project**: MetaVisage
-**Last Updated**: 2026-04-20
+**Last Updated**: 2026-04-21
 
 ---
 
@@ -50,7 +50,8 @@ Commercial mesh-wrapping solutions (e.g., Faceform's Wrapped) cost ~$500/month a
   - Migrate off Qt onto Dear ImGui + GLFW to eliminate Qt commercial-license cost (Sprints 3.5 and 3.6)
   - Replace RBF with NRICP as the wrapping algorithm; introduce Quick Wrap / Fantasy Wrap presets
   - Add licensing infrastructure, tier enforcement, Inno Setup installer, and WinSparkle auto-update
-- Sprints 1–3 are complete. Sprint 3.5 (Platform Layer migration) is the active sprint.
+- Sprints 1–3 complete. **Sprint 3.5 (Platform Layer migration) complete** as of 2026-04-21 — Qt Gui/Widgets/OpenGL/OpenGLWidgets removed, app re-hosted on GLFW + Dear ImGui + GLEW with camera/input parity. `Qt6::Core` retained transitionally (LGPL; full removal tracked in the product backlog).
+- **Sprint 3.6 (UI reinstatement)** is next: rebuilding menus, sidebars, dialogs, project/mesh loader, and the sculpt/mask/point-click input paths on ImGui, plus integrating the licensing API, NFD file dialogs, and WinSparkle update flow.
 - v2.0 transitions the product from open-source MIT to proprietary/closed-source.
 
 ---

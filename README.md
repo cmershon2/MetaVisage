@@ -24,12 +24,14 @@ An open-source desktop application for automated MetaHuman mesh morphing. Wrap M
 - 1920x1080 minimum display resolution
 
 ### Build
-- Qt 6.x (6.5+)
 - CMake 3.16+
-- C++17 compiler - MSVC 2019+ or MinGW
-- Assimp (recommended via vcpkg)
-- Eigen3
+- C++17 compiler — MSVC 2019+ or MinGW
 - OpenGL 4.3+
+- vcpkg (recommended) for the following dependencies:
+  - GLFW3, Dear ImGui (with `glfw-binding` + `opengl3-binding`), GLEW
+  - nlohmann/json, native-file-dialog-extended (NFD), libcurl
+  - Assimp, Eigen3
+- Qt 6.10+ — `Qt6::Core` only, linked transitionally for QString/QFile/QJson (full removal tracked in the backlog)
 
 ## Quick Start
 
@@ -41,7 +43,7 @@ cd MetaVisage
 mkdir build && cd build
 
 # MSVC
-cmake .. -DCMAKE_PREFIX_PATH="C:/Qt/6.10.1/msvc2022_64" -G "Visual Studio 17 2022" -A x64
+cmake .. -DCMAKE_PREFIX_PATH="C:/Qt/6.10.3/msvc2022_64" -DCMAKE_TOOLCHAIN_FILE="%VCPKG_ROOT%/scripts/buildsystems/vcpkg.cmake" -G "Visual Studio 17 2022" -A x64
 cmake --build . --config Release
 
 # Run
@@ -53,7 +55,7 @@ See [BUILD.md](BUILD.md) for detailed instructions (MinGW, Qt Creator, vcpkg set
 ### Using the Build Scripts
 
 ```powershell
-# MSVC build with Qt dependency deployment
+# MSVC build with runtime DLL staging (Qt6::Core + GLFW/ImGui/GLEW/etc.)
 .\build-msvc.ps1 -Deploy
 
 # MinGW build
@@ -106,6 +108,7 @@ Casey Mershon
 ## Acknowledgments
 
 - Epic Games for MetaHuman Creator
-- Qt Project for the UI framework
+- Dear ImGui, GLFW, and GLEW for the UI/windowing/GL stack
 - Eigen for linear algebra
 - Assimp for mesh I/O
+- nlohmann/json, native-file-dialog-extended, libcurl, WinSparkle

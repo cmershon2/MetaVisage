@@ -8,7 +8,7 @@ See @.claude/context/product-vision.md for strategic goals and current state.
 
 ## Technical Stack
 
-- **UI Framework**: Migrating from Qt 6.x → Dear ImGui + GLFW (Sprint 3.5–3.6)
+- **UI Framework**: Dear ImGui + GLFW + GLEW (platform cut landed in Sprint 3.5; UI surface — menus, sidebars, dialogs — being rebuilt in Sprint 3.6). `Qt6::Core` retained transitionally for QString/QFile/QJson; full removal tracked in the product backlog.
 - **Graphics API**: OpenGL 4.3+
 - **Mesh I/O**: Assimp (FBX, OBJ, GLTF)
 - **Mesh Processing**: libigl / OpenMesh / CGAL
