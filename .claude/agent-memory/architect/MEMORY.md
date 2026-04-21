@@ -1,0 +1,1 @@
+- [MetaVisage Architecture Overview](project_arch_overview.md) — Layer map, Qt footprint audit, Sprint 3.5/3.6 boundary, rendering layer risks, domain-layer QString coupling

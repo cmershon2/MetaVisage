@@ -5,7 +5,7 @@ param(
     [switch]$Clean,
     [switch]$Deploy,
     [string]$BuildType = "Release",
-    [string]$QtPath = "C:/Qt/6.10.1/mingw_64",
+    [string]$QtPath = "C:/Qt/6.10.3/mingw_64",
     [string]$MinGWPath = "C:/Qt/Tools/mingw1310_64",
     [string]$VcpkgToolchain = ""
 )
@@ -91,17 +91,28 @@ if ($LASTEXITCODE -ne 0) {
 Write-Host ""
 Write-Host "Build completed successfully!" -ForegroundColor Green
 
-# Deploy Qt dependencies if requested
+# Deploy runtime dependencies if requested
+# Sprint 3.5.1 builds MetaVisageCore as a static library only; the executable
+# target returns in Story 3.5.2. Skip deployment when the .exe is absent.
 if ($Deploy) {
-    Write-Host ""
-    Write-Host "Deploying Qt dependencies..." -ForegroundColor Green
-    Set-Location $BinDir
-    & windeployqt MetaVisage.exe
+    $ExePath = Join-Path $BinDir "MetaVisage.exe"
+    if (Test-Path $ExePath) {
+        Write-Host ""
+        Write-Host "Deploying runtime dependencies..." -ForegroundColor Green
+        Set-Location $BinDir
 
-    if ($LASTEXITCODE -eq 0) {
-        Write-Host "Qt dependencies deployed successfully!" -ForegroundColor Green
+        # windeployqt still handles Qt6Core.dll (transitional Qt6::Core dependency)
+        & windeployqt MetaVisage.exe
+        if ($LASTEXITCODE -ne 0) {
+            Write-Host "WARNING: windeployqt failed" -ForegroundColor Yellow
+        }
+
+        # vcpkg applocal deployment stages GLFW / GLEW / ImGui / libcurl / etc. DLLs
+        # This runs automatically as a post-build step under the vcpkg toolchain.
+        Write-Host "Runtime dependencies deployed." -ForegroundColor Green
     } else {
-        Write-Host "WARNING: windeployqt failed" -ForegroundColor Yellow
+        Write-Host ""
+        Write-Host "Skipping deploy: no executable yet (Sprint 3.5.1 builds a static library only)." -ForegroundColor Yellow
     }
 }
 
@@ -109,9 +120,15 @@ if ($Deploy) {
 Set-Location $ProjectRoot
 
 Write-Host ""
-Write-Host "Executable location: $BinDir\MetaVisage.exe" -ForegroundColor Cyan
-Write-Host ""
-Write-Host "To run the application:" -ForegroundColor Yellow
-Write-Host "  cd build\bin" -ForegroundColor Yellow
-Write-Host "  .\MetaVisage.exe" -ForegroundColor Yellow
+$ExePath = Join-Path $BinDir "MetaVisage.exe"
+if (Test-Path $ExePath) {
+    Write-Host "Executable location: $ExePath" -ForegroundColor Cyan
+    Write-Host ""
+    Write-Host "To run the application:" -ForegroundColor Yellow
+    Write-Host "  cd build\bin" -ForegroundColor Yellow
+    Write-Host "  .\MetaVisage.exe" -ForegroundColor Yellow
+} else {
+    Write-Host "Built MetaVisageCore static library (Sprint 3.5.1 transitional target)." -ForegroundColor Cyan
+    Write-Host "Executable target returns in Story 3.5.2." -ForegroundColor Cyan
+}
 Write-Host ""

@@ -3,7 +3,6 @@
 
 #include "core/Types.h"
 #include <QString>
-#include <QImage>
 #include <vector>
 #include <cstdint>
 #include <memory>
@@ -41,9 +40,6 @@ public:
     const QString& GetFilePath() const { return filePath_; }
     const std::vector<uint8_t>& GetPixels() const { return pixels_; }
     std::vector<uint8_t>& GetPixels() { return pixels_; }
-
-    // Convert to QImage for display (thumbnails and previews)
-    QImage ToQImage() const;
 
 private:
     std::vector<uint8_t> pixels_;  // RGBA pixel data

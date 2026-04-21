@@ -1,13 +1,13 @@
 #ifndef SHADERMANAGER_H
 #define SHADERMANAGER_H
 
-#include <QOpenGLFunctions_4_3_Core>
+#include <GL/glew.h>
 #include <QString>
 #include <map>
 
 namespace MetaVisage {
 
-class ShaderManager : protected QOpenGLFunctions_4_3_Core {
+class ShaderManager {
 public:
     ShaderManager();
     ~ShaderManager();

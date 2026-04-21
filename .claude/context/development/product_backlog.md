@@ -9,6 +9,11 @@
 
 ## 🔥 High Priority
 
+- [ ] **Qt6Core removal (QString / QFile / QJson / QDateTime → std)**
+  - Sprint 3.5 removed Qt Gui/Widgets/OpenGL/OpenGLWidgets but kept `Qt6::Core` linked as a transitional dependency. `QString` is embedded in the public API of `core/Mesh`, `core/Project`, `core/TextureData`, `core/UndoStack`, `core/UndoableAction`, `io/MeshExporter`, `io/ProjectSerializer`, and pervasively in `MV_LOG_*(QString(...).arg(...))` call sites across `deformation/*`, `baking/*`, and `utils/*`. Port to `std::string` / `std::filesystem` / `std::chrono` / `nlohmann::json` / `std::fstream`. `Qt6::Core` is LGPL so not a licensing blocker, but keeping it means ~25 MB of runtime DLLs shipped with the installer and a transitive build-system footprint on Qt tooling.
+  - **Effort**: ~15–20 points (~1.5 weeks solo)
+  - **Value**: Completes the Qt exit begun in Sprint 3.5; shrinks installer; removes final Qt build-tool dependency
+
 - [ ] **Investigate "cottage cheese face" morph artifacts**
   - Users report geometry stretching at correspondence point locations after morphing. Needs diagnostic work: determine whether this is an NRICP parameter-tuning issue, a point-density issue, or a normal-recomputation bug.
   - **Effort**: ~1–2 weeks (investigation + fix)

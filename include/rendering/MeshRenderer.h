@@ -1,7 +1,7 @@
 #ifndef MESHRENDERER_H
 #define MESHRENDERER_H
 
-#include <QOpenGLFunctions_4_3_Core>
+#include <GL/glew.h>
 #include <vector>
 #include "core/Mesh.h"
 #include "core/Camera.h"
@@ -12,7 +12,7 @@ namespace MetaVisage {
 class ShaderManager;
 class TextureData;
 
-class MeshRenderer : protected QOpenGLFunctions_4_3_Core {
+class MeshRenderer {
 public:
     MeshRenderer();
     ~MeshRenderer();

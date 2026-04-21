@@ -6,7 +6,6 @@
 namespace MetaVisage {
 
 ShaderManager::ShaderManager() {
-    initializeOpenGLFunctions();
 }
 
 ShaderManager::~ShaderManager() {
