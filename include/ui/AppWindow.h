@@ -1,9 +1,13 @@
 #ifndef APPWINDOW_H
 #define APPWINDOW_H
 
+#include <memory>
+
 struct GLFWwindow;
 
 namespace MetaVisage {
+
+class ViewportHost;
 
 class AppWindow {
 public:
@@ -17,12 +21,15 @@ public:
     void Run();
     void Shutdown();
 
+    ViewportHost* GetViewportHost() { return viewportHost_.get(); }
+
 private:
     void ApplyDarkTheme();
-    void RenderFrame();
+    void RenderFrame(int fbWidth, int fbHeight);
 
     GLFWwindow* window_ = nullptr;
     bool imguiInitialized_ = false;
+    std::unique_ptr<ViewportHost> viewportHost_;
 };
 
 } // namespace MetaVisage

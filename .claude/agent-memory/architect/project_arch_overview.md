@@ -88,13 +88,27 @@ All on main thread — become no-ops under GLFW (context permanently current on 
 All via QKeyEvent::key() switch — no QShortcut objects:
 - G/R/S: transform modes (Alignment stage only)
 - X/Y/Z: axis constraints (when transform mode active)
-- [/]: brush radius ±10% (TouchUp stage only)
+- [/]: brush radius ±10% (TouchUp stage only) — emits BrushRadiusChanged
 - Escape: cancel transform or deselect point
-- Delete: remove selected point (PointReference stage)
+- Delete: remove selected point (PointReference stage) — emits PointDeleteRequested
 - Home: camera reset
 - 1/3/5/7: ortho views (MAIN ROW numbers, not numpad — critical GLFW distinction)
 - 5: toggle perspective/ortho
 - F: focus on mesh bounds
+
+### QPoint member variable coupling
+QPoint lastMousePos_ and QPoint transformStartPos_ (h:180–181) come transitively from QMouseEvent.
+ApplyTransform(const QPoint& delta) (cpp:1436) takes QPoint. Must replace with plain struct { int x, y; } or glm::ivec2 when QMouseEvent is removed.
+
+### Signals emitted by ViewportWidget (h:107–127)
+TransformModeChanged, TargetTransformChanged, CameraChanged, PointPlaced, PointSelected,
+PointDeleteRequested, BrushRadiusChanged, TransformApplied, SculptStrokeCompleted, MaskStrokeCompleted.
+SculptStrokeCompleted, MaskStrokeCompleted, BrushRadiusChanged, TransformApplied are NOT connected
+inside the viewport layer files — wired upstream in stage controllers or MainWindow.
+
+### Dead code in ViewportContainer
+OnLeftViewportClicked() and OnRightViewportClicked() are declared (h:50–51) and defined (container.cpp:162–168)
+but are never connected via connect() anywhere in these files. Safe to remove.
 
 ### Camera orbit/pan/zoom
 - MMB → orbit; Shift+MMB → pan; scroll → zoom

@@ -15,7 +15,7 @@
 |---|-------|--------|--------------|--------|
 | 1 | **Story 3.5.1: Dependency & Build System Overhaul** | 5 | None | [x] |
 | 2 | **Story 3.5.2: Application Entry Point & Main Loop** | 8 | Story 3.5.1 | [x] |
-| 3 | **Story 3.5.3: OpenGL Context & Viewport Rendering** | 8 | Story 3.5.2 | [ ] |
+| 3 | **Story 3.5.3: OpenGL Context & Viewport Rendering** | 8 | Story 3.5.2 | [x] |
 | 4 | **Story 3.5.4: Input Handling** | 5 | Story 3.5.2 | [ ] |
 
 > Stories are pulled from the aggregated plan at [SPRINT_PLAN.md](./SPRINT_PLAN.md) §Sprint 3.5. This is framework-migration work, not product-backlog work — `product_backlog.md` is unchanged by this sprint.

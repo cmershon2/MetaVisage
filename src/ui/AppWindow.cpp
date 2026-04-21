@@ -1,4 +1,5 @@
 #include "ui/AppWindow.h"
+#include "ui/ViewportHost.h"
 #include "utils/Logger.h"
 
 #include <GL/glew.h>
@@ -87,6 +88,12 @@ bool AppWindow::Initialize(int width, int height, const char* title) {
         .arg(reinterpret_cast<const char*>(glGetString(GL_VERSION)))
         .arg(reinterpret_cast<const char*>(glGetString(GL_SHADING_LANGUAGE_VERSION))));
 
+    viewportHost_ = std::make_unique<ViewportHost>();
+    if (!viewportHost_->Initialize()) {
+        MV_LOG_CRITICAL("ViewportHost initialization failed");
+        return false;
+    }
+
     return true;
 }
 
@@ -131,19 +138,23 @@ void AppWindow::Run() {
     while (!glfwWindowShouldClose(window_)) {
         glfwPollEvents();
 
+        int fbWidth, fbHeight;
+        glfwGetFramebufferSize(window_, &fbWidth, &fbHeight);
+
         ImGui_ImplOpenGL3_NewFrame();
         ImGui_ImplGlfw_NewFrame();
         ImGui::NewFrame();
 
-        RenderFrame();
+        if (viewportHost_) viewportHost_->BuildLayout(fbWidth, fbHeight);
+        RenderFrame(fbWidth, fbHeight);
 
         ImGui::Render();
 
-        int fbWidth, fbHeight;
-        glfwGetFramebufferSize(window_, &fbWidth, &fbHeight);
         glViewport(0, 0, fbWidth, fbHeight);
         glClearColor(30.0f / 255.0f, 30.0f / 255.0f, 30.0f / 255.0f, 1.0f);
         glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT);
+
+        if (viewportHost_) viewportHost_->RenderGL(fbHeight);
 
         ImGui_ImplOpenGL3_RenderDrawData(ImGui::GetDrawData());
 
@@ -151,17 +162,16 @@ void AppWindow::Run() {
     }
 }
 
-void AppWindow::RenderFrame() {
-    // Sprint 3.5.2 placeholder: prove ImGui + GLFW + GL context are alive.
-    // The 3D viewport returns in Story 3.5.3; sidebars, menus, and dialogs
-    // return in Sprint 3.6.
-    ImGui::Begin("MetaVisage — Sprint 3.5.2 shell");
-    ImGui::Text("GLFW window + OpenGL 4.3 core + Dear ImGui are alive.");
-    ImGui::Separator();
+void AppWindow::RenderFrame(int /*fbWidth*/, int /*fbHeight*/) {
+    // Sprint 3.5.3: minimal debug HUD. Sidebars / menus / dialogs return in
+    // Sprint 3.6. The viewport itself is driven from Run() via ViewportHost.
+    ImGui::SetNextWindowPos(ImVec2(20.0f, 20.0f), ImGuiCond_FirstUseEver);
+    ImGui::SetNextWindowSize(ImVec2(320.0f, 110.0f), ImGuiCond_FirstUseEver);
+    ImGui::Begin("MetaVisage — debug HUD");
     ImGui::Text("Frame: %.3f ms (%.1f FPS)",
                 1000.0f / ImGui::GetIO().Framerate,
                 ImGui::GetIO().Framerate);
-    ImGui::Text("GL: %s", reinterpret_cast<const char*>(glGetString(GL_VERSION)));
+    ImGui::Text("GL:   %s", reinterpret_cast<const char*>(glGetString(GL_VERSION)));
     ImGui::Text("GLSL: %s", reinterpret_cast<const char*>(glGetString(GL_SHADING_LANGUAGE_VERSION)));
     ImGui::End();
 }
