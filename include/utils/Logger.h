@@ -3,8 +3,8 @@
 
 #include <QString>
 #include <QFile>
-#include <QMutex>
 #include <QTextStream>
+#include <mutex>
 
 namespace MetaVisage {
 
@@ -35,7 +35,7 @@ private:
     bool fileLoggingEnabled_ = true;
     bool consoleLoggingEnabled_ = true;
     bool initialized_ = false;
-    QMutex mutex_;
+    std::mutex mutex_;
 
     static constexpr qint64 MAX_LOG_SIZE = 10 * 1024 * 1024; // 10MB
 };

@@ -43,9 +43,29 @@ struct PointReferenceData {
     bool symmetryEnabled;
     Axis symmetryAxis;
     float symmetryPlaneOffset;
+    PointSelection activeSelection;
+    float pointRenderSize;
 
     PointReferenceData() : symmetryEnabled(false), symmetryAxis(Axis::X),
-                           symmetryPlaneOffset(0.0f) {}
+                           symmetryPlaneOffset(0.0f), pointRenderSize(12.0f) {}
+};
+
+// Stage 4 — Touch Up sculpting state. Promoted from widget-local storage in
+// the Qt-era SidebarWidget so that stage round-trips don't reset brush config.
+struct SculptState {
+    BrushType activeBrush;
+    float brushRadius;
+    float brushStrength;
+    FalloffType falloff;
+    bool symmetryEnabled;
+    Axis symmetryAxis;
+    bool showTargetOverlay;
+
+    SculptState() : activeBrush(BrushType::Smooth),
+                    brushRadius(10.0f), brushStrength(0.5f),
+                    falloff(FalloffType::Smooth),
+                    symmetryEnabled(false), symmetryAxis(Axis::X),
+                    showTargetOverlay(false) {}
 };
 
 enum class DeformationAlgorithm {
@@ -145,6 +165,7 @@ public:
     PointReferenceData& GetPointReferenceData() { return pointReference_; }
     MorphData& GetMorphData() { return morph_; }
     TextureSet& GetTargetTextures() { return targetTextures_; }
+    SculptState& GetSculptState() { return sculpt_; }
 
     const MeshReference& GetMorphMesh() const { return morphMesh_; }
     const MeshReference& GetTargetMesh() const { return targetMesh_; }
@@ -152,6 +173,7 @@ public:
     const PointReferenceData& GetPointReferenceData() const { return pointReference_; }
     const MorphData& GetMorphData() const { return morph_; }
     const TextureSet& GetTargetTextures() const { return targetTextures_; }
+    const SculptState& GetSculptState() const { return sculpt_; }
 
     // Modifiers
     void SetName(const QString& name) { projectName_ = name; }
@@ -174,6 +196,7 @@ private:
     PointReferenceData pointReference_;
     MorphData morph_;
     TextureSet targetTextures_;
+    SculptState sculpt_;
 };
 
 } // namespace MetaVisage

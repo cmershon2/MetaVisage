@@ -497,7 +497,7 @@ static inline ImU32 PackColor(int r, int g, int b, int a = 255) {
 
 void Viewport::DrawViewportLabelOverlay(float x, float y) {
     if (viewportLabel_.isEmpty()) return;
-    ImDrawList* dl = ImGui::GetForegroundDrawList();
+    ImDrawList* dl = ImGui::GetForegroundDrawList(ImGui::GetMainViewport());
     std::string label = viewportLabel_.toStdString();
     ImFont* font = ImGui::GetFont();
     float fontSize = ImGui::GetFontSize();
@@ -534,7 +534,7 @@ void Viewport::DrawOrientationGizmoOverlay(float x, float y, float w) {
         {Vector3(0, 0, axisLen), PackColor(75, 130, 230), "Z"},
     };
 
-    ImDrawList* dl = ImGui::GetForegroundDrawList();
+    ImDrawList* dl = ImGui::GetForegroundDrawList(ImGui::GetMainViewport());
     ImFont* font = ImGui::GetFont();
     float fontSize = ImGui::GetFontSize();
 
@@ -559,7 +559,7 @@ void Viewport::DrawPointLabelsOverlay(float x, float y, float w, float h) {
     const auto& correspondences = project_->GetPointReferenceData().correspondences;
     if (correspondences.empty()) return;
 
-    ImDrawList* dl = ImGui::GetForegroundDrawList();
+    ImDrawList* dl = ImGui::GetForegroundDrawList(ImGui::GetMainViewport());
     ImFont* font = ImGui::GetFont();
     float fontSize = ImGui::GetFontSize();
 
@@ -605,7 +605,7 @@ void Viewport::DrawPointLabelsOverlay(float x, float y, float w, float h) {
 
 void Viewport::DrawActiveBorderOverlay(float x, float y, float w, float h) {
     if (!isActive_) return;
-    ImDrawList* dl = ImGui::GetForegroundDrawList();
+    ImDrawList* dl = ImGui::GetForegroundDrawList(ImGui::GetMainViewport());
     dl->AddRect(ImVec2(x, y), ImVec2(x + w, y + h),
                 PackColor(52, 152, 219), 0.0f, 0, 2.0f);
 }
