@@ -11,6 +11,7 @@
 #include "sculpting/MaskBrush.h"
 #include "utils/Logger.h"
 #include "utils/RayCaster.h"
+#include "utils/BVH.h"
 
 #include "core/Mesh.h"
 
@@ -223,8 +224,46 @@ void Viewport::OnMouseButton(int button, int action, int /*mods*/, float x, floa
         }
     }
 
-    // LMB handling (gizmo drag, sculpt/mask/point click) returns in Sprint 3.6
-    // with the StageManager and loaded project.
+    if (button == GLFW_MOUSE_BUTTON_LEFT && project_) {
+        if (action == GLFW_PRESS) {
+            // Stage 1 (Alignment): begin a gizmo drag if transform mode is
+            // active and the target mesh is loaded. Axis constraint is derived
+            // from the hovered gizmo handle if present; otherwise the current
+            // keyboard-set constraint stays.
+            if (project_->GetCurrentStage() == WorkflowStage::Alignment &&
+                transformMode_ != TransformMode::None &&
+                project_->GetTargetMesh().isLoaded) {
+                if (hoveredGizmoAxis_ != GizmoAxis::None) {
+                    activeGizmoAxis_ = hoveredGizmoAxis_;
+                    switch (hoveredGizmoAxis_) {
+                        case GizmoAxis::X: axisConstraint_ = AxisConstraint::X; break;
+                        case GizmoAxis::Y: axisConstraint_ = AxisConstraint::Y; break;
+                        case GizmoAxis::Z: axisConstraint_ = AxisConstraint::Z; break;
+                        case GizmoAxis::Center: axisConstraint_ = AxisConstraint::None; break;
+                        default: break;
+                    }
+                    if (OnTransformModeChanged) {
+                        OnTransformModeChanged(transformMode_, axisConstraint_);
+                    }
+                }
+                isTransforming_ = true;
+                transformBeforeState_ = project_->GetTargetMesh().transform;
+            }
+            // Stage 2 (Point Reference): place / select a correspondence point.
+            else if (project_->GetCurrentStage() == WorkflowStage::PointReference) {
+                HandlePointClick(x, y);
+            }
+        } else if (action == GLFW_RELEASE) {
+            if (isTransforming_) {
+                isTransforming_ = false;
+                activeGizmoAxis_ = GizmoAxis::None;
+                if (OnTransformApplied) {
+                    OnTransformApplied(transformBeforeState_,
+                                       project_->GetTargetMesh().transform);
+                }
+            }
+        }
+    }
 }
 
 void Viewport::OnMouseMove(float x, float y) {
@@ -236,11 +275,77 @@ void Viewport::OnMouseMove(float x, float y) {
     if (isOrbiting_) {
         camera_->Orbit(dx, dy);
         if (OnCameraChanged) OnCameraChanged();
-    } else if (isPanning_) {
+        return;
+    }
+    if (isPanning_) {
         camera_->Pan(dx, dy);
         if (OnCameraChanged) OnCameraChanged();
+        return;
     }
-    // Gizmo hover / sculpt cursor hover wires up in Sprint 3.6.
+
+    // Gizmo drag (Alignment stage only) — ported from Qt ApplyTransform.
+    if (isTransforming_ && project_ && project_->GetTargetMesh().isLoaded) {
+        Transform& transform = project_->GetTargetMesh().transform;
+
+        const float moveSensitivity   = 0.01f;
+        const float rotateSensitivity = 0.5f;  // deg/pixel
+        const float scaleSensitivity  = 0.005f;
+
+        switch (transformMode_) {
+            case TransformMode::Move: {
+                float ax =  dx * moveSensitivity;
+                float ay = -dy * moveSensitivity;   // invert Y for natural feel
+                Vector3 t(0.0f, 0.0f, 0.0f);
+                switch (axisConstraint_) {
+                    case AxisConstraint::X: t.x = ax; break;
+                    case AxisConstraint::Y: t.y = ay; break;
+                    case AxisConstraint::Z: t.z = -ax; break;
+                    default:                t.x = ax; t.y = ay; break;
+                }
+                transform.Translate(t);
+                break;
+            }
+            case TransformMode::Rotate: {
+                float angle = dx * rotateSensitivity;
+                Vector3 axis(0.0f, 1.0f, 0.0f);
+                switch (axisConstraint_) {
+                    case AxisConstraint::X:
+                        axis = Vector3(1.0f, 0.0f, 0.0f); angle = -angle; break;
+                    case AxisConstraint::Y:
+                        axis = Vector3(0.0f, 1.0f, 0.0f); break;
+                    case AxisConstraint::Z:
+                        axis = Vector3(0.0f, 0.0f, 1.0f); angle = -angle; break;
+                    default:
+                        if (std::abs(dx) >= std::abs(dy)) {
+                            axis = Vector3(0.0f, 1.0f, 0.0f);
+                            angle = dx * rotateSensitivity;
+                        } else {
+                            axis = Vector3(1.0f, 0.0f, 0.0f);
+                            angle = dy * rotateSensitivity;
+                        }
+                        break;
+                }
+                transform.Rotate(Quaternion::FromAxisAngle(axis, angle));
+                break;
+            }
+            case TransformMode::Scale: {
+                float sf    = std::max(0.1f, std::min(2.0f, 1.0f + dx * scaleSensitivity));
+                float sfInv = std::max(0.1f, std::min(2.0f, 1.0f - dx * scaleSensitivity));
+                Vector3 s(1.0f, 1.0f, 1.0f);
+                switch (axisConstraint_) {
+                    case AxisConstraint::X: s.x = sf; break;
+                    case AxisConstraint::Y: s.y = sf; break;
+                    case AxisConstraint::Z: s.z = sfInv; break;
+                    default: s.x = sf; s.y = sf; s.z = sf; break;
+                }
+                transform.Scale(s);
+                break;
+            }
+            case TransformMode::None:
+            default: break;
+        }
+        if (OnTargetTransformChanged) OnTargetTransformChanged();
+    }
 }
 
 void Viewport::OnScroll(float /*xOffset*/, float yOffset) {
@@ -433,6 +538,7 @@ void Viewport::DrawOverlays(float x, float y, float w, float h) {
     DrawViewportLabelOverlay(x, y);
     DrawPointLabelsOverlay(x, y, w, h);
     DrawActiveBorderOverlay(x, y, w, h);
+    DrawShadingModeOverlay(x, y);
 }
 
 void Viewport::RenderGL(float x, float y, float w, float h, int fbHeight) {
@@ -608,6 +714,132 @@ void Viewport::DrawActiveBorderOverlay(float x, float y, float w, float h) {
     ImDrawList* dl = ImGui::GetForegroundDrawList(ImGui::GetMainViewport());
     dl->AddRect(ImVec2(x, y), ImVec2(x + w, y + h),
                 PackColor(52, 152, 219), 0.0f, 0, 2.0f);
+}
+
+void Viewport::DrawShadingModeOverlay(float x, float y) {
+    // Small floating combo at the top-left of each viewport. ID is suffixed
+    // with the address so the two viewports (dual mode) have independent
+    // state even though they share the overlay code.
+    static const char* kItems[] = { "Solid", "Wireframe", "Solid+Wire", "Textured" };
+    char windowId[64];
+    std::snprintf(windowId, sizeof(windowId), "##ShadingMode_%p", (void*)this);
+
+    ImGui::SetNextWindowPos(ImVec2(x + 8.0f, y + 8.0f), ImGuiCond_Always);
+    ImGui::SetNextWindowBgAlpha(0.55f);
+    ImGuiWindowFlags flags =
+        ImGuiWindowFlags_NoDecoration |
+        ImGuiWindowFlags_NoMove |
+        ImGuiWindowFlags_NoSavedSettings |
+        ImGuiWindowFlags_NoFocusOnAppearing |
+        ImGuiWindowFlags_AlwaysAutoResize;
+
+    if (ImGui::Begin(windowId, nullptr, flags)) {
+        int current = static_cast<int>(GetShadingMode());
+        ImGui::SetNextItemWidth(120.0f);
+        if (ImGui::Combo("##ShadingCombo", &current, kItems, IM_ARRAYSIZE(kItems))) {
+            SetShadingMode(static_cast<ShadingMode>(current));
+        }
+    }
+    ImGui::End();
+}
+
+// --- Stage 2 point placement (ported from Qt ViewportWidget::HandlePointClick) ---
+
+PointSide Viewport::GetViewportPointSide() const {
+    if (renderFilter_ == RenderFilter::TargetOnly) return PointSide::Target;
+    if (renderFilter_ == RenderFilter::MorphOnly)  return PointSide::Morph;
+    // Default: single-viewport mode showing everything treats clicks as target.
+    return PointSide::Target;
+}
+
+bool Viewport::TrySelectExistingPoint(float screenX, float screenY) {
+    if (!project_) return false;
+
+    const auto& correspondences = project_->GetPointReferenceData().correspondences;
+    if (correspondences.empty()) return false;
+
+    const float selectRadius = 15.0f; // pixels
+    float closestDist = selectRadius;
+    int closestIdx = -1;
+
+    PointSide side = GetViewportPointSide();
+    int vpW = static_cast<int>(std::ceil(lastW_));
+    int vpH = static_cast<int>(std::ceil(lastH_));
+    if (vpW <= 0 || vpH <= 0) return false;
+
+    for (size_t i = 0; i < correspondences.size(); ++i) {
+        const auto& corr = correspondences[i];
+
+        Vector3 worldPos;
+        bool hasPoint = false;
+        if (side == PointSide::Target && corr.targetMeshVertexIndex >= 0) {
+            worldPos = corr.targetMeshPosition;
+            hasPoint = true;
+        } else if (side == PointSide::Morph && corr.morphMeshVertexIndex >= 0) {
+            worldPos = corr.morphMeshPosition;
+            hasPoint = true;
+        }
+        if (!hasPoint) continue;
+
+        Vector3 screenPos = RayCaster::WorldToScreen(worldPos, vpW, vpH, *camera_);
+
+        // Skip if behind camera / clipped.
+        if (screenPos.z < 0.0f || screenPos.z > 1.0f) continue;
+
+        float dx = screenPos.x - screenX;
+        float dy = screenPos.y - screenY;
+        float dist = std::sqrt(dx * dx + dy * dy);
+
+        if (dist < closestDist) {
+            closestDist = dist;
+            closestIdx = static_cast<int>(i);
+        }
+    }
+
+    if (closestIdx >= 0) {
+        SetSelectedPointIndex(closestIdx);
+        if (OnPointSelected) OnPointSelected(closestIdx);
+        return true;
+    }
+    return false;
+}
+
+void Viewport::HandlePointClick(float screenX, float screenY) {
+    if (!project_) return;
+
+    // First, try to select an existing point near the click.
+    if (TrySelectExistingPoint(screenX, screenY)) return;
+
+    int vpW = static_cast<int>(std::ceil(lastW_));
+    int vpH = static_cast<int>(std::ceil(lastH_));
+    if (vpW <= 0 || vpH <= 0) return;
+
+    Ray ray = RayCaster::ScreenToRay(screenX, screenY, vpW, vpH, *camera_);
+
+    PointSide side = GetViewportPointSide();
+    RaycastHit hit;
+
+    auto raycast = [&](MeshReference& mr) {
+        if (!mr.isLoaded || !mr.mesh) return;
+        BVH* bvh = mr.mesh->GetBVH();
+        hit = bvh
+            ? RayCaster::RayIntersectMeshBVH(ray, *mr.mesh, mr.transform, *bvh)
+            : RayCaster::RayIntersectMesh   (ray, *mr.mesh, mr.transform);
+    };
+
+    if (side == PointSide::Target) {
+        raycast(project_->GetTargetMesh());
+    } else {
+        raycast(project_->GetMorphMesh());
+    }
+
+    if (hit.hit) {
+        if (OnPointPlaced) OnPointPlaced(side, hit.position, hit.vertexIndex);
+    } else {
+        // Click on empty space: deselect any current selection.
+        SetSelectedPointIndex(-1);
+        if (OnPointSelected) OnPointSelected(-1);
+    }
 }
 
 } // namespace MetaVisage

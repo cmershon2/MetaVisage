@@ -138,9 +138,15 @@ private:
     void DrawOrientationGizmoOverlay(float x, float y, float w);
     void DrawPointLabelsOverlay(float x, float y, float w, float h);
     void DrawActiveBorderOverlay(float x, float y, float w, float h);
+    void DrawShadingModeOverlay(float x, float y);
 
     bool IsGizmoVisible() const;
     Vector3 GetGizmoPosition() const;
+
+    // Stage 2 point-placement helpers (ported from Qt HandlePointClick).
+    PointSide GetViewportPointSide() const;
+    bool TrySelectExistingPoint(float screenX, float screenY);
+    void HandlePointClick(float screenX, float screenY);
 
     std::unique_ptr<Camera> camera_;
     std::unique_ptr<Renderer> renderer_;

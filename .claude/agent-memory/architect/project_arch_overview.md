@@ -191,6 +191,29 @@ but are never connected via connect() anywhere in these files. Safe to remove.
 - Cameras are COPIED, not shared pointer
 - Splitter sizes: setSizes({w/2, w/2}) — no QSettings persistence — becomes ImGui 50/50 default
 
+## Sprint 3.6 Regression Audit (as of 2026-04-23)
+
+### Issue 1 — Sidebar Dock (AppWindow.cpp:380–393, StageSidebar.cpp:60–61)
+DockingEnable is set and DockBuilder fires. Root cause: `io.IniFilename = nullptr` (line 122) means the corrected dock state is never persisted. `StageSidebar::Render` passes a fixed pixel size hint (`ImVec2(320, 520)`, `ImGuiCond_FirstUseEver`) which can override the proportional dock slot before dockspace geometry resolves, causing the window to land undocked and stay there.
+
+### Issue 2 — Transform Gizmo (Viewport.cpp:208–244, StageSidebar.cpp:156–170)
+G/R/S keys set `transformMode_` and the gizmo renders. LMB drag path is explicitly deferred — `isTransforming_` is never set true, `OnMouseButton` has no gizmo-hit logic (Viewport.cpp:226–227 comment). The sidebar DragFloat3 spinboxes (Position/Rotation/Scale) DO write to `project_->GetAlignmentData().targetMeshTransform` and work.
+
+### Issue 3 — Font Size (AppWindow.cpp:116–141)
+No `io.Fonts->AddFontFromFileTTF` call anywhere — falls back to ProggyClean 13px bitmap font. No `glfwGetWindowContentScale` / `io.FontGlobalScale` DPI scaling. Dark theme is correctly applied via `ApplyDarkTheme()`.
+
+### Issue 4 — Texture Preview (Modals.cpp, StageSidebar.cpp:130–150)
+`TexturePreviewDialog` was never ported. No `ImGui::Image`, no `ImTextureID`, no GL texture upload for preview in sidebar. Texture list renders as BulletText labels only.
+
+### Issue 5 — Shading Mode (AppWindow.cpp:447–452, Viewport.cpp:50–57)
+View > Shading Mode submenu exists but all items stubbed with `false, false` (display only). `Viewport::SetShadingMode()` and renderer plumbing are intact. Story 3.6.5 deferred — hook lands in `RenderMainMenuBar`.
+
+### Issue 6 — Status Bar Cut Off (AppWindow.cpp:370–400)
+`statusH` is correctly reserved from dockspace. However `ImGui::SetCursorPosY(ImGui::GetCursorPosY())` at line 398 is a no-op — cursor is not explicitly advanced to `avail.y - statusH` after `DockSpace()`, so `RenderStatusBar` renders at an incorrect Y position.
+
+### Issue 7 — Default Head Orientation (AppWindow.cpp:747–765, src/rendering/Renderer.cpp)
+`UseDefaultMorphMesh()` applies -90° X rotation to `MorphMesh.transform` (matching Qt era). Coordinate system did not change between sprints. Suspected cause: `Renderer::Render()` may not consume `MeshReference::transform` for the morph mesh's model matrix. Needs verification in Renderer.cpp.
+
 ## Sprint 3.5 Completed State (as of 2026-04-21)
 
 **Live (new ImGui/GLFW shell):**
@@ -219,6 +242,59 @@ but are never connected via connect() anywhere in these files. Safe to remove.
 - ErrorHelper (QMessageBox)
 
 **Why:** The category B portable layers (core, rendering, io, utils) all have hidden Qt coupling that was not originally intended. The rendering layer's QOpenGLFunctions inheritance is the largest structural risk.
+
+## Stage 1 (Alignment) UI Inventory — Qt Reference (for ImGui port)
+
+### Import group buttons (SidebarWidget.cpp:201–252)
+- "Import Morph Mesh (MetaHuman)" → emits ImportMorphMeshRequested
+- "Use Default MetaHuman Head" → emits UseDefaultMorphMeshRequested
+- "Import Target Mesh (Custom)" → emits ImportTargetMeshRequested
+
+### Default MetaHuman head — single preset, no picker
+- Hardcoded path: `<appDir>/assets/models/MetaHumanHeadLod0.obj`
+- File exists at: `assets/models/MetaHumanHeadLod0.obj`
+- After load, applies -90° X rotation: `Quaternion::FromAxisAngle({1,0,0}, -90.0f)` — MainWindow.cpp:651-653
+- Then calls `camera->FocusOnBounds(bounds)` and re-evaluates CanProceedToNextStage
+
+### Mesh Status group (SidebarWidget.cpp:255–268)
+- Two QLabel* with objectNames "morphStatus" and "targetStatus" — red when unloaded, green when loaded
+
+### Target Textures group (SidebarWidget.cpp:271–338)
+- Dynamic list populated by `RefreshTextureList(const TextureSet&)`
+- Preset slot names (offered in order, filtered if in use): "Albedo", "Normal Map", "Roughness", "AO", "Emissive", "Metallic"
+- "+ Add Texture" button opens name picker dialog, emits `ImportTextureRequested(name)`
+- Per-slot: emits `ImportTextureRequested(name)` and `RemoveTextureRequested(name)`
+- importAlbedoButton_ and importNormalMapButton_ are nullptr — legacy signals not active
+- project_->GetTargetTextures().textures is the backing store (vector of named TextureEntry)
+
+### Transform Tools group (SidebarWidget.cpp:341–359)
+- Static keybind hint label: "G - Move | R - Rotate | S - Scale / X/Y/Z - Constrain to axis / Esc - Cancel | Left-click + drag to apply"
+- transformModeLabel_ initialized "Mode: None", updated by OnTransformModeChanged(TransformMode, AxisConstraint)
+
+### Target Transform group (SidebarWidget.cpp:361–547)
+- Pos XYZ spinboxes: range ±1000, 2dp, step 0.01
+- Rot XYZ spinboxes: range ±360, 1dp, step 1, degree suffix
+- Scale XYZ spinboxes: range 0.001–100, 3dp, step 0.01
+- All 9 spinboxes → OnSpinBoxValueChanged() → emits TransformValuesChanged
+- Reset Transform button → emits ResetTransformRequested
+- NO axis lock checkboxes; NO snap; NO symmetry (symmetry is Stage 2 only)
+
+### FocusOnBounds (camera framing after import)
+- Qt path: camera->FocusOnBounds(bounds) after every successful Mesh::Load()
+- MainWindow.cpp:624-626 (morph import), :665-667 (default), :698-699 (target)
+- ImGui AppWindow::ImportMorphMeshFromDisk / ImportTargetMeshFromDisk are STUBS — only set filepath/isLoaded=false, no actual Mesh::Load() call, no FocusOnBounds. Must be fully implemented.
+
+### CanProceedToNextStage — Stage 1 → Stage 2 (Project.cpp:36-40)
+- Condition: morphMesh_.isLoaded && targetMesh_.isLoaded (both must be true)
+- isLoaded set to false in current ImGui stubs — "Next Stage" will never enable until load is real
+
+### Grid rendering
+- Owned by Renderer (src/rendering/Renderer.cpp)
+- Flag: showGrid_ (bool, defaults true in constructor)
+- API: Renderer::SetShowGrid(bool) / GetShowGrid() — Renderer.h:29-30
+- Fullscreen triangle approach: empty gridVAO_, gridVertexCount_=3, gl_VertexID driven
+- Shaders: assets/shaders/grid.vert + grid.frag
+- No Project or Config field gates it — purely runtime renderer flag
 
 ## Qt-isms Remaining in UI-Adjacent Code (Post-3.5)
 

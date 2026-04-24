@@ -135,7 +135,11 @@ bool Renderer::Initialize() {
 }
 
 void Renderer::Render(const Camera& camera, int width, int height, Project* project) {
-    glViewport(0, 0, width, height);
+    // Viewport origin is owned by the caller (Viewport::RenderGL) — in dual
+    // split-screen mode the right pane's GL origin is (halfW, 0), so a reset
+    // to (0, 0, w, h) here would re-anchor drawing to the bottom-left of the
+    // full framebuffer and the scissor would clip every pixel out. Do NOT
+    // call glViewport here. glClear still honors the caller's scissor rect.
     glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT);
 
     glEnable(GL_DEPTH_TEST);
@@ -156,14 +160,15 @@ void Renderer::Render(const Camera& camera, int width, int height, Project* proj
         // Morph stage uses specialized rendering
         if (project->GetCurrentStage() == WorkflowStage::Morph) {
             RenderMorphStage(camera, width, height, project, viewProjection);
-            RenderOrientationGizmo(camera, width, height);
+            // Orientation gizmo is drawn per-viewport by
+            // Viewport::DrawOrientationGizmoOverlay (ImGui). The GL gizmo
+            // here would clobber the viewport offset in dual-pane mode.
             return;
         }
 
         // Touch Up stage uses specialized rendering
         if (project->GetCurrentStage() == WorkflowStage::TouchUp) {
             RenderTouchUpStage(camera, width, height, project, viewProjection);
-            RenderOrientationGizmo(camera, width, height);
             return;
         }
 
@@ -191,7 +196,8 @@ void Renderer::Render(const Camera& camera, int width, int height, Project* proj
         }
     }
 
-    RenderOrientationGizmo(camera, width, height);
+    // Orientation gizmo is drawn per-viewport by
+    // Viewport::DrawOrientationGizmoOverlay (ImGui), outside this GL pass.
 }
 
 void Renderer::RenderMorphStage(const Camera& camera, int /*width*/, int /*height*/, Project* project,

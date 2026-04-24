@@ -14,6 +14,10 @@ QString LogDir();
 // %APPDATA%\MetaVisage\config.json
 QString ConfigFile();
 
+// Directory of the running MetaVisage executable. Used to locate bundled
+// assets that ship next to the binary (e.g. assets/models/). Empty on error.
+QString ExecutableDir();
+
 } // namespace MetaVisage::Paths
 
 #endif

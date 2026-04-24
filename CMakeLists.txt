@@ -109,6 +109,9 @@ set(CORE_SOURCES
     src/rendering/GizmoRenderer.cpp
     src/ui/Viewport.cpp
     src/ui/ViewportHost.cpp
+    src/ui/FileDialogs.cpp
+    src/ui/Modals.cpp
+    src/ui/StageSidebar.cpp
     src/utils/RayCaster.cpp
     src/utils/Logger.cpp
     src/utils/BVH.cpp
@@ -137,6 +140,9 @@ set(CORE_HEADERS
     include/ui/AppWindow.h
     include/ui/Viewport.h
     include/ui/ViewportHost.h
+    include/ui/FileDialogs.h
+    include/ui/Modals.h
+    include/ui/StageSidebar.h
     include/ui/MainWindow.h
     include/ui/ViewportWidget.h
     include/ui/ViewportContainer.h

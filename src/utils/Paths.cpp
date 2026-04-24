@@ -51,4 +51,16 @@ QString ConfigFile() {
     return base + "/config.json";
 }
 
+QString ExecutableDir() {
+    wchar_t buf[MAX_PATH] = {0};
+    DWORD len = GetModuleFileNameW(nullptr, buf, MAX_PATH);
+    if (len == 0 || len == MAX_PATH) return {};
+    QString full = QString::fromWCharArray(buf, static_cast<int>(len));
+    // Strip to directory — use QDir to normalize separators.
+    int slash = full.lastIndexOf('\\');
+    if (slash < 0) slash = full.lastIndexOf('/');
+    if (slash < 0) return {};
+    return full.left(slash).replace('\\', '/');
+}
+
 } // namespace MetaVisage::Paths

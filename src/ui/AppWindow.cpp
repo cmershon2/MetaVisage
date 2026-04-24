@@ -1,13 +1,27 @@
 #include "ui/AppWindow.h"
+#include "ui/FileDialogs.h"
+#include "ui/Viewport.h"
 #include "ui/ViewportHost.h"
+#include "core/Camera.h"
+#include "core/Mesh.h"
 #include "core/Project.h"
+#include "core/TextureData.h"
 #include "core/UndoStack.h"
 #include "core/Types.h"
+#include "io/ProjectSerializer.h"
+#include "io/MeshExporter.h"
+#include "utils/Config.h"
 #include "utils/Logger.h"
+#include "utils/OpenUrl.h"
+#include "utils/Paths.h"
+#include "utils/RayCaster.h"
+
+#include <QFileInfo>
 
 #include <GL/glew.h>
 #include <GLFW/glfw3.h>
 #include <imgui.h>
+#include <imgui_internal.h>
 #include <imgui_impl_glfw.h>
 #include <imgui_impl_opengl3.h>
 
@@ -33,20 +47,26 @@ const char* StageDisplayName(WorkflowStage s) {
     return "";
 }
 
-const char* PendingActionDisplayName(AppWindow::PendingAction a) {
-    switch (a) {
-        case AppWindow::PendingAction::OpenProject:           return "Open Project";
-        case AppWindow::PendingAction::SaveProjectAs:         return "Save Project As";
-        case AppWindow::PendingAction::ImportMorphMesh:       return "Import Morph Mesh";
-        case AppWindow::PendingAction::ImportTargetMesh:      return "Import Target Mesh";
-        case AppWindow::PendingAction::ExportMesh:            return "Export Mesh";
-        case AppWindow::PendingAction::ShowKeyboardShortcuts: return "Keyboard Shortcuts";
-        case AppWindow::PendingAction::ShowAbout:             return "About MetaVisage";
-        case AppWindow::PendingAction::OpenDocumentation:     return "Documentation";
-        case AppWindow::PendingAction::OpenAccountLicense:    return "Account & License";
-        case AppWindow::PendingAction::CheckForUpdates:       return "Check for Updates";
-        default:                                              return "";
+std::vector<FileDialogs::Filter> ProjectFilters() {
+    return {{"MetaVisage Project", "mmproj"}};
+}
+
+std::vector<FileDialogs::Filter> MeshImportFilters() {
+    return {
+        {"3D mesh (FBX, OBJ, GLTF)", "fbx,obj,gltf,glb"},
+        {"FBX", "fbx"},
+        {"OBJ", "obj"},
+        {"GLTF", "gltf,glb"},
+    };
+}
+
+std::vector<FileDialogs::Filter> ExportFiltersFor(ExportFormat format) {
+    switch (format) {
+        case ExportFormat::FBX:  return {{"FBX", "fbx"}};
+        case ExportFormat::OBJ:  return {{"OBJ", "obj"}};
+        case ExportFormat::GLTF: return {{"GLTF", "gltf"}};
     }
+    return {{"FBX", "fbx"}};
 }
 
 } // namespace
@@ -138,6 +158,157 @@ bool AppWindow::Initialize(int width, int height, const char* title) {
     undoStack_ = std::make_unique<UndoStack>();
     viewportHost_->SetProject(project_.get());
     statusMessage_ = "Ready";
+
+    // Stage 2 point placement: both viewports fire OnPointPlaced when the user
+    // LMB-clicks a mesh under the ImGui/Point Reference stage gate. The right
+    // viewport only exists in dual mode (Stage 2), but we wire both up front
+    // so a callback is always in place. Port of MainWindow::OnPointPlaced.
+    auto onPointPlaced = [this](PointSide side, Vector3 pos, int vertexIndex) {
+        if (!project_) return;
+        auto& data = project_->GetPointReferenceData();
+        auto& correspondences = data.correspondences;
+
+        int nextID = 1;
+        for (const auto& c : correspondences) {
+            if (c.pointID >= nextID) nextID = c.pointID + 1;
+        }
+
+        int modifiedIndex = -1;
+        // Reuse a pending partial correspondence on the opposite side so the
+        // two halves fuse into a single PointCorrespondence, matching v1.0.
+        for (int i = 0; i < static_cast<int>(correspondences.size()); ++i) {
+            auto& c = correspondences[i];
+            if (side == PointSide::Target &&
+                c.targetMeshVertexIndex < 0 && c.morphMeshVertexIndex >= 0) {
+                c.targetMeshPosition = pos;
+                c.targetMeshVertexIndex = vertexIndex;
+                modifiedIndex = i;
+                break;
+            }
+            if (side == PointSide::Morph &&
+                c.morphMeshVertexIndex < 0 && c.targetMeshVertexIndex >= 0) {
+                c.morphMeshPosition = pos;
+                c.morphMeshVertexIndex = vertexIndex;
+                modifiedIndex = i;
+                break;
+            }
+        }
+
+        if (modifiedIndex < 0) {
+            PointCorrespondence pc;
+            pc.pointID = nextID;
+            if (side == PointSide::Target) {
+                pc.targetMeshPosition = pos;
+                pc.targetMeshVertexIndex = vertexIndex;
+            } else {
+                pc.morphMeshPosition = pos;
+                pc.morphMeshVertexIndex = vertexIndex;
+            }
+            correspondences.push_back(pc);
+            modifiedIndex = static_cast<int>(correspondences.size()) - 1;
+        }
+
+        // Symmetry mirror (port of MainWindow::PlaceSymmetricPoint). Mirrors
+        // across the configured axis, snaps to the nearest vertex, and fuses
+        // with any existing paired point rather than duplicating it.
+        if (data.symmetryEnabled) {
+            Vector3 mirrored = pos;
+            switch (data.symmetryAxis) {
+                case Axis::X: mirrored.x = -mirrored.x; break;
+                case Axis::Y: mirrored.y = -mirrored.y; break;
+                case Axis::Z: mirrored.z = -mirrored.z; break;
+            }
+            const Mesh* mesh = nullptr;
+            const Transform* tf = nullptr;
+            if (side == PointSide::Target && project_->GetTargetMesh().mesh) {
+                mesh = project_->GetTargetMesh().mesh.get();
+                tf   = &project_->GetTargetMesh().transform;
+            } else if (side == PointSide::Morph && project_->GetMorphMesh().mesh) {
+                mesh = project_->GetMorphMesh().mesh.get();
+                tf   = &project_->GetMorphMesh().transform;
+            }
+            int mirroredVertexIdx = (mesh && tf)
+                ? RayCaster::FindNearestVertex(mirrored, *mesh, *tf)
+                : -1;
+            if (mirroredVertexIdx >= 0) {
+                auto& parent = correspondences[modifiedIndex];
+
+                bool filledExisting = false;
+                if (parent.isSymmetric && parent.symmetricPairID >= 0) {
+                    for (auto& corr : correspondences) {
+                        if (corr.pointID == parent.symmetricPairID) {
+                            if (side == PointSide::Target) {
+                                corr.targetMeshPosition    = mirrored;
+                                corr.targetMeshVertexIndex = mirroredVertexIdx;
+                            } else {
+                                corr.morphMeshPosition    = mirrored;
+                                corr.morphMeshVertexIndex = mirroredVertexIdx;
+                            }
+                            filledExisting = true;
+                            break;
+                        }
+                    }
+                }
+                if (!filledExisting) {
+                    int symID = 1;
+                    for (const auto& c : correspondences) {
+                        if (c.pointID >= symID) symID = c.pointID + 1;
+                    }
+                    PointCorrespondence sym;
+                    sym.pointID         = symID;
+                    sym.isSymmetric     = true;
+                    sym.symmetricPairID = parent.pointID;
+                    if (side == PointSide::Target) {
+                        sym.targetMeshPosition    = mirrored;
+                        sym.targetMeshVertexIndex = mirroredVertexIdx;
+                    } else {
+                        sym.morphMeshPosition    = mirrored;
+                        sym.morphMeshVertexIndex = mirroredVertexIdx;
+                    }
+                    correspondences.push_back(sym);
+                    correspondences[modifiedIndex].isSymmetric     = true;
+                    correspondences[modifiedIndex].symmetricPairID = sym.pointID;
+                }
+            }
+        }
+    };
+
+    // Stage 2 delete: Delete key on the active viewport fires this. Removes
+    // the currently-selected correspondence and its symmetric pair if any.
+    auto onPointDelete = [this]() {
+        if (!project_ || !viewportHost_) return;
+        auto* vp = viewportHost_->GetPrimaryViewport();
+        int primaryIdx = vp ? vp->GetSelectedPointIndex() : -1;
+        int secondaryIdx = viewportHost_->GetSecondaryViewport()
+            ? viewportHost_->GetSecondaryViewport()->GetSelectedPointIndex()
+            : -1;
+        int selected = (primaryIdx >= 0) ? primaryIdx : secondaryIdx;
+        if (selected < 0) return;
+
+        auto& correspondences = project_->GetPointReferenceData().correspondences;
+        if (selected >= static_cast<int>(correspondences.size())) return;
+
+        int pairID = -1;
+        if (correspondences[selected].isSymmetric) {
+            pairID = correspondences[selected].symmetricPairID;
+        }
+        correspondences.erase(correspondences.begin() + selected);
+        if (pairID >= 0) {
+            for (auto it = correspondences.begin(); it != correspondences.end(); ++it) {
+                if (it->pointID == pairID) { correspondences.erase(it); break; }
+            }
+        }
+        viewportHost_->SetSelectedPointIndex(-1);
+    };
+
+    if (auto* left = viewportHost_->GetPrimaryViewport()) {
+        left->OnPointPlaced          = onPointPlaced;
+        left->OnPointDeleteRequested = onPointDelete;
+    }
+    if (auto* right = viewportHost_->GetSecondaryViewport()) {
+        right->OnPointPlaced          = onPointPlaced;
+        right->OnPointDeleteRequested = onPointDelete;
+    }
 
     glfwSetWindowUserPointer(window_, this);
 
@@ -249,9 +420,64 @@ void AppWindow::Run() {
         // their dock slots before BuildLayout runs.
         RenderAppShell();
 
-        if (viewportHost_) viewportHost_->BuildLayout(fbWidth, fbHeight);
+        if (viewportHost_) {
+            viewportHost_->BuildLayout(
+                fbWidth, fbHeight,
+                centralRectPos_.x, centralRectPos_.y,
+                centralRectSize_.x, centralRectSize_.y);
+        }
         RenderFrame(fbWidth, fbHeight);
-        RenderPendingActionPlaceholder();
+
+        // Stage sidebar docks into the left side of AppDockSpace. Kept after
+        // the dockspace is declared (inside RenderAppShell) and before modal
+        // rendering so per-frame writes to Project state propagate this frame.
+        {
+            auto actions = stageSidebar_.Render(project_.get(), false, 0.0f);
+
+            if (actions.nextStageRequested && project_) {
+                const int cur = static_cast<int>(project_->GetCurrentStage());
+                if (cur < static_cast<int>(WorkflowStage::TouchUp)) {
+                    project_->SetCurrentStage(static_cast<WorkflowStage>(cur + 1));
+                    ApplyStageViewportMode();
+                }
+            }
+            if (actions.previousStageRequested && project_) {
+                const int cur = static_cast<int>(project_->GetCurrentStage());
+                if (cur > 0) {
+                    project_->SetCurrentStage(static_cast<WorkflowStage>(cur - 1));
+                    ApplyStageViewportMode();
+                }
+            }
+            if (actions.importMorphMeshRequested)  pendingAction_ = PendingAction::ImportMorphMesh;
+            if (actions.importTargetMeshRequested) pendingAction_ = PendingAction::ImportTargetMesh;
+            if (actions.exportMeshRequested)       pendingAction_ = PendingAction::ExportMesh;
+            if (actions.useDefaultMorphMeshRequested) UseDefaultMorphMesh();
+            if (!actions.importTextureSlot.isEmpty()) ImportTextureForSlot(actions.importTextureSlot);
+            if (actions.resetTransformRequested && project_) {
+                project_->GetTargetMesh().transform = Transform();
+                project_->GetAlignmentData().targetMeshTransform = Transform();
+            }
+            if (actions.clearAllPointsRequested && project_) {
+                project_->GetPointReferenceData().correspondences.clear();
+            }
+            // processMorph / cancelMorph / acceptMorph / finalize stay unwired
+            // until the NRICP worker thread port (tracked as a Story 3.6.2
+            // extension in the sprint plan).
+        }
+
+        // First frame after init: surface the Welcome modal if we have no
+        // project content yet. Skipped if Ctrl+N / an opened project has
+        // already populated state.
+        if (!welcomeShownOnLaunch_) {
+            welcomeShownOnLaunch_ = true;
+            if (project_ && project_->GetMorphMesh().filepath.isEmpty() &&
+                project_->GetPath().isEmpty()) {
+                welcomeModal_.Open();
+            }
+        }
+
+        DispatchPendingAction();
+        RenderModals();
 
         ImGui::Render();
 
@@ -285,7 +511,12 @@ void AppWindow::RenderAppShell() {
         ImGuiWindowFlags_NoResize |
         ImGuiWindowFlags_NoMove |
         ImGuiWindowFlags_NoBringToFrontOnFocus |
-        ImGuiWindowFlags_NoNavFocus;
+        ImGuiWindowFlags_NoNavFocus |
+        // NoBackground is essential — combined with PassthruCentralNode on the
+        // dockspace below, the central (viewport) area becomes transparent so
+        // the 3D GL pass shows through. Without this the host's grey fill hid
+        // the grid and imported meshes entirely.
+        ImGuiWindowFlags_NoBackground;
 
     ImGui::PushStyleVar(ImGuiStyleVar_WindowRounding, 0.0f);
     ImGui::PushStyleVar(ImGuiStyleVar_WindowBorderSize, 0.0f);
@@ -302,6 +533,51 @@ void AppWindow::RenderAppShell() {
 
     ImGuiID dockId = ImGui::GetID("AppDockSpace");
     ImGui::DockSpace(dockId, dockSize, ImGuiDockNodeFlags_PassthruCentralNode);
+
+    // First-run dock layout: split the dockspace, pin "Stage" to the right,
+    // and lock the right node (no undock / no resize / no foreign docking).
+    // Rebuilt every launch so an accidental imgui.ini edit can't free the
+    // sidebar — the sidebar is meant to be static UI, not a dockable panel.
+    static bool sDockBuilt = false;
+    if (!sDockBuilt) {
+        sDockBuilt = true;
+        ImGui::DockBuilderRemoveNode(dockId);
+        ImGui::DockBuilderAddNode(dockId, ImGuiDockNodeFlags_PassthruCentralNode | ImGuiDockNodeFlags_DockSpace);
+        ImGui::DockBuilderSetNodeSize(dockId, dockSize);
+
+        ImGuiID rightId = 0;
+        ImGuiID centerId = 0;
+        ImGui::DockBuilderSplitNode(dockId, ImGuiDir_Right, 0.28f, &rightId, &centerId);
+
+        if (ImGuiDockNode* rightNode = ImGui::DockBuilderGetNode(rightId)) {
+            rightNode->LocalFlags |=
+                ImGuiDockNodeFlags_NoUndocking |
+                ImGuiDockNodeFlags_NoDockingOverMe |
+                ImGuiDockNodeFlags_NoDockingSplit |
+                ImGuiDockNodeFlags_HiddenTabBar;
+        }
+        if (ImGuiDockNode* centerNode = ImGui::DockBuilderGetNode(centerId)) {
+            centerNode->LocalFlags |=
+                ImGuiDockNodeFlags_NoDockingOverMe |
+                ImGuiDockNodeFlags_NoDockingSplit |
+                ImGuiDockNodeFlags_NoTabBar;
+        }
+
+        ImGui::DockBuilderDockWindow("Stage", rightId);
+        ImGui::DockBuilderFinish(dockId);
+    }
+
+    // Capture the central-node rect so the viewport's GL pass scissors to the
+    // visible central region (not the full work area). Without this, the GL
+    // pass draws under the sidebar and the orientation gizmo in the top-right
+    // corner of the viewport gets covered by the sidebar.
+    if (ImGuiDockNode* centralNode = ImGui::DockBuilderGetCentralNode(dockId)) {
+        centralRectPos_ = centralNode->Pos;
+        centralRectSize_ = centralNode->Size;
+    } else {
+        centralRectPos_ = vp->WorkPos;
+        centralRectSize_ = vp->WorkSize;
+    }
 
     // Status bar — rendered as the final child of the host window so it sits
     // flush at the bottom. No separate top-level window needed.
@@ -409,12 +685,90 @@ void AppWindow::RenderStatusBar() {
                 statusMessage_.c_str());
 }
 
-void AppWindow::RenderPendingActionPlaceholder() {
-    // About is cheap and self-contained — render it inline without waiting
-    // for the 3.6.3 dialog infrastructure.
-    if (pendingAction_ == PendingAction::ShowAbout) {
+void AppWindow::DispatchPendingAction() {
+    // Actions consumed synchronously here — the menu bar sets pendingAction_
+    // during BeginMenu() / BeginMenuBar() traversal, then we run the blocking
+    // NFD or kick off the corresponding modal on the same frame. Unblocking
+    // modals (Export, Shortcuts) handle their own open-via-pendingOpen path.
+    const PendingAction action = pendingAction_;
+    if (action == PendingAction::None) return;
+    pendingAction_ = PendingAction::None;
+
+    switch (action) {
+        case PendingAction::None: break;
+
+        case PendingAction::OpenProject: {
+            if (auto picked = FileDialogs::OpenFile(ProjectFilters())) {
+                OpenProjectFromDisk(*picked);
+            }
+            break;
+        }
+        case PendingAction::SaveProjectAs: {
+            // "Save" reuses the current path if one is known; otherwise falls
+            // through to Save-As behaviour. Menu bar collapses Save/Save-As
+            // into the same pending action for now.
+            QString target = projectPath_;
+            if (target.isEmpty()) {
+                const QString suggested = project_ && !project_->GetName().isEmpty()
+                    ? project_->GetName() + ".mmproj"
+                    : QString("untitled.mmproj");
+                if (auto picked = FileDialogs::SaveFile(ProjectFilters(), suggested)) {
+                    target = *picked;
+                    if (!target.endsWith(".mmproj", Qt::CaseInsensitive)) target += ".mmproj";
+                } else {
+                    break;
+                }
+            }
+            SaveProjectToDisk(target);
+            break;
+        }
+        case PendingAction::ImportMorphMesh: {
+            if (auto picked = FileDialogs::OpenFile(MeshImportFilters())) {
+                ImportMorphMeshFromDisk(*picked);
+            }
+            break;
+        }
+        case PendingAction::ImportTargetMesh: {
+            if (auto picked = FileDialogs::OpenFile(MeshImportFilters())) {
+                ImportTargetMeshFromDisk(*picked);
+            }
+            break;
+        }
+        case PendingAction::ExportMesh: {
+            const bool hasTextures = project_ && project_->GetTargetTextures().HasAlbedo();
+            exportModal_.Open(hasTextures);
+            break;
+        }
+        case PendingAction::ShowKeyboardShortcuts:
+            shortcutsModal_.Open();
+            break;
+        case PendingAction::ShowAbout:
+            showAbout_ = true;
+            break;
+        case PendingAction::OpenDocumentation:
+            if (!OpenUrl("https://metavisage.io/docs")) {
+                errorModal_.Open("Could not open the documentation link in your browser.");
+            }
+            break;
+        case PendingAction::OpenAccountLicense:
+            if (!OpenUrl("https://metavisage.io/account")) {
+                errorModal_.Open("Could not open the account page in your browser.");
+            }
+            break;
+        case PendingAction::CheckForUpdates:
+            // WinSparkle integration is scheduled for the Sprint 3.6 close-out;
+            // for now, direct the user to the releases page.
+            if (!OpenUrl("https://metavisage.io/releases")) {
+                errorModal_.Open("Could not open the releases page.");
+            }
+            break;
+    }
+}
+
+void AppWindow::RenderAboutModal() {
+    if (showAbout_) {
         ImGui::OpenPopup("About MetaVisage");
-        pendingAction_ = PendingAction::None;
+        showAbout_ = false;
     }
     if (ImGui::BeginPopupModal("About MetaVisage", nullptr, ImGuiWindowFlags_AlwaysAutoResize)) {
         ImGui::Text("MetaVisage");
@@ -425,29 +779,37 @@ void AppWindow::RenderPendingActionPlaceholder() {
         if (ImGui::Button("OK", ImVec2(120, 0))) ImGui::CloseCurrentPopup();
         ImGui::EndPopup();
     }
+}
 
-    if (pendingAction_ == PendingAction::None) return;
-    if (pendingAction_ == PendingAction::ShowAbout) return; // already handled
+void AppWindow::RenderModals() {
+    RenderAboutModal();
+    RenderConfirmModal(confirmModal_);
+    RenderErrorModal(errorModal_);
+    RenderShortcutsModal(shortcutsModal_);
 
-    // Every other pending action depends on NFD / system services / modal
-    // infrastructure that lands in Stories 3.6.3 and 3.6.4. Render a
-    // placeholder so the menu wiring is verifiable before those ship.
-    const char* label = PendingActionDisplayName(pendingAction_);
-    ImGui::OpenPopup("##PendingActionPlaceholder");
-    if (ImGui::BeginPopupModal("##PendingActionPlaceholder", nullptr,
-                               ImGuiWindowFlags_AlwaysAutoResize |
-                               ImGuiWindowFlags_NoTitleBar)) {
-        ImGui::Text("%s", label);
-        ImGui::Separator();
-        ImGui::TextWrapped("This action requires file dialogs or modal UI "
-                           "scheduled for Story 3.6.3 / 3.6.4. Menu wiring "
-                           "confirmed — placeholder will be removed.");
-        ImGui::Spacing();
-        if (ImGui::Button("Dismiss", ImVec2(120, 0))) {
-            pendingAction_ = PendingAction::None;
-            ImGui::CloseCurrentPopup();
+    RenderWelcomeModal(welcomeModal_);
+    if (welcomeModal_.action != WelcomeAction::None) {
+        switch (welcomeModal_.action) {
+            case WelcomeAction::NewProject:  OnFileNewProject(); break;
+            case WelcomeAction::OpenProject: pendingAction_ = PendingAction::OpenProject; break;
+            case WelcomeAction::OpenRecent:  OpenProjectFromDisk(welcomeModal_.selectedRecent); break;
+            case WelcomeAction::None: break;
         }
-        ImGui::EndPopup();
+        welcomeModal_.action = WelcomeAction::None;
+    }
+
+    RenderExportModal(exportModal_);
+    if (exportModal_.action == ExportAction::Export) {
+        exportModal_.action = ExportAction::None;
+        if (exportModal_.filepath.isEmpty()) {
+            // The modal's Browse button is still deferred — prompt the user via
+            // NFD now so callers never submit an empty path.
+            auto picked = FileDialogs::SaveFile(
+                ExportFiltersFor(exportModal_.options.format),
+                QString("export") + MeshExporter::GetFormatExtension(exportModal_.options.format));
+            if (picked) exportModal_.filepath = *picked;
+        }
+        if (!exportModal_.filepath.isEmpty()) DoExport();
     }
 }
 
@@ -489,8 +851,164 @@ void AppWindow::OnFileNewProject() {
     project_ = std::make_unique<Project>();
     if (undoStack_) undoStack_->Clear();
     if (viewportHost_) viewportHost_->SetProject(project_.get());
+    projectPath_.clear();
     statusMessage_ = "New project created";
     MV_LOG_INFO("File > New Project");
+}
+
+void AppWindow::OpenProjectFromDisk(const QString& path) {
+    if (path.isEmpty()) return;
+    auto fresh = std::make_unique<Project>();
+    ProjectSerializer serializer;
+    const SerializationResult result = serializer.Load(*fresh, path);
+    if (!result.success) {
+        errorModal_.Open(QString("Could not open project:\n%1").arg(result.errorMessage));
+        return;
+    }
+    project_ = std::move(fresh);
+    projectPath_ = path;
+    project_->SetPath(path);
+    if (undoStack_) undoStack_->Clear();
+    if (viewportHost_) viewportHost_->SetProject(project_.get());
+    ApplyStageViewportMode();
+    Config::Instance().AddRecentProject(path);
+    statusMessage_ = QString("Opened %1").arg(QFileInfo(path).fileName()).toStdString();
+    MV_LOG_INFO(QString("Opened project %1").arg(path));
+}
+
+void AppWindow::SaveProjectToDisk(const QString& path) {
+    if (!project_ || path.isEmpty()) return;
+    ProjectSerializer serializer;
+    const SerializationResult result = serializer.Save(*project_, path);
+    if (!result.success) {
+        errorModal_.Open(QString("Could not save project:\n%1").arg(result.errorMessage));
+        return;
+    }
+    projectPath_ = path;
+    project_->SetPath(path);
+    Config::Instance().AddRecentProject(path);
+    statusMessage_ = QString("Saved to %1").arg(QFileInfo(path).fileName()).toStdString();
+    MV_LOG_INFO(QString("Saved project %1").arg(path));
+}
+
+void AppWindow::ImportMorphMeshFromDisk(const QString& path) {
+    if (!project_ || path.isEmpty()) return;
+    MeshReference& ref = project_->GetMorphMesh();
+    ref.mesh = std::make_shared<Mesh>();
+    if (!ref.mesh->Load(path)) {
+        ref.mesh.reset();
+        ref.isLoaded = false;
+        errorModal_.Open(QString("Failed to load morph mesh:\n%1").arg(path));
+        return;
+    }
+    ref.filepath = path;
+    ref.isLoaded = true;
+    // Renderer lazy-uploads on first RenderMesh(); framing the bounds triggers
+    // a paint and gives the user immediate visual feedback.
+    if (viewportHost_ && viewportHost_->GetPrimaryViewport()) {
+        viewportHost_->GetPrimaryViewport()->GetCamera()->FocusOnBounds(ref.mesh->GetBounds());
+    }
+    statusMessage_ = QString("Loaded morph mesh: %1").arg(QFileInfo(path).fileName()).toStdString();
+    MV_LOG_INFO(QString("Loaded morph mesh: %1").arg(path));
+}
+
+void AppWindow::ImportTargetMeshFromDisk(const QString& path) {
+    if (!project_ || path.isEmpty()) return;
+    MeshReference& ref = project_->GetTargetMesh();
+    ref.mesh = std::make_shared<Mesh>();
+    if (!ref.mesh->Load(path)) {
+        ref.mesh.reset();
+        ref.isLoaded = false;
+        errorModal_.Open(QString("Failed to load target mesh:\n%1").arg(path));
+        return;
+    }
+    ref.filepath = path;
+    ref.isLoaded = true;
+    if (viewportHost_ && viewportHost_->GetPrimaryViewport()) {
+        viewportHost_->GetPrimaryViewport()->GetCamera()->FocusOnBounds(ref.mesh->GetBounds());
+    }
+    statusMessage_ = QString("Loaded target mesh: %1").arg(QFileInfo(path).fileName()).toStdString();
+    MV_LOG_INFO(QString("Loaded target mesh: %1").arg(path));
+}
+
+void AppWindow::UseDefaultMorphMesh() {
+    if (!project_) return;
+    const QString exeDir = Paths::ExecutableDir();
+    if (exeDir.isEmpty()) {
+        errorModal_.Open("Could not locate the application directory.");
+        return;
+    }
+    const QString path = exeDir + "/assets/models/MetaHumanHeadLod0.obj";
+    if (!QFileInfo(path).exists()) {
+        errorModal_.Open(QString("Default MetaHuman head not found at:\n%1").arg(path));
+        return;
+    }
+    ImportMorphMeshFromDisk(path);
+    // -90° Y-axis rotation orients the bundled head to face camera-forward.
+    // Uses FromAxisAngle to side-step the param-order quirk in FromEulerAngles
+    // (the second arg — documented as yaw/Y — produces a Z-axis rotation in
+    // the current implementation).
+    if (project_->GetMorphMesh().isLoaded) {
+        project_->GetMorphMesh().transform.SetRotation(
+            Quaternion::FromAxisAngle(Vector3(1.0f, 0.0f, 0.0f), -90.0f));
+    }
+}
+
+void AppWindow::ImportTextureForSlot(const QString& slot) {
+    if (!project_ || slot.isEmpty()) return;
+    std::vector<FileDialogs::Filter> filters = {
+        {"Image (PNG, JPG, TGA, BMP)", "png,jpg,jpeg,tga,bmp"},
+        {"PNG", "png"},
+        {"JPEG", "jpg,jpeg"},
+    };
+    auto picked = FileDialogs::OpenFile(filters);
+    if (!picked) return;
+    auto tex = TextureData::LoadFromFile(*picked);
+    if (!tex) {
+        errorModal_.Open(QString("Failed to load texture:\n%1").arg(*picked));
+        return;
+    }
+    project_->GetTargetTextures().Add(slot, tex);
+    // Mirror Qt-era behaviour: only Albedo is uploaded as the active mesh
+    // texture for preview; other slots are stored for baking/export use.
+    if (slot == QStringLiteral("Albedo") &&
+        viewportHost_ && viewportHost_->GetPrimaryViewport() &&
+        project_->GetTargetMesh().mesh) {
+        viewportHost_->GetPrimaryViewport()->UploadMeshTexture(
+            project_->GetTargetMesh().mesh.get(), *tex);
+    }
+    statusMessage_ = QString("Loaded %1 texture: %2")
+                         .arg(slot, QFileInfo(*picked).fileName()).toStdString();
+    MV_LOG_INFO(QString("Loaded %1 texture: %2").arg(slot, *picked));
+}
+
+void AppWindow::ApplyStageViewportMode() {
+    if (!viewportHost_ || !project_) return;
+    const bool dual = project_->GetCurrentStage() == WorkflowStage::PointReference;
+    viewportHost_->SetDualMode(dual);
+}
+
+void AppWindow::DoExport() {
+    if (!project_ || exportModal_.filepath.isEmpty()) return;
+    auto& morph = project_->GetMorphData();
+    if (!morph.deformedMorphMesh) {
+        errorModal_.Open("No deformed mesh available. Complete the Morph stage first.");
+        return;
+    }
+    MeshExporter exporter;
+    auto* original = morph.originalMorphMesh.get();
+    const ExportResult result = exporter.Export(
+        *morph.deformedMorphMesh,
+        exportModal_.filepath,
+        exportModal_.options,
+        &project_->GetMorphMesh().transform,
+        original);
+    if (!result.success) {
+        errorModal_.Open(QString("Export failed:\n%1").arg(result.errorMessage));
+        return;
+    }
+    statusMessage_ = QString("Exported to %1").arg(QFileInfo(exportModal_.filepath).fileName()).toStdString();
+    MV_LOG_INFO(QString("Exported mesh to %1").arg(exportModal_.filepath));
 }
 
 void AppWindow::OnFileExit() {

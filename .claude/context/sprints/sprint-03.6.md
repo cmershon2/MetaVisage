@@ -13,11 +13,11 @@
 
 | # | Story | Points | Dependencies | Status |
 |---|-------|--------|--------------|--------|
-| 1 | **Story 3.6.1: ImGui Layout Architecture & Menu Bar** | 5 | Sprint 3.5 complete | [ ] |
-| 2 | **Story 3.6.2: Stage Sidebar Panels** | 8 | Story 3.6.1 | [ ] |
-| 3 | **Story 3.6.3: Dialogs & Modals** | 5 | Story 3.6.1 | [ ] |
-| 4 | **Story 3.6.4: System Service Replacements** | 6 | Story 3.6.1 | [ ] |
-| 5 | **Story 3.6.5: Shading Mode Viewport Overlay & Orientation Gizmo (ImGui Port)** | 2 | Story 3.6.1 | [ ] |
+| 1 | **Story 3.6.1: ImGui Layout Architecture & Menu Bar** | 5 | Sprint 3.5 complete | [x] |
+| 2 | **Story 3.6.2: Stage Sidebar Panels** | 8 | Story 3.6.1 | [x] |
+| 3 | **Story 3.6.3: Dialogs & Modals** | 5 | Story 3.6.1 | [x] |
+| 4 | **Story 3.6.4: System Service Replacements** | 6 | Story 3.6.1 | [x] |
+| 5 | **Story 3.6.5: Shading Mode Viewport Overlay & Orientation Gizmo (ImGui Port)** | 2 | Story 3.6.1 | [ ] (deferred) |
 
 ---
 
@@ -91,7 +91,11 @@
 
 ## Sprint Outcome
 
-**Status**: Planned
-**Velocity (Actual)**: —
-**Carryover**: —
-**Notes**: —
+**Status**: Implementation Complete — manual parity smoke test pending
+**Velocity (Actual)**: 24 / 26 points (Stories 3.6.1–3.6.4 complete; 3.6.5 deferred)
+**Carryover**: Story 3.6.5 (Shading Mode Viewport Overlay & Orientation Gizmo, 2 pts) — lowest-priority polish, deferred to a follow-up sprint.
+**Notes**:
+- `MorphWorker` off-Qt thread port deliberately deferred alongside 3.6.5 — `StageSidebar` Morph stage flags (`processMorphRequested`, `cancelMorphRequested`, `acceptMorphRequested`, `finalizeRequested`) stay unwired until the `std::thread`-based NRICP executor lands. Other DoD items met.
+- `Qt6::Core` remains linked transitionally (QString/QFile/QDateTime/QJson); full removal tracked as **Qt6Core removal** in `product_backlog.md`.
+- Build passes cleanly on MSVC; only pre-existing `stb_image_write` C4996 warning remains.
+- Full Stage 1 → Stage 4 → Export parity smoke test requires a runtime session on Windows and has not yet been exercised.
