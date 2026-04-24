@@ -534,11 +534,25 @@ Vector3 Viewport::GetGizmoPosition() const {
 void Viewport::DrawOverlays(float x, float y, float w, float h) {
     lastX_ = x; lastY_ = y; lastW_ = w; lastH_ = h;
     if (w <= 0.0f || h <= 0.0f) return;
+
+    // Clip draw-list overlays to the viewport rect so labels and gizmo axes
+    // never bleed over the sidebar, the other pane, or the main menu bar.
+    // Floating ImGui windows (shading combo) are clipped separately via
+    // their own window rect — they don't need this scope.
+    ImDrawList* fgDl = ImGui::GetForegroundDrawList(ImGui::GetMainViewport());
+    fgDl->PushClipRect(ImVec2(x, y), ImVec2(x + w, y + h), true);
+
     DrawOrientationGizmoOverlay(x, y, w);
-    DrawViewportLabelOverlay(x, y);
     DrawPointLabelsOverlay(x, y, w, h);
     DrawActiveBorderOverlay(x, y, w, h);
-    DrawShadingModeOverlay(x, y);
+    // Viewport label is drawn inside the clip so it can't overlap the menu
+    // bar even if the viewport rect is mis-sized.
+    DrawViewportLabelOverlay(x, y, w, h);
+
+    fgDl->PopClipRect();
+
+    // Floating combo window — must be outside the draw-list clip scope.
+    DrawShadingModeOverlay(x, y, w);
 }
 
 void Viewport::RenderGL(float x, float y, float w, float h, int fbHeight) {
@@ -601,16 +615,22 @@ static inline ImU32 PackColor(int r, int g, int b, int a = 255) {
     return IM_COL32(r, g, b, a);
 }
 
-void Viewport::DrawViewportLabelOverlay(float x, float y) {
+void Viewport::DrawViewportLabelOverlay(float x, float y, float w, float h) {
     if (viewportLabel_.isEmpty()) return;
+    (void)w;
     ImDrawList* dl = ImGui::GetForegroundDrawList(ImGui::GetMainViewport());
     std::string label = viewportLabel_.toStdString();
     ImFont* font = ImGui::GetFont();
     float fontSize = ImGui::GetFontSize();
     ImVec2 textSize = font->CalcTextSizeA(fontSize, FLT_MAX, 0.0f, label.c_str());
 
-    ImVec2 tl(x + 8.0f, y + 40.0f);
-    ImVec2 br(tl.x + textSize.x + 16.0f, tl.y + textSize.y + 8.0f);
+    // Anchor to the bottom-left of the viewport rect. Keeps the label clear
+    // of the main menu bar at the top of the window and the shading combo
+    // at the top-right of the viewport.
+    float rectH = textSize.y + 8.0f;
+    float rectW = textSize.x + 16.0f;
+    ImVec2 tl(x + 8.0f, y + h - rectH - 8.0f);
+    ImVec2 br(tl.x + rectW, tl.y + rectH);
     dl->AddRectFilled(tl, br, PackColor(0, 0, 0, 128), 4.0f);
     dl->AddText(font, fontSize,
                 ImVec2(tl.x + 8.0f, tl.y + 4.0f),
@@ -716,10 +736,12 @@ void Viewport::DrawActiveBorderOverlay(float x, float y, float w, float h) {
                 PackColor(52, 152, 219), 0.0f, 0, 2.0f);
 }
 
-void Viewport::DrawShadingModeOverlay(float x, float y) {
-    // Small floating combo at the top-left of each viewport. ID is suffixed
-    // with the address so the two viewports (dual mode) have independent
-    // state even though they share the overlay code.
+void Viewport::DrawShadingModeOverlay(float x, float y, float w) {
+    // Small floating combo at the top-left of each viewport, tucked below
+    // where the main menu bar sits. ID is suffixed with the address so the
+    // two viewports (dual mode) have independent state even though they
+    // share the overlay code.
+    (void)w;
     static const char* kItems[] = { "Solid", "Wireframe", "Solid+Wire", "Textured" };
     char windowId[64];
     std::snprintf(windowId, sizeof(windowId), "##ShadingMode_%p", (void*)this);

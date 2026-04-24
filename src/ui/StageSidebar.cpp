@@ -28,7 +28,7 @@ const char* StageHint(WorkflowStage s) {
         case WorkflowStage::PointReference:
             return "Place matching points on each mesh to guide deformation.";
         case WorkflowStage::Morph:
-            return "Pick a preset and process. Review before accepting.";
+            return "Tune parameters and process. Review before accepting.";
         case WorkflowStage::TouchUp:
             return "Sculpt with brushes to refine the result, then export.";
     }
@@ -228,30 +228,51 @@ void StageSidebar::RenderPointReference(Project& project, Actions& out) {
 void StageSidebar::RenderMorph(Project& project, bool processing, float progress, Actions& out) {
     auto& morph = project.GetMorphData();
 
-    ImGui::TextUnformatted("Preset");
+    // Sprint 4 will reintroduce the Quick Wrap / Fantasy Wrap preset cards.
+    // For now we expose the raw parameter fields that already exist on
+    // MorphData so the pipeline can be tuned manually.
+    ImGui::TextUnformatted("Parameters");
     ImGui::Separator();
-    // Quick Wrap / Fantasy Wrap presets map to NRICP gamma/sampling tweaks.
-    // Quick Wrap leaves the conservative defaults; Fantasy Wrap relaxes
-    // rigidity for dramatic geometry changes.
-    static int preset = 0; // 0 = Quick Wrap, 1 = Fantasy Wrap
-    const char* presets[] = {"Quick Wrap (default)", "Fantasy Wrap (relaxed)"};
-    if (ImGui::Combo("##preset", &preset, presets, 2)) {
-        if (preset == 0) {
-            morph.nricpGammaInitial = 1.0f;
-            morph.nricpGammaFinal   = 1.0f;
-        } else {
-            morph.nricpGammaInitial = 0.0f;
-            morph.nricpGammaFinal   = 0.0f;
+
+    ImGui::SliderInt("Stiffness Steps",     &morph.nricpStiffnessSteps, 1, 10);
+    ImGui::SliderFloat("Stiffness (Start)", &morph.nricpAlphaInitial,   1.0f, 500.0f, "%.1f");
+    ImGui::SliderFloat("Stiffness (End)",   &morph.nricpAlphaFinal,     0.1f, 200.0f, "%.1f");
+    ImGui::SliderInt("Iterations / Step",   &morph.nricpIcpIterations,  1, 20);
+    ImGui::SliderFloat("Normal Threshold",  &morph.nricpNormalThreshold, 5.0f, 120.0f, "%.0f°");
+    ImGui::SliderFloat("Landmark Weight",   &morph.nricpLandmarkWeight, 0.0f, 100.0f, "%.1f");
+
+    ImGui::Spacing();
+    if (ImGui::CollapsingHeader("Advanced")) {
+        ImGui::SliderFloat("Control Density (Start)", &morph.nricpSamplingInitial, 0.0f, 1.0f, "%.3f");
+        ImGui::SliderFloat("Control Density (End)",   &morph.nricpSamplingFinal,   0.0f, 1.0f, "%.3f");
+        ImGui::Checkbox("Normalize Sampling",         &morph.nricpNormalizeSampling);
+
+        ImGui::SliderFloat("Rigidity (Start)",        &morph.nricpGammaInitial,    0.0f, 5.0f, "%.2f");
+        ImGui::SliderFloat("Rigidity (End)",          &morph.nricpGammaFinal,      0.0f, 5.0f, "%.2f");
+
+        ImGui::SliderFloat("Step Damping (Start)",    &morph.nricpDpInitial,       0.1f, 1.0f, "%.2f");
+        ImGui::SliderFloat("Step Damping (End)",      &morph.nricpDpFinal,         0.1f, 1.0f, "%.2f");
+
+        ImGui::SliderInt("Inner Iterations",          &morph.nricpOptimizationIterations, 1, 10);
+        ImGui::InputFloat("Convergence Threshold",    &morph.nricpEpsilon, 0.0f, 0.0f, "%.5f");
+
+        ImGui::Checkbox("Exclude Mesh Boundaries",    &morph.nricpEnableBoundaryExclusion);
+        ImGui::BeginDisabled(!morph.nricpEnableBoundaryExclusion);
+        ImGui::SliderInt("Boundary Hops",             &morph.nricpBoundaryExclusionHops, 0, 10);
+        ImGui::EndDisabled();
+
+        if (ImGui::Button("Reset to Defaults", ImVec2(-FLT_MIN, 0))) {
+            morph = MorphData();
         }
     }
 
     ImGui::Spacing();
-    ImGui::TextDisabled("Advanced tuning is kept at safe defaults during v2.0.");
-    ImGui::Spacing();
     ImGui::Separator();
 
     if (processing) {
-        ImGui::ProgressBar(progress, ImVec2(-FLT_MIN, 0), "Processing...");
+        char label[64];
+        std::snprintf(label, sizeof(label), "Processing… %.0f%%", progress * 100.0f);
+        ImGui::ProgressBar(progress, ImVec2(-FLT_MIN, 0), label);
         if (ImGui::Button("Cancel", ImVec2(-FLT_MIN, 0))) out.cancelMorphRequested = true;
     } else {
         const bool canProcess = project.GetMorphMesh().isLoaded

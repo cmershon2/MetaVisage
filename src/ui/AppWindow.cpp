@@ -8,6 +8,8 @@
 #include "core/TextureData.h"
 #include "core/UndoStack.h"
 #include "core/Types.h"
+#include "deformation/MeshDeformer.h"
+#include "deformation/NRICPDeformer.h"
 #include "io/ProjectSerializer.h"
 #include "io/MeshExporter.h"
 #include "utils/Config.h"
@@ -428,11 +430,18 @@ void AppWindow::Run() {
         }
         RenderFrame(fbWidth, fbHeight);
 
+        // Poll worker thread state before building the sidebar this frame so
+        // the progress bar + enable/disable of the Process Morph button
+        // reflect current worker status.
+        PollMorphCompletion();
+
         // Stage sidebar docks into the left side of AppDockSpace. Kept after
         // the dockspace is declared (inside RenderAppShell) and before modal
         // rendering so per-frame writes to Project state propagate this frame.
         {
-            auto actions = stageSidebar_.Render(project_.get(), false, 0.0f);
+            auto actions = stageSidebar_.Render(project_.get(),
+                                                morphRunning_.load(),
+                                                morphProgress_.load());
 
             if (actions.nextStageRequested && project_) {
                 const int cur = static_cast<int>(project_->GetCurrentStage());
@@ -460,9 +469,10 @@ void AppWindow::Run() {
             if (actions.clearAllPointsRequested && project_) {
                 project_->GetPointReferenceData().correspondences.clear();
             }
-            // processMorph / cancelMorph / acceptMorph / finalize stay unwired
-            // until the NRICP worker thread port (tracked as a Story 3.6.2
-            // extension in the sprint plan).
+            if (actions.processMorphRequested) StartMorph();
+            if (actions.cancelMorphRequested)  CancelMorph();
+            if (actions.acceptMorphRequested)  AcceptMorph();
+            // finalize is a Sprint 4 no-op (Export handles end-of-workflow).
         }
 
         // First frame after init: surface the Welcome modal if we have no
@@ -1044,6 +1054,13 @@ void AppWindow::RenderFrame(int /*fbWidth*/, int /*fbHeight*/) {
 void AppWindow::Shutdown() {
     // Unwind in reverse init order, consulting each flag so a partial
     // Initialize() failure still produces a clean teardown.
+
+    // Join the morph worker before tearing anything down — it holds raw
+    // pointers into the deformer and captures `this` by reference.
+    if (morphDeformer_) morphDeformer_->Cancel();
+    if (morphThread_.joinable()) morphThread_.join();
+    morphDeformer_.reset();
+
     if (viewportHost_) viewportHost_->SetProject(nullptr);
     undoStack_.reset();
     project_.reset();
@@ -1065,6 +1082,164 @@ void AppWindow::Shutdown() {
         window_ = nullptr;
         glfwTerminate();
     }
+}
+
+// ---------------------------------------------------------------------------
+// Stage 3 — Morph worker lifecycle
+// ---------------------------------------------------------------------------
+
+void AppWindow::StartMorph() {
+    if (!project_) return;
+    if (morphRunning_.load()) return;
+
+    // Join any stale thread from a prior run before reusing the handle.
+    if (morphThread_.joinable()) morphThread_.join();
+
+    MorphData& morphData = project_->GetMorphData();
+    MeshReference& morphMeshRef = project_->GetMorphMesh();
+    MeshReference& targetMeshRef = project_->GetTargetMesh();
+
+    if (!morphMeshRef.isLoaded || !morphMeshRef.mesh ||
+        !targetMeshRef.isLoaded || !targetMeshRef.mesh) {
+        errorModal_.Open(QStringLiteral("Both meshes must be loaded before processing."),
+                         QStringLiteral("Morph Failed"));
+        return;
+    }
+
+    // Capture the untouched morph mesh so repeat runs operate on the original
+    // geometry rather than compounding deformations.
+    if (!morphData.originalMorphMesh) {
+        morphData.originalMorphMesh = morphMeshRef.mesh;
+    }
+    if (morphData.deformedMorphMesh && viewportHost_) {
+        if (Viewport* vp = viewportHost_->GetPrimaryViewport()) {
+            vp->InvalidateMesh(morphData.deformedMorphMesh.get());
+        }
+        if (Viewport* vp = viewportHost_->GetSecondaryViewport()) {
+            vp->InvalidateMesh(morphData.deformedMorphMesh.get());
+        }
+    }
+    morphData.isProcessed = false;
+    morphData.isAccepted  = false;
+
+    NRICPParams params;
+    params.stiffnessSteps          = morphData.nricpStiffnessSteps;
+    params.alphaInitial            = morphData.nricpAlphaInitial;
+    params.alphaFinal              = morphData.nricpAlphaFinal;
+    params.icpIterations           = morphData.nricpIcpIterations;
+    params.normalThreshold         = morphData.nricpNormalThreshold;
+    params.landmarkWeight          = morphData.nricpLandmarkWeight;
+    params.epsilon                 = morphData.nricpEpsilon;
+    params.enableBoundaryExclusion = morphData.nricpEnableBoundaryExclusion;
+    params.boundaryExclusionHops   = morphData.nricpBoundaryExclusionHops;
+    params.optimizationIterations  = morphData.nricpOptimizationIterations;
+    params.dpInitial               = morphData.nricpDpInitial;
+    params.dpFinal                 = morphData.nricpDpFinal;
+    params.gammaInitial            = morphData.nricpGammaInitial;
+    params.gammaFinal              = morphData.nricpGammaFinal;
+    params.samplingInitial         = morphData.nricpSamplingInitial;
+    params.samplingFinal           = morphData.nricpSamplingFinal;
+    params.normalizeSampling       = morphData.nricpNormalizeSampling;
+
+    morphDeformer_ = std::make_unique<MeshDeformer>();
+    morphDeformer_->SetSourceMesh(morphData.originalMorphMesh);
+    morphDeformer_->SetTargetMesh(targetMeshRef.mesh);
+    morphDeformer_->SetMorphTransform(morphMeshRef.transform);
+    morphDeformer_->SetTargetTransform(targetMeshRef.transform);
+    morphDeformer_->SetCorrespondences(project_->GetPointReferenceData().correspondences);
+    morphDeformer_->SetKernelType(morphData.algorithm);
+    morphDeformer_->SetStiffness(morphData.stiffness);
+    morphDeformer_->SetSmoothness(morphData.smoothness);
+    morphDeformer_->SetNRICPParams(params);
+    if (!morphData.vertexMask.empty()) {
+        morphDeformer_->SetUserExcludedVertices(morphData.vertexMask);
+    }
+    morphDeformer_->SetProgressCallback([this](float progress, const std::string&) {
+        morphProgress_.store(progress);
+    });
+
+    morphProgress_.store(0.0f);
+    morphFinished_.store(false);
+    morphRunning_.store(true);
+
+    morphThread_ = std::thread([this]() {
+        DeformationResult result = morphDeformer_->Deform();
+
+        {
+            std::lock_guard<std::mutex> lock(morphResultMutex_);
+            morphResultSuccess_      = result.success;
+            morphResultError_        = result.errorMessage;
+            morphResultMesh_         = result.deformedMesh;
+            morphResultDisplacements_ = morphDeformer_->GetDisplacementMagnitudes();
+            morphResultMaxDisp_      = result.maxDisplacement;
+            morphResultAvgDisp_      = result.avgDisplacement;
+        }
+        morphFinished_.store(true);
+    });
+}
+
+void AppWindow::CancelMorph() {
+    if (morphDeformer_ && morphRunning_.load()) {
+        morphDeformer_->Cancel();
+    }
+}
+
+void AppWindow::PollMorphCompletion() {
+    if (!morphFinished_.load()) return;
+
+    if (morphThread_.joinable()) morphThread_.join();
+    morphRunning_.store(false);
+    morphFinished_.store(false);
+
+    if (!project_) {
+        morphResultMesh_.reset();
+        return;
+    }
+
+    bool success;
+    std::string error;
+    std::shared_ptr<Mesh> deformedMesh;
+    std::vector<float> displacements;
+    float maxDisp, avgDisp;
+    {
+        std::lock_guard<std::mutex> lock(morphResultMutex_);
+        success       = morphResultSuccess_;
+        error         = morphResultError_;
+        deformedMesh  = std::move(morphResultMesh_);
+        displacements = std::move(morphResultDisplacements_);
+        maxDisp       = morphResultMaxDisp_;
+        avgDisp       = morphResultAvgDisp_;
+    }
+
+    MorphData& morphData = project_->GetMorphData();
+    if (success && deformedMesh) {
+        morphData.deformedMorphMesh      = deformedMesh;
+        morphData.displacementMagnitudes = displacements;
+        morphData.maxDisplacement        = maxDisp;
+        morphData.avgDisplacement        = avgDisp;
+        morphData.isProcessed            = true;
+        morphData.isAccepted             = false;
+
+        if (viewportHost_) {
+            if (Viewport* vp = viewportHost_->GetPrimaryViewport()) {
+                vp->UploadHeatMapColors(deformedMesh.get(), displacements, maxDisp);
+            }
+        }
+    } else {
+        errorModal_.Open(QString::fromStdString(error.empty()
+                             ? std::string("Processing cancelled or failed.")
+                             : error),
+                         QStringLiteral("Morph Failed"));
+    }
+
+    morphDeformer_.reset();
+}
+
+void AppWindow::AcceptMorph() {
+    if (!project_) return;
+    MorphData& morphData = project_->GetMorphData();
+    if (!morphData.isProcessed) return;
+    morphData.isAccepted = true;
 }
 
 } // namespace MetaVisage

@@ -137,15 +137,19 @@ void ViewportHost::BuildLayout(int fbWidth, int fbHeight,
             rightScrX_ = pos.x + scrHalf; rightScrY_ = pos.y;
             rightScrW_ = avail.x - scrHalf; rightScrH_ = avail.y;
 
-            left_->DrawOverlays(lastLeftX_, lastLeftY_, lastLeftW_, lastLeftH_);
-            right_->DrawOverlays(lastRightX_, lastRightY_, lastRightW_, lastRightH_);
+            // Overlays (ImGui draw list + windows) use logical/screen coords so
+            // they align with the menu bar, shading combo, and mouse input
+            // on high-DPI displays. The GL pass (RenderGL) uses the scaled
+            // framebuffer coords stored in lastLeft*/lastRight*.
+            left_->DrawOverlays(leftScrX_, leftScrY_, leftScrW_, leftScrH_);
+            right_->DrawOverlays(rightScrX_, rightScrY_, rightScrW_, rightScrH_);
         } else {
             lastLeftX_ = px; lastLeftY_ = py;
             lastLeftW_ = pw; lastLeftH_ = ph;
             leftScrX_ = pos.x; leftScrY_ = pos.y;
             leftScrW_ = avail.x; leftScrH_ = avail.y;
             rightScrW_ = 0.0f;
-            left_->DrawOverlays(lastLeftX_, lastLeftY_, lastLeftW_, lastLeftH_);
+            left_->DrawOverlays(leftScrX_, leftScrY_, leftScrW_, leftScrH_);
         }
     }
     ImGui::End();

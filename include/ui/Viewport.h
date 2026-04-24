@@ -134,11 +134,11 @@ public:
 
 private:
     // Overlay drawing (ImGui draw list)
-    void DrawViewportLabelOverlay(float x, float y);
+    void DrawViewportLabelOverlay(float x, float y, float w, float h);
     void DrawOrientationGizmoOverlay(float x, float y, float w);
     void DrawPointLabelsOverlay(float x, float y, float w, float h);
     void DrawActiveBorderOverlay(float x, float y, float w, float h);
-    void DrawShadingModeOverlay(float x, float y);
+    void DrawShadingModeOverlay(float x, float y, float w);
 
     bool IsGizmoVisible() const;
     Vector3 GetGizmoPosition() const;
