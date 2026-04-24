@@ -29,7 +29,8 @@ public:
     enum class PendingAction {
         None,
         OpenProject,
-        SaveProjectAs,
+        SaveProject,      // Ctrl+S — prompts only on the first save
+        SaveProjectAs,    // Ctrl+Shift+S — always prompts for a new path
         ImportMorphMesh,
         ImportTargetMesh,
         ExportMesh,

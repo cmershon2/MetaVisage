@@ -148,6 +148,25 @@ private:
     bool TrySelectExistingPoint(float screenX, float screenY);
     void HandlePointClick(float screenX, float screenY);
 
+    // Stage 3 mask painting helpers (ported from Qt HandleMask*).
+    Mesh* GetMaskMesh();
+    Transform GetMaskTransform() const;
+    void HandleMaskPress(float screenX, float screenY);
+    void HandleMaskMove(float screenX, float screenY);
+    void HandleMaskRelease();
+    void UpdateMaskBrushCursor(float screenX, float screenY);
+
+    // Stage 4 sculpting helpers (ported from Qt HandleSculpt*).
+    SculptBrush* GetActiveBrush();
+    Mesh* GetSculptMesh();
+    Transform GetSculptTransform() const;
+    Vector3 ComputeWorldNormal(const Mesh& mesh, const Transform& transform,
+                               int vertexIndex) const;
+    void HandleSculptPress(float screenX, float screenY);
+    void HandleSculptMove(float screenX, float screenY);
+    void HandleSculptRelease();
+    void UpdateSculptBrushCursor(float screenX, float screenY);
+
     std::unique_ptr<Camera> camera_;
     std::unique_ptr<Renderer> renderer_;
     Project* project_ = nullptr;

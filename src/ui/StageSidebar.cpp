@@ -298,6 +298,48 @@ void StageSidebar::RenderMorph(Project& project, bool processing, float progress
         if (ImGui::Button("Accept & Continue", ImVec2(-FLT_MIN, 0))) out.acceptMorphRequested = true;
         ImGui::EndDisabled();
     }
+
+    // ------------------------------------------------------------------
+    // Mask painting — available any time a morph-side mesh exists (before
+    // or after processing). Painted vertices are excluded from the NRICP
+    // correspondence search on the next Process, letting the user pin eyes
+    // / mouths / interior cavities that would otherwise pull wrong.
+    // ------------------------------------------------------------------
+    const bool morphMeshReady = project.GetMorphMesh().isLoaded || morph.isProcessed;
+    if (morphMeshReady) {
+        ImGui::Spacing();
+        ImGui::Separator();
+        ImGui::TextUnformatted("Vertex Mask");
+        ImGui::TextDisabled("Paint to exclude vertices from the next Process.");
+
+        ImGui::Checkbox("Paint Mask", &maskPaintingActive_);
+        ImGui::SameLine();
+        ImGui::Checkbox("Show Mask", &maskShowMask_);
+
+        ImGui::BeginDisabled(!maskPaintingActive_);
+        ImGui::SliderFloat("Mask Radius", &maskBrushRadius_, 0.5f, 50.0f, "%.1f");
+        ImGui::Checkbox("Erase", &maskEraseMode_);
+        ImGui::EndDisabled();
+
+        const bool hasMaskData = !morph.vertexMask.empty();
+        ImGui::BeginDisabled(!hasMaskData);
+        if (ImGui::Button("Clear Mask")) out.clearMaskRequested = true;
+        ImGui::SameLine();
+        if (ImGui::Button("Invert Mask")) out.invertMaskRequested = true;
+        ImGui::EndDisabled();
+
+        // Push current mask UI state through Actions so AppWindow can mirror
+        // onto the primary viewport each frame.
+        out.maskPaintingActive = maskPaintingActive_;
+        out.maskShow           = maskShowMask_ || maskPaintingActive_;
+        out.maskEraseMode      = maskEraseMode_;
+        out.maskBrushRadius    = maskBrushRadius_;
+    } else {
+        // Ensure viewport does not treat LMB as mask painting when no mesh is
+        // loaded yet.
+        out.maskPaintingActive = false;
+        out.maskShow           = false;
+    }
 }
 
 // ---------------------------------------------------------------------------

@@ -33,6 +33,15 @@ public:
         // When non-empty, AppWindow opens an NFD picker, loads the texture,
         // and adds it to Project::GetTargetTextures() under this slot name.
         QString importTextureSlot;
+
+        // Stage 3 mask-painting push state — the sidebar is the source of
+        // truth for these UI-only toggles; AppWindow mirrors them onto the
+        // primary viewport each frame so mouse input and rendering stay in
+        // sync without a separate signal bus.
+        bool maskPaintingActive = false;
+        bool maskShow           = false;
+        bool maskEraseMode      = false;
+        float maskBrushRadius   = 10.0f;
     };
 
     // Render docked panel titled "Stage". Returns the actions requested this
@@ -45,6 +54,14 @@ private:
     void RenderPointReference(Project& project, Actions& out);
     void RenderMorph(Project& project, bool processing, float progress, Actions& out);
     void RenderTouchUp(Project& project, Actions& out);
+
+    // Stage 3 mask painting — state persists across frames. When painting is
+    // active, LMB in the morph viewport paints mask bits instead of doing
+    // camera work. Radius/erase are brush settings.
+    bool maskPaintingActive_ = false;
+    bool maskShowMask_       = true;
+    bool maskEraseMode_      = false;
+    float maskBrushRadius_   = 10.0f;
 };
 
 } // namespace MetaVisage

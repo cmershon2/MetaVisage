@@ -12,6 +12,7 @@
 #include "utils/Logger.h"
 #include "utils/RayCaster.h"
 #include "utils/BVH.h"
+#include "utils/SpatialHash.h"
 
 #include "core/Mesh.h"
 
@@ -112,6 +113,18 @@ void Viewport::UploadMeshTexture(const Mesh* mesh, const TextureData& texture) {
 }
 
 void Viewport::SetBrushType(BrushType type) { activeBrushType_ = type; }
+
+// Maps brush falloff curve to the inner-ring radius ratio used by the renderer
+// overlay. The inner ring marks where the brush weight drops to ~50 %. Kept in
+// sync with the Qt v1 implementation so sculpt cursors look identical.
+static float GetFalloffInnerRatio(FalloffType falloff) {
+    switch (falloff) {
+        case FalloffType::Linear: return 0.5f;     // 1-t = 0.5 at t=0.5
+        case FalloffType::Smooth: return 0.5f;     // hermite midpoint
+        case FalloffType::Sharp:  return 0.794f;   // 1-t^3 = 0.5 at t≈0.794
+    }
+    return 0.5f;
+}
 
 static SculptBrush* PickActiveBrush(BrushType type,
                                     SmoothBrush* smooth,
@@ -225,12 +238,13 @@ void Viewport::OnMouseButton(int button, int action, int /*mods*/, float x, floa
     }
 
     if (button == GLFW_MOUSE_BUTTON_LEFT && project_) {
+        const WorkflowStage stage = project_->GetCurrentStage();
         if (action == GLFW_PRESS) {
             // Stage 1 (Alignment): begin a gizmo drag if transform mode is
             // active and the target mesh is loaded. Axis constraint is derived
             // from the hovered gizmo handle if present; otherwise the current
             // keyboard-set constraint stays.
-            if (project_->GetCurrentStage() == WorkflowStage::Alignment &&
+            if (stage == WorkflowStage::Alignment &&
                 transformMode_ != TransformMode::None &&
                 project_->GetTargetMesh().isLoaded) {
                 if (hoveredGizmoAxis_ != GizmoAxis::None) {
@@ -250,8 +264,17 @@ void Viewport::OnMouseButton(int button, int action, int /*mods*/, float x, floa
                 transformBeforeState_ = project_->GetTargetMesh().transform;
             }
             // Stage 2 (Point Reference): place / select a correspondence point.
-            else if (project_->GetCurrentStage() == WorkflowStage::PointReference) {
+            else if (stage == WorkflowStage::PointReference) {
                 HandlePointClick(x, y);
+            }
+            // Stage 3 (Morph): paint/erase vertex mask when painting is active.
+            // When painting is off the LMB is free for future gestures.
+            else if (stage == WorkflowStage::Morph && isMaskPainting_) {
+                HandleMaskPress(x, y);
+            }
+            // Stage 4 (Touch Up): begin a sculpt stroke.
+            else if (stage == WorkflowStage::TouchUp) {
+                HandleSculptPress(x, y);
             }
         } else if (action == GLFW_RELEASE) {
             if (isTransforming_) {
@@ -261,6 +284,12 @@ void Viewport::OnMouseButton(int button, int action, int /*mods*/, float x, floa
                     OnTransformApplied(transformBeforeState_,
                                        project_->GetTargetMesh().transform);
                 }
+            }
+            if (isMaskStroking_) {
+                HandleMaskRelease();
+            }
+            if (isSculpting_) {
+                HandleSculptRelease();
             }
         }
     }
@@ -345,6 +374,32 @@ void Viewport::OnMouseMove(float x, float y) {
             default: break;
         }
         if (OnTargetTransformChanged) OnTargetTransformChanged();
+    }
+
+    // Stage 3 mask painting — while the LMB is held and painting mode is on,
+    // raycast the morph mesh and push brush samples into the vertex mask.
+    if (project_ &&
+        project_->GetCurrentStage() == WorkflowStage::Morph) {
+        if (isMaskStroking_) {
+            HandleMaskMove(x, y);
+        } else if (isMaskPainting_) {
+            // Hover cursor — show the mask ring under the mouse without
+            // flipping mask bits.
+            UpdateMaskBrushCursor(x, y);
+        } else if (renderer_) {
+            renderer_->SetBrushCursor(Vector3(), Vector3(), 0.0f, 0.0f, false);
+        }
+    }
+
+    // Stage 4 sculpting — brush drag during active stroke; hover cursor
+    // otherwise so the user can see the radius + falloff rings before clicking.
+    if (project_ &&
+        project_->GetCurrentStage() == WorkflowStage::TouchUp) {
+        if (isSculpting_) {
+            HandleSculptMove(x, y);
+        } else {
+            UpdateSculptBrushCursor(x, y);
+        }
     }
 }
 
@@ -861,6 +916,307 @@ void Viewport::HandlePointClick(float screenX, float screenY) {
         // Click on empty space: deselect any current selection.
         SetSelectedPointIndex(-1);
         if (OnPointSelected) OnPointSelected(-1);
+    }
+}
+
+// --- Stage 3 mask painting (ported from Qt HandleMask*) ---
+
+Mesh* Viewport::GetMaskMesh() {
+    if (!project_) return nullptr;
+    // Prefer the processed deformed mesh so the mask aligns with what the user
+    // sees. Before processing, fall back to the undeformed morph mesh so the
+    // user can pre-paint regions before their first Process run.
+    const MorphData& morphData = project_->GetMorphData();
+    if (morphData.isProcessed && morphData.deformedMorphMesh) {
+        return morphData.deformedMorphMesh.get();
+    }
+    auto& morphRef = project_->GetMorphMesh();
+    if (morphRef.isLoaded && morphRef.mesh) return morphRef.mesh.get();
+    return nullptr;
+}
+
+Transform Viewport::GetMaskTransform() const {
+    if (project_) return project_->GetMorphMesh().transform;
+    return Transform();
+}
+
+void Viewport::HandleMaskPress(float screenX, float screenY) {
+    if (!project_ || !maskBrush_) return;
+
+    Mesh* mesh = GetMaskMesh();
+    if (!mesh) return;
+
+    MorphData& morphData = project_->GetMorphData();
+    // The mask buffer must match the mesh we're painting. Re-sizing is cheap
+    // and idempotent — first-paint bootstraps the vector, later paints no-op.
+    const size_t vertCount = mesh->GetVertices().size();
+    if (morphData.vertexMask.size() != vertCount) {
+        morphData.vertexMask.assign(vertCount, false);
+    }
+    maskBrush_->SetMaskData(&morphData.vertexMask);
+
+    int vpW = static_cast<int>(std::ceil(lastW_));
+    int vpH = static_cast<int>(std::ceil(lastH_));
+    if (vpW <= 0 || vpH <= 0) return;
+
+    Ray ray = RayCaster::ScreenToRay(screenX, screenY, vpW, vpH, *camera_);
+    Transform transform = GetMaskTransform();
+    BVH* bvh = mesh->GetBVH();
+    RaycastHit hit = bvh
+        ? RayCaster::RayIntersectMeshBVH(ray, *mesh, transform, *bvh)
+        : RayCaster::RayIntersectMesh(ray, *mesh, transform);
+
+    if (!hit.hit) return;
+
+    isMaskStroking_ = true;
+    maskBrush_->BeginStroke(*mesh, transform, hit.position);
+    if (maskBrush_->Apply(*mesh, transform, hit.position,
+                          Vector3(), Vector3(), 0.016f)) {
+        if (renderer_) renderer_->UploadMaskColors(mesh, morphData.vertexMask);
+    }
+}
+
+void Viewport::HandleMaskMove(float screenX, float screenY) {
+    if (!project_ || !maskBrush_) return;
+    Mesh* mesh = GetMaskMesh();
+    if (!mesh) return;
+
+    int vpW = static_cast<int>(std::ceil(lastW_));
+    int vpH = static_cast<int>(std::ceil(lastH_));
+    if (vpW <= 0 || vpH <= 0) return;
+
+    Ray ray = RayCaster::ScreenToRay(screenX, screenY, vpW, vpH, *camera_);
+    Transform transform = GetMaskTransform();
+    BVH* bvh = mesh->GetBVH();
+    RaycastHit hit = bvh
+        ? RayCaster::RayIntersectMeshBVH(ray, *mesh, transform, *bvh)
+        : RayCaster::RayIntersectMesh(ray, *mesh, transform);
+    if (!hit.hit) return;
+
+    MorphData& morphData = project_->GetMorphData();
+    if (maskBrush_->Apply(*mesh, transform, hit.position,
+                          Vector3(), Vector3(), 0.016f)) {
+        if (renderer_) renderer_->UploadMaskColors(mesh, morphData.vertexMask);
+    }
+}
+
+void Viewport::HandleMaskRelease() {
+    if (!isMaskStroking_) return;
+    if (maskBrush_) maskBrush_->EndStroke();
+    isMaskStroking_ = false;
+    if (OnMaskStrokeCompleted) OnMaskStrokeCompleted();
+}
+
+// --- Stage 4 sculpting (ported from Qt HandleSculpt*) ---
+
+SculptBrush* Viewport::GetActiveBrush() {
+    return PickActiveBrush(activeBrushType_, smoothBrush_.get(),
+                           grabBrush_.get(), pushPullBrush_.get(),
+                           inflateBrush_.get());
+}
+
+Mesh* Viewport::GetSculptMesh() {
+    if (!project_) return nullptr;
+    auto& morphData = project_->GetMorphData();
+    if (morphData.deformedMorphMesh) return morphData.deformedMorphMesh.get();
+    return nullptr;
+}
+
+Transform Viewport::GetSculptTransform() const {
+    // Deformed morph is rendered with the morph mesh's transform (including
+    // the default -90° Y rotation), so raycasting must use the same transform.
+    if (project_ && project_->GetMorphMesh().isLoaded) {
+        return project_->GetMorphMesh().transform;
+    }
+    return Transform();
+}
+
+Vector3 Viewport::ComputeWorldNormal(const Mesh& mesh, const Transform& transform,
+                                     int vertexIndex) const {
+    const auto& normals = mesh.GetNormals();
+    if (vertexIndex < 0 || vertexIndex >= static_cast<int>(normals.size())) {
+        return Vector3(0.0f, 1.0f, 0.0f);
+    }
+    const Vector3 localNormal = normals[vertexIndex];
+    Matrix4x4 modelMatrix = transform.GetMatrix();
+    Matrix4x4 normalMatrix = modelMatrix.Inverse().Transpose();
+    Vector3 worldNormal(
+        normalMatrix.m[0] * localNormal.x + normalMatrix.m[4] * localNormal.y + normalMatrix.m[8]  * localNormal.z,
+        normalMatrix.m[1] * localNormal.x + normalMatrix.m[5] * localNormal.y + normalMatrix.m[9]  * localNormal.z,
+        normalMatrix.m[2] * localNormal.x + normalMatrix.m[6] * localNormal.y + normalMatrix.m[10] * localNormal.z);
+    return worldNormal.Normalized();
+}
+
+void Viewport::HandleSculptPress(float screenX, float screenY) {
+    SculptBrush* brush = GetActiveBrush();
+    Mesh* mesh = GetSculptMesh();
+    if (!brush || !mesh || !project_) return;
+
+    int vpW = static_cast<int>(std::ceil(lastW_));
+    int vpH = static_cast<int>(std::ceil(lastH_));
+    if (vpW <= 0 || vpH <= 0) return;
+
+    Ray ray = RayCaster::ScreenToRay(screenX, screenY, vpW, vpH, *camera_);
+    Transform transform = GetSculptTransform();
+    BVH* bvh = mesh->GetBVH();
+    RaycastHit hit = bvh
+        ? RayCaster::RayIntersectMeshBVH(ray, *mesh, transform, *bvh)
+        : RayCaster::RayIntersectMesh(ray, *mesh, transform);
+
+    if (!hit.hit) return;
+
+    isSculpting_ = true;
+    lastBrushWorldPos_ = hit.position;
+    currentStroke_ = BrushStroke();
+
+    // Record all affected vertices' pre-stroke positions for undo.
+    SpatialHash* sh = mesh->GetSpatialHash(brush->GetRadius() * 2.0f);
+    auto affected = sh
+        ? brush->GetAffectedVertices(*mesh, transform, hit.position, brush->GetRadius(), *sh)
+        : brush->GetAffectedVertices(*mesh, transform, hit.position, brush->GetRadius());
+    const auto& vertices = mesh->GetVertices();
+    for (const auto& av : affected) {
+        if (av.index >= 0 && av.index < static_cast<int>(vertices.size())) {
+            currentStroke_.RecordVertex(av.index, vertices[av.index]);
+        }
+    }
+
+    brush->BeginStroke(*mesh, transform, hit.position);
+
+    // Smooth brush applies on press (doesn't need movement); Grab waits for
+    // the first move sample to drag.
+    if (activeBrushType_ == BrushType::Smooth) {
+        Vector3 worldNormal = ComputeWorldNormal(*mesh, transform, hit.vertexIndex);
+        if (brush->Apply(*mesh, transform, hit.position, worldNormal,
+                         Vector3(), 0.016f)) {
+            mesh->CalculateNormals();
+            if (renderer_) renderer_->UpdateMeshVertices(mesh);
+        }
+
+        if (sculptSymmetryEnabled_) {
+            Vector3 mPos = hit.position;
+            Vector3 mNorm = worldNormal;
+            switch (sculptSymmetryAxis_) {
+                case Axis::X: mPos.x = -mPos.x; mNorm.x = -mNorm.x; break;
+                case Axis::Y: mPos.y = -mPos.y; mNorm.y = -mNorm.y; break;
+                case Axis::Z: mPos.z = -mPos.z; mNorm.z = -mNorm.z; break;
+            }
+            auto mAffected = sh
+                ? brush->GetAffectedVertices(*mesh, transform, mPos, brush->GetRadius(), *sh)
+                : brush->GetAffectedVertices(*mesh, transform, mPos, brush->GetRadius());
+            for (const auto& mav : mAffected) {
+                if (mav.index >= 0 && mav.index < static_cast<int>(vertices.size())) {
+                    currentStroke_.RecordVertex(mav.index, vertices[mav.index]);
+                }
+            }
+            if (brush->Apply(*mesh, transform, mPos, mNorm, Vector3(), 0.016f)) {
+                mesh->CalculateNormals();
+                if (renderer_) renderer_->UpdateMeshVertices(mesh);
+            }
+        }
+    }
+}
+
+void Viewport::HandleSculptMove(float screenX, float screenY) {
+    SculptBrush* brush = GetActiveBrush();
+    Mesh* mesh = GetSculptMesh();
+    if (!brush || !mesh || !project_) return;
+
+    int vpW = static_cast<int>(std::ceil(lastW_));
+    int vpH = static_cast<int>(std::ceil(lastH_));
+    if (vpW <= 0 || vpH <= 0) return;
+
+    Ray ray = RayCaster::ScreenToRay(screenX, screenY, vpW, vpH, *camera_);
+    Transform transform = GetSculptTransform();
+
+    Vector3 brushCenter = lastBrushWorldPos_;
+    Vector3 worldNormal(0.0f, 1.0f, 0.0f);
+    Vector3 mouseDelta;
+
+    if (activeBrushType_ == BrushType::Grab) {
+        // Grab: project the cursor onto a view-aligned plane through the last
+        // brush position. Lets vertices be pulled off the mesh surface.
+        Vector3 viewDir = (camera_->GetTarget() - camera_->GetPosition()).Normalized();
+        Vector3 planeNormal = viewDir * -1.0f;
+        float denom = planeNormal.Dot(ray.direction);
+        if (std::abs(denom) > 1e-6f) {
+            float t = planeNormal.Dot(lastBrushWorldPos_ - ray.origin) / denom;
+            if (t > 0.0f) brushCenter = ray.PointAt(t);
+        }
+        mouseDelta = brushCenter - lastBrushWorldPos_;
+        worldNormal = planeNormal;
+    } else {
+        // Other brushes: hug the mesh surface via BVH raycast.
+        BVH* bvh = mesh->GetBVH();
+        RaycastHit hit = bvh
+            ? RayCaster::RayIntersectMeshBVH(ray, *mesh, transform, *bvh)
+            : RayCaster::RayIntersectMesh(ray, *mesh, transform);
+        if (hit.hit) {
+            brushCenter = hit.position;
+            worldNormal = ComputeWorldNormal(*mesh, transform, hit.vertexIndex);
+        }
+        mouseDelta = brushCenter - lastBrushWorldPos_;
+
+        // Record newly-affected vertices so the undo snapshot covers the whole
+        // stroke footprint.
+        SpatialHash* sh = mesh->GetSpatialHash(brush->GetRadius() * 2.0f);
+        auto affected = sh
+            ? brush->GetAffectedVertices(*mesh, transform, brushCenter, brush->GetRadius(), *sh)
+            : brush->GetAffectedVertices(*mesh, transform, brushCenter, brush->GetRadius());
+        const auto& vertices = mesh->GetVertices();
+        for (const auto& av : affected) {
+            if (av.index >= 0 && av.index < static_cast<int>(vertices.size())) {
+                currentStroke_.RecordVertex(av.index, vertices[av.index]);
+            }
+        }
+    }
+
+    if (brush->Apply(*mesh, transform, brushCenter, worldNormal, mouseDelta, 0.016f)) {
+        mesh->CalculateNormals();
+        if (renderer_) renderer_->UpdateMeshVertices(mesh);
+    }
+
+    if (sculptSymmetryEnabled_) {
+        Vector3 mCenter = brushCenter;
+        Vector3 mNormal = worldNormal;
+        Vector3 mDelta  = mouseDelta;
+        switch (sculptSymmetryAxis_) {
+            case Axis::X: mCenter.x = -mCenter.x; mNormal.x = -mNormal.x; mDelta.x = -mDelta.x; break;
+            case Axis::Y: mCenter.y = -mCenter.y; mNormal.y = -mNormal.y; mDelta.y = -mDelta.y; break;
+            case Axis::Z: mCenter.z = -mCenter.z; mNormal.z = -mNormal.z; mDelta.z = -mDelta.z; break;
+        }
+        SpatialHash* sh2 = mesh->GetSpatialHash(brush->GetRadius() * 2.0f);
+        auto mAffected = sh2
+            ? brush->GetAffectedVertices(*mesh, transform, mCenter, brush->GetRadius(), *sh2)
+            : brush->GetAffectedVertices(*mesh, transform, mCenter, brush->GetRadius());
+        const auto& verts = mesh->GetVertices();
+        for (const auto& mav : mAffected) {
+            if (mav.index >= 0 && mav.index < static_cast<int>(verts.size())) {
+                currentStroke_.RecordVertex(mav.index, verts[mav.index]);
+            }
+        }
+        if (brush->Apply(*mesh, transform, mCenter, mNormal, mDelta, 0.016f)) {
+            mesh->CalculateNormals();
+            if (renderer_) renderer_->UpdateMeshVertices(mesh);
+        }
+    }
+
+    lastBrushWorldPos_ = brushCenter;
+}
+
+void Viewport::HandleSculptRelease() {
+    if (!isSculpting_) return;
+    if (SculptBrush* brush = GetActiveBrush()) brush->EndStroke();
+    isSculpting_ = false;
+
+    // Invalidate the BVH & spatial hash so the next stroke raycasts against
+    // the current (post-edit) surface, not the pre-stroke cache.
+    if (Mesh* mesh = GetSculptMesh()) {
+        mesh->InvalidateAccelerationStructures();
+    }
+
+    if (!currentStroke_.IsEmpty() && OnSculptStrokeCompleted) {
+        OnSculptStrokeCompleted(currentStroke_);
     }
 }
 

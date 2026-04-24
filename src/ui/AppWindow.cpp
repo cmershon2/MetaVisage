@@ -28,6 +28,7 @@
 #include <imgui_impl_opengl3.h>
 
 #include <QString>
+#include <algorithm>
 #include <cstdio>
 
 namespace MetaVisage {
@@ -473,6 +474,62 @@ void AppWindow::Run() {
             if (actions.cancelMorphRequested)  CancelMorph();
             if (actions.acceptMorphRequested)  AcceptMorph();
             // finalize is a Sprint 4 no-op (Export handles end-of-workflow).
+
+            // Mirror Stage 3 mask-UI state onto the primary viewport so LMB,
+            // renderer overlay, and brush radius track sidebar toggles each
+            // frame without a separate signal bus.
+            if (viewportHost_ && project_) {
+                if (Viewport* vp = viewportHost_->GetPrimaryViewport()) {
+                    const bool inMorph = project_->GetCurrentStage() == WorkflowStage::Morph;
+                    vp->SetMaskPaintingMode(inMorph && actions.maskPaintingActive);
+                    vp->SetShowMask(inMorph && actions.maskShow);
+                    vp->SetMaskBrushRadius(actions.maskBrushRadius);
+                    vp->SetMaskEraseMode(actions.maskEraseMode);
+                    if (inMorph) {
+                        vp->SetMaskData(&project_->GetMorphData().vertexMask);
+                    }
+                }
+            }
+
+            // Mirror Stage 4 sculpt state onto the primary viewport every
+            // frame so brush type/radius/strength/falloff/symmetry stay in
+            // sync with the sidebar sliders.
+            if (viewportHost_ && project_ &&
+                project_->GetCurrentStage() == WorkflowStage::TouchUp) {
+                if (Viewport* vp = viewportHost_->GetPrimaryViewport()) {
+                    const auto& s = project_->GetSculptState();
+                    vp->SetBrushType(s.activeBrush);
+                    vp->SetBrushRadius(s.brushRadius);
+                    vp->SetBrushStrength(s.brushStrength);
+                    vp->SetBrushFalloff(s.falloff);
+                    vp->SetSculptSymmetry(s.symmetryEnabled, s.symmetryAxis);
+                    vp->SetShowTargetOverlay(s.showTargetOverlay);
+                }
+            }
+
+            // Mask edit commands — operate directly on MorphData; upload new
+            // colours to the renderer so the overlay updates in-place.
+            if ((actions.clearMaskRequested || actions.invertMaskRequested) && project_) {
+                MorphData& md = project_->GetMorphData();
+                if (actions.clearMaskRequested) {
+                    std::fill(md.vertexMask.begin(), md.vertexMask.end(), false);
+                }
+                if (actions.invertMaskRequested) {
+                    for (size_t i = 0; i < md.vertexMask.size(); ++i) {
+                        md.vertexMask[i] = !md.vertexMask[i];
+                    }
+                }
+                if (viewportHost_) {
+                    if (Viewport* vp = viewportHost_->GetPrimaryViewport()) {
+                        // Pick whichever mesh the mask is currently being
+                        // rendered on (mirrors Viewport::GetMaskMesh).
+                        Mesh* m = md.isProcessed && md.deformedMorphMesh
+                                      ? md.deformedMorphMesh.get()
+                                      : project_->GetMorphMesh().mesh.get();
+                        if (m) vp->UploadMaskColors(m, md.vertexMask);
+                    }
+                }
+            }
         }
 
         // First frame after init: surface the Welcome modal if we have no
@@ -610,7 +667,7 @@ void AppWindow::RenderMainMenuBar() {
         if (ImGui::MenuItem("Open Project...", "Ctrl+O")) pendingAction_ = PendingAction::OpenProject;
         ImGui::Separator();
         // Save becomes Save As until we persist a project path (Sprint 3.6.4).
-        if (ImGui::MenuItem("Save Project", "Ctrl+S")) pendingAction_ = PendingAction::SaveProjectAs;
+        if (ImGui::MenuItem("Save Project", "Ctrl+S")) pendingAction_ = PendingAction::SaveProject;
         if (ImGui::MenuItem("Save Project As...", "Ctrl+Shift+S")) pendingAction_ = PendingAction::SaveProjectAs;
         ImGui::Separator();
         if (ImGui::MenuItem("Import Morph Mesh...")) pendingAction_ = PendingAction::ImportMorphMesh;
@@ -713,23 +770,29 @@ void AppWindow::DispatchPendingAction() {
             }
             break;
         }
-        case PendingAction::SaveProjectAs: {
-            // "Save" reuses the current path if one is known; otherwise falls
-            // through to Save-As behaviour. Menu bar collapses Save/Save-As
-            // into the same pending action for now.
-            QString target = projectPath_;
-            if (target.isEmpty()) {
-                const QString suggested = project_ && !project_->GetName().isEmpty()
-                    ? project_->GetName() + ".mmproj"
-                    : QString("untitled.mmproj");
-                if (auto picked = FileDialogs::SaveFile(ProjectFilters(), suggested)) {
-                    target = *picked;
-                    if (!target.endsWith(".mmproj", Qt::CaseInsensitive)) target += ".mmproj";
-                } else {
-                    break;
-                }
+        case PendingAction::SaveProject: {
+            // Ctrl+S: silent save to the current path. If no path is known
+            // yet, fall through to Save-As behaviour.
+            if (!projectPath_.isEmpty()) {
+                SaveProjectToDisk(projectPath_);
+                break;
             }
-            SaveProjectToDisk(target);
+            // fall through to SaveProjectAs prompt below
+            [[fallthrough]];
+        }
+        case PendingAction::SaveProjectAs: {
+            // Ctrl+Shift+S or "Save As...": always prompt for a new path so
+            // the user can save a copy under a different name.
+            const QString suggested = !projectPath_.isEmpty()
+                ? QFileInfo(projectPath_).fileName()
+                : (project_ && !project_->GetName().isEmpty()
+                    ? project_->GetName() + ".mmproj"
+                    : QString("untitled.mmproj"));
+            if (auto picked = FileDialogs::SaveFile(ProjectFilters(), suggested)) {
+                QString target = *picked;
+                if (!target.endsWith(".mmproj", Qt::CaseInsensitive)) target += ".mmproj";
+                SaveProjectToDisk(target);
+            }
             break;
         }
         case PendingAction::ImportMorphMesh: {
@@ -841,7 +904,8 @@ bool AppWindow::HandleGlobalShortcut(int key, int action, int mods) {
             if (!shift) { pendingAction_ = PendingAction::OpenProject; return true; }
             return false;
         case GLFW_KEY_S:
-            pendingAction_ = PendingAction::SaveProjectAs;
+            pendingAction_ = shift ? PendingAction::SaveProjectAs
+                                    : PendingAction::SaveProject;
             return true;
         case GLFW_KEY_E:
             if (!shift && project_ && project_->GetCurrentStage() == WorkflowStage::TouchUp) {
