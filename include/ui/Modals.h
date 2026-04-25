@@ -72,6 +72,11 @@ struct ExportModalState {
     bool pendingOpen = false;
     ExportAction action = ExportAction::None;
 
+    // Set to true when the user clicks Browse in the modal. AppWindow consumes
+    // this flag, runs the NFD save dialog, and writes the chosen path back to
+    // `filepath` (the modal stays open so the user can review options).
+    bool browseRequested = false;
+
     // Inputs
     bool texturesAvailable = false;
 

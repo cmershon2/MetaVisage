@@ -392,8 +392,12 @@ void StageSidebar::RenderTouchUp(Project& project, Actions& out) {
 
     ImGui::Spacing();
     ImGui::Separator();
+    // "Export Mesh..." is the only export entry point now — the v1.0 era
+    // "Finalize" button was just a wrapper that ran a mesh-validation popup
+    // and then called the same export flow, which created two redundant
+    // buttons in the sidebar. Mesh validation can move into the export
+    // pipeline itself if we want it back.
     if (ImGui::Button("Export Mesh...", ImVec2(-FLT_MIN, 0))) out.exportMeshRequested = true;
-    if (ImGui::Button("Finalize", ImVec2(-FLT_MIN, 0))) out.finalizeRequested = true;
 }
 
 } // namespace MetaVisage

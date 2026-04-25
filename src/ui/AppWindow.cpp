@@ -12,6 +12,8 @@
 #include "deformation/NRICPDeformer.h"
 #include "io/ProjectSerializer.h"
 #include "io/MeshExporter.h"
+#include "baking/TextureBaker.h"
+#include "baking/TextureWriter.h"
 #include "utils/Config.h"
 #include "utils/Logger.h"
 #include "utils/OpenUrl.h"
@@ -338,7 +340,12 @@ bool AppWindow::Initialize(int width, int height, const char* title) {
         ImGui_ImplGlfw_CursorPosCallback(w, sx, sy);
         auto* self = static_cast<AppWindow*>(glfwGetWindowUserPointer(w));
         if (!self || !self->viewportHost_) return;
-        if (!self->viewportHost_->IsDragging() && ImGui::GetIO().WantCaptureMouse) return;
+        // Cursor position is non-mutating — it only updates hover state and
+        // the brush cursor overlay. ViewportHost::HitTest already filters to
+        // the viewport rect, so we never accidentally drive viewport state
+        // from cursor moves over an ImGui panel. Gating on WantCaptureMouse
+        // here would block the brush cursor from appearing on hover until
+        // the first click into the viewport, which is what users hit before.
         self->viewportHost_->ForwardMouseMove(sx, sy);
     });
 
@@ -872,11 +879,25 @@ void AppWindow::RenderModals() {
     }
 
     RenderExportModal(exportModal_);
+    if (exportModal_.browseRequested) {
+        exportModal_.browseRequested = false;
+        // Format is selected via combo before Export is clicked; map the
+        // formatIndex (0=FBX,1=OBJ,2=GLTF) to ExportFormat for the dialog
+        // filter and the suggested filename extension.
+        const auto fmt = static_cast<ExportFormat>(exportModal_.formatIndex);
+        const QString suggested = exportModal_.filepath.isEmpty()
+            ? QString("export") + MeshExporter::GetFormatExtension(fmt)
+            : exportModal_.filepath;
+        if (auto picked = FileDialogs::SaveFile(ExportFiltersFor(fmt), suggested)) {
+            exportModal_.filepath = *picked;
+        }
+    }
     if (exportModal_.action == ExportAction::Export) {
         exportModal_.action = ExportAction::None;
         if (exportModal_.filepath.isEmpty()) {
-            // The modal's Browse button is still deferred — prompt the user via
-            // NFD now so callers never submit an empty path.
+            // Defensive fallback — the Browse button writes filepath, but if
+            // the user submits with an empty field we still prompt before
+            // bailing out so they're never silently sent back to the viewport.
             auto picked = FileDialogs::SaveFile(
                 ExportFiltersFor(exportModal_.options.format),
                 QString("export") + MeshExporter::GetFormatExtension(exportModal_.options.format));
@@ -1065,18 +1086,97 @@ void AppWindow::ApplyStageViewportMode() {
 void AppWindow::DoExport() {
     if (!project_ || exportModal_.filepath.isEmpty()) return;
     auto& morph = project_->GetMorphData();
-    if (!morph.deformedMorphMesh) {
-        errorModal_.Open("No deformed mesh available. Complete the Morph stage first.");
+
+    // Mirror the Qt-era selection: prefer the deformed morph mesh, otherwise
+    // fall back to the raw morph mesh so users can still export when they
+    // skip the Morph stage (e.g. for sculpt-only edits).
+    const Mesh* meshToExport = nullptr;
+    if (morph.deformedMorphMesh) {
+        meshToExport = morph.deformedMorphMesh.get();
+    } else if (project_->GetMorphMesh().isLoaded && project_->GetMorphMesh().mesh) {
+        meshToExport = project_->GetMorphMesh().mesh.get();
+    }
+    if (!meshToExport) {
+        errorModal_.Open("No mesh available to export. Load or process a mesh first.");
         return;
     }
+
+    const ExportOptions& options = exportModal_.options;
+    const TextureSet& textures = project_->GetTargetTextures();
+    const bool hasTextures = textures.HasAlbedo() || textures.HasNormalMap();
+    const bool hasMorphedMesh = morph.deformedMorphMesh != nullptr;
+
+    // Texture baking — runs before mesh export so the resulting albedo/normal
+    // sit alongside the exported FBX/OBJ/GLTF for the user to pick up. Only
+    // bakes when the user has both a morphed mesh and source textures, which
+    // matches the Qt MainWindow path; otherwise the checkbox is disabled.
+    if (options.exportBakedTextures && hasTextures && hasMorphedMesh &&
+        project_->GetTargetMesh().isLoaded && project_->GetTargetMesh().mesh) {
+
+        BakeSettings bakeSettings;
+        bakeSettings.resolution = options.bakeResolution;
+        bakeSettings.paddingPixels = 4;
+        bakeSettings.bakeAlbedo = textures.HasAlbedo();
+        bakeSettings.bakeNormalMap = textures.HasNormalMap();
+
+        statusMessage_ = "Baking textures...";
+        MV_LOG_INFO("Baking textures for export");
+
+        TextureBaker baker;
+        BakeResult bakeResult = baker.Bake(
+            *morph.deformedMorphMesh,
+            *project_->GetTargetMesh().mesh,
+            project_->GetMorphMesh().transform,
+            project_->GetTargetMesh().transform,
+            textures.GetAlbedo().get(),
+            textures.GetNormalMap() ? textures.GetNormalMap().get() : nullptr,
+            bakeSettings);
+
+        if (!bakeResult.success) {
+            errorModal_.Open(QString("Texture bake failed:\n%1").arg(bakeResult.errorMessage));
+            return;
+        }
+
+        // Write baked textures next to the mesh file using the convention
+        // <basename>_albedo.<ext> / <basename>_normal.<ext>.
+        QFileInfo fileInfo(exportModal_.filepath);
+        const QString basePath = fileInfo.absolutePath() + "/" + fileInfo.completeBaseName();
+        const QString ext = "." + options.textureFormat;
+
+        if (bakeResult.bakedAlbedo) {
+            const QString albedoPath = basePath + "_albedo" + ext;
+            const bool ok = (options.textureFormat == "tga")
+                ? TextureWriter::WriteTGA(*bakeResult.bakedAlbedo, albedoPath)
+                : TextureWriter::WritePNG(*bakeResult.bakedAlbedo, albedoPath);
+            if (!ok) MV_LOG_ERROR(QString("Failed to write baked albedo: %1").arg(albedoPath));
+        }
+        if (bakeResult.bakedNormalMap) {
+            const QString normalPath = basePath + "_normal" + ext;
+            const bool ok = (options.textureFormat == "tga")
+                ? TextureWriter::WriteTGA(*bakeResult.bakedNormalMap, normalPath)
+                : TextureWriter::WritePNG(*bakeResult.bakedNormalMap, normalPath);
+            if (!ok) MV_LOG_ERROR(QString("Failed to write baked normal: %1").arg(normalPath));
+        }
+    }
+
+    // For MetaHuman-compatible export, hand the original morph mesh to the
+    // exporter so it can rewrite that file with deformed positions while
+    // preserving the exact topology UE5 MetaHuman Conform requires.
+    const Mesh* originalForCompat = nullptr;
+    if (options.metaHumanCompatible && hasMorphedMesh &&
+        project_->GetMorphMesh().isLoaded && project_->GetMorphMesh().mesh) {
+        originalForCompat = project_->GetMorphMesh().mesh.get();
+    } else {
+        originalForCompat = morph.originalMorphMesh.get();
+    }
+
     MeshExporter exporter;
-    auto* original = morph.originalMorphMesh.get();
     const ExportResult result = exporter.Export(
-        *morph.deformedMorphMesh,
+        *meshToExport,
         exportModal_.filepath,
-        exportModal_.options,
+        options,
         &project_->GetMorphMesh().transform,
-        original);
+        originalForCompat);
     if (!result.success) {
         errorModal_.Open(QString("Export failed:\n%1").arg(result.errorMessage));
         return;

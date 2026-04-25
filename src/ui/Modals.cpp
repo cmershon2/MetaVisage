@@ -182,6 +182,11 @@ void RenderExportModal(ExportModalState& state) {
 
     if (ImGui::BeginPopupModal("Export Mesh", nullptr,
                                ImGuiWindowFlags_AlwaysAutoResize | ImGuiWindowFlags_NoSavedSettings)) {
+        // Force a 1px border on every input/combo/checkbox in this modal — the
+        // dark theme's default FrameBorderSize=0 makes empty fields nearly
+        // invisible against the popup background, which users have flagged.
+        ImGui::PushStyleVar(ImGuiStyleVar_FrameBorderSize, 1.0f);
+
         ImGui::TextUnformatted("Output File");
         ImGui::Separator();
         char pathBuf[1024];
@@ -193,13 +198,11 @@ void RenderExportModal(ExportModalState& state) {
         }
         ImGui::PopItemWidth();
         ImGui::SameLine();
-        const bool browseClicked = ImGui::Button("Browse...");
-        if (browseClicked) {
-            // AppWindow intercepts this via a deferred action — Story 3.6.3
-            // wiring completes the round trip. For now set action=None and
-            // expose a "needs browse" marker via an extra flag? Keep simple:
-            // push browse through the same action channel using a sentinel
-            // filepath that callers recognise. Deferring full wiring.
+        if (ImGui::Button("Browse...")) {
+            // AppWindow consumes this flag each frame, runs the NFD save
+            // dialog, and writes the chosen path back to `filepath`. The
+            // modal stays open so the user can still tweak options.
+            state.browseRequested = true;
         }
         ImGui::Dummy(ImVec2(0, 6));
 
@@ -262,6 +265,7 @@ void RenderExportModal(ExportModalState& state) {
             state.action = ExportAction::None;
             ImGui::CloseCurrentPopup();
         }
+        ImGui::PopStyleVar(); // FrameBorderSize
         ImGui::EndPopup();
     }
 }

@@ -376,29 +376,23 @@ void Viewport::OnMouseMove(float x, float y) {
         if (OnTargetTransformChanged) OnTargetTransformChanged();
     }
 
-    // Stage 3 mask painting — while the LMB is held and painting mode is on,
-    // raycast the morph mesh and push brush samples into the vertex mask.
-    if (project_ &&
-        project_->GetCurrentStage() == WorkflowStage::Morph) {
-        if (isMaskStroking_) {
-            HandleMaskMove(x, y);
-        } else if (isMaskPainting_) {
-            // Hover cursor — show the mask ring under the mouse without
-            // flipping mask bits.
-            UpdateMaskBrushCursor(x, y);
+    // Stage-specific brush cursor / stroke handling. The renderer draws the
+    // ring overlay, so we hide it on stages that don't use a brush.
+    if (project_) {
+        const WorkflowStage stage = project_->GetCurrentStage();
+        if (stage == WorkflowStage::Morph) {
+            if (isMaskStroking_) {
+                HandleMaskMove(x, y);
+            } else if (isMaskPainting_) {
+                UpdateMaskBrushCursor(x, y);
+            } else if (renderer_) {
+                renderer_->SetBrushCursor(Vector3(), Vector3(), 0.0f, 0.0f, false);
+            }
+        } else if (stage == WorkflowStage::TouchUp) {
+            if (isSculpting_) HandleSculptMove(x, y);
+            else              UpdateSculptBrushCursor(x, y);
         } else if (renderer_) {
             renderer_->SetBrushCursor(Vector3(), Vector3(), 0.0f, 0.0f, false);
-        }
-    }
-
-    // Stage 4 sculpting — brush drag during active stroke; hover cursor
-    // otherwise so the user can see the radius + falloff rings before clicking.
-    if (project_ &&
-        project_->GetCurrentStage() == WorkflowStage::TouchUp) {
-        if (isSculpting_) {
-            HandleSculptMove(x, y);
-        } else {
-            UpdateSculptBrushCursor(x, y);
         }
     }
 }
@@ -974,6 +968,11 @@ void Viewport::HandleMaskPress(float screenX, float screenY) {
                           Vector3(), Vector3(), 0.016f)) {
         if (renderer_) renderer_->UploadMaskColors(mesh, morphData.vertexMask);
     }
+    if (renderer_) {
+        Vector3 worldNormal = ComputeWorldNormal(*mesh, transform, hit.vertexIndex);
+        renderer_->SetBrushCursor(hit.position, worldNormal,
+                                  maskBrush_->GetRadius(), 0.0f, true);
+    }
 }
 
 void Viewport::HandleMaskMove(float screenX, float screenY) {
@@ -997,6 +996,11 @@ void Viewport::HandleMaskMove(float screenX, float screenY) {
     if (maskBrush_->Apply(*mesh, transform, hit.position,
                           Vector3(), Vector3(), 0.016f)) {
         if (renderer_) renderer_->UploadMaskColors(mesh, morphData.vertexMask);
+    }
+    if (renderer_) {
+        Vector3 worldNormal = ComputeWorldNormal(*mesh, transform, hit.vertexIndex);
+        renderer_->SetBrushCursor(hit.position, worldNormal,
+                                  maskBrush_->GetRadius(), 0.0f, true);
     }
 }
 
@@ -1202,6 +1206,13 @@ void Viewport::HandleSculptMove(float screenX, float screenY) {
     }
 
     lastBrushWorldPos_ = brushCenter;
+
+    // Keep the ring visible at the new brush center throughout the stroke.
+    if (renderer_) {
+        float innerRadius = brush->GetRadius() * GetFalloffInnerRatio(brush->GetFalloff());
+        renderer_->SetBrushCursor(brushCenter, worldNormal,
+                                  brush->GetRadius(), innerRadius, true);
+    }
 }
 
 void Viewport::HandleSculptRelease() {
@@ -1217,6 +1228,72 @@ void Viewport::HandleSculptRelease() {
 
     if (!currentStroke_.IsEmpty() && OnSculptStrokeCompleted) {
         OnSculptStrokeCompleted(currentStroke_);
+    }
+}
+
+// Hover-cursor updates — raycast the sculpt/mask mesh each move and hand the
+// hit position + surface normal to the renderer so it can draw the outer
+// radius ring and (for sculpt) the inner falloff ring.
+
+void Viewport::UpdateSculptBrushCursor(float screenX, float screenY) {
+    if (!renderer_) return;
+    SculptBrush* brush = GetActiveBrush();
+    Mesh* mesh = GetSculptMesh();
+    if (!brush || !mesh) {
+        renderer_->SetBrushCursor(Vector3(), Vector3(), 0.0f, 0.0f, false);
+        return;
+    }
+
+    int vpW = static_cast<int>(std::ceil(lastW_));
+    int vpH = static_cast<int>(std::ceil(lastH_));
+    if (vpW <= 0 || vpH <= 0) return;
+
+    Ray ray = RayCaster::ScreenToRay(screenX, screenY, vpW, vpH, *camera_);
+    Transform transform = GetSculptTransform();
+    BVH* bvh = mesh->GetBVH();
+    RaycastHit hit = bvh
+        ? RayCaster::RayIntersectMeshBVH(ray, *mesh, transform, *bvh)
+        : RayCaster::RayIntersectMesh(ray, *mesh, transform);
+
+    if (hit.hit) {
+        Vector3 worldNormal = ComputeWorldNormal(*mesh, transform, hit.vertexIndex);
+        float innerRadius = brush->GetRadius() * GetFalloffInnerRatio(brush->GetFalloff());
+        renderer_->SetBrushCursor(hit.position, worldNormal,
+                                  brush->GetRadius(), innerRadius, true);
+        brushOnMesh_ = true;
+        lastBrushWorldPos_ = hit.position;
+    } else {
+        renderer_->SetBrushCursor(Vector3(), Vector3(), 0.0f, 0.0f, false);
+        brushOnMesh_ = false;
+    }
+}
+
+void Viewport::UpdateMaskBrushCursor(float screenX, float screenY) {
+    if (!renderer_ || !maskBrush_) return;
+    Mesh* mesh = GetMaskMesh();
+    if (!mesh) {
+        renderer_->SetBrushCursor(Vector3(), Vector3(), 0.0f, 0.0f, false);
+        return;
+    }
+
+    int vpW = static_cast<int>(std::ceil(lastW_));
+    int vpH = static_cast<int>(std::ceil(lastH_));
+    if (vpW <= 0 || vpH <= 0) return;
+
+    Ray ray = RayCaster::ScreenToRay(screenX, screenY, vpW, vpH, *camera_);
+    Transform transform = GetMaskTransform();
+    BVH* bvh = mesh->GetBVH();
+    RaycastHit hit = bvh
+        ? RayCaster::RayIntersectMeshBVH(ray, *mesh, transform, *bvh)
+        : RayCaster::RayIntersectMesh(ray, *mesh, transform);
+
+    if (hit.hit) {
+        Vector3 worldNormal = ComputeWorldNormal(*mesh, transform, hit.vertexIndex);
+        // Mask has no falloff — inner ring = 0 suppresses the second ring.
+        renderer_->SetBrushCursor(hit.position, worldNormal,
+                                  maskBrush_->GetRadius(), 0.0f, true);
+    } else {
+        renderer_->SetBrushCursor(Vector3(), Vector3(), 0.0f, 0.0f, false);
     }
 }
 

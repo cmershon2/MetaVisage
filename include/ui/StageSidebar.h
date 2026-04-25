@@ -23,7 +23,6 @@ public:
         bool processMorphRequested = false;
         bool cancelMorphRequested = false;
         bool acceptMorphRequested = false;
-        bool finalizeRequested = false;
         bool clearAllPointsRequested = false;
         bool clearMaskRequested = false;
         bool invertMaskRequested = false;
