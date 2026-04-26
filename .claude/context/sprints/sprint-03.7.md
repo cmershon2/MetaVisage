@@ -13,13 +13,13 @@
 
 | # | Story | Points | Dependencies | Status |
 |---|-------|--------|--------------|--------|
-| 1 | **Story 3.7.1: Qt6::Core Removal — Core Domain Layer (QString → std::string)** | 5 | Sprint 3.6 complete | [ ] |
-| 2 | **Story 3.7.2: Qt6::Core Removal — I/O Layer (QFile / QJson → std::fstream + nlohmann::json)** | 3 | Story 3.7.1 | [ ] |
-| 3 | **Story 3.7.3: Qt6::Core Removal — Logging, Utilities & Build System** | 4 | Story 3.7.1 | [ ] |
-| 4 | **Story 3.7.4: MorphWorker Threading Port (QThread → std::thread)** | 3 | Story 3.7.3 | [ ] |
-| 5 | **Story 3.7.5: Sprint 3.6 Code Review Blockers** | 5 | None (parallelizable) | [ ] |
-| 6 | **Story 3.7.6: Sprint 3.5 Hygiene Carryover (Smoke Test + CMake Guard)** | 3 | Story 3.7.3 | [ ] |
-| 7 | **Story 3.7.7: Re-wire Undo/Redo on the ImGui Port** | 3 | None (parallelizable) | [ ] |
+| 1 | **Story 3.7.1: Qt6::Core Removal — Core Domain Layer (QString → std::string)** | 5 | Sprint 3.6 complete | [x] |
+| 2 | **Story 3.7.2: Qt6::Core Removal — I/O Layer (QFile / QJson → std::fstream + nlohmann::json)** | 3 | Story 3.7.1 | [x] |
+| 3 | **Story 3.7.3: Qt6::Core Removal — Logging, Utilities & Build System** | 4 | Story 3.7.1 | [x] |
+| 4 | **Story 3.7.4: MorphWorker Threading Port (QThread → std::thread)** | 3 | Story 3.7.3 | [x] (already complete pre-sprint) |
+| 5 | **Story 3.7.5: Sprint 3.6 Code Review Blockers** | 5 | None (parallelizable) | [x] |
+| 6 | **Story 3.7.6: Sprint 3.5 Hygiene Carryover (Smoke Test + CMake Guard)** | 3 | Story 3.7.3 | [x] |
+| 7 | **Story 3.7.7: Re-wire Undo/Redo on the ImGui Port** | 3 | None (parallelizable) | [x] |
 
 ---
 
@@ -154,7 +154,37 @@ Backlog blocker for Sprint 4 — NRICP work needs reliable undo. `UndoStack` and
 
 ## Sprint Outcome
 
-**Status**: Planned
-**Velocity (Actual)**: TBD
-**Carryover**: TBD
-**Notes**: TBD — Sprint 4 (Wrap Engine Redesign) requires this sprint's Undo/Redo and zero-Qt baseline as preconditions.
+**Status**: Implementation Complete — manual UI smoke test pending
+**Velocity (Actual)**: 26 / 26 points
+**Carryover**: None (all seven stories landed)
+**Notes**:
+- Story 3.7.4 (MorphWorker QThread→std::thread port) was already complete on
+  the branch when implementation started; the architect-agent audit caught
+  this. The reclaimed 3 points went into a more thorough Logger rewrite (full
+  `QFile`/`QTextStream`/`QDateTime` replacement instead of a shim) and a
+  one-time legacy-plaintext migration path in the new SecureStorage wrapper.
+- C++17 → **C++20** bump landed alongside the Qt removal so `std::format`
+  could replace `QString::arg()` across all ~99 `MV_LOG_*` call sites without
+  introducing a third-party `fmt` dependency.
+- `ProjectSerializer` migrated to `nlohmann::ordered_json` so `.mmproj` key
+  order stays stable and v1.0 round-trips remain byte-clean.
+- New `utils/SecureStorage` wraps Win32 DPAPI (`CryptProtectData` /
+  `CryptUnprotectData`) with base64 for JSON safety. Decryption failure is
+  treated as "drop the cached value" rather than throwing — a copied config
+  forces re-auth instead of crashing.
+- CMake configure-time guard (Qt6::Core/Gui/Widgets/OpenGL/OpenGLWidgets)
+  fails the configure with a clear message if any future change reintroduces
+  the dependency transitively.
+- Smoke test (`tests/smoke/launch_to_export.cpp`) exercises the Mesh →
+  Project → ProjectSerializer round-trip → MeshExporter FBX path against the
+  bundled MetaHuman head. CTest passes 1/1 in 2.95s; the produced FBX is
+  4 MB (24,049 verts after UV-seam merge, 24,002 faces).
+- `MetaVisage.exe` now ships with **zero Qt DLLs** in its dependency chain
+  (verified via `dumpbin /dependents`). Installer payload shrinks by ≥20 MB.
+- Sprint 4 (Wrap Engine Redesign) preconditions met: zero-Qt baseline +
+  reliable Undo/Redo wiring at all four mutation sites.
+
+**Commits**:
+- `71ea8ab` fix: resolve three Sprint 3.6 PR review blockers
+- `22560ff` refactor!: remove Qt6::Core; bump to C++20
+- `d7ac097` feat: wire undo/redo, DPAPI tokens, Qt guard, smoke test
