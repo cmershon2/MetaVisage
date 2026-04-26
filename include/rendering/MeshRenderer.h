@@ -48,6 +48,13 @@ private:
     size_t vertexCount_;
     bool hasVertexColors_;
 
+    // Quad-aware edge index buffer. Drawn with GL_LINES in wireframe modes so
+    // the user sees the original face perimeters (no fan-triangulation
+    // diagonals). Built from Mesh::faces_ in UploadMesh; shared with the
+    // existing VBO layout.
+    unsigned int edgeIBO_ = 0;
+    GLsizei edgeIndexCount_ = 0;
+
     // GPU-to-mesh mapping for separate UV indices (UV seam handling)
     bool hasSeparateUVs_ = false;
     size_t gpuVertexCount_ = 0;

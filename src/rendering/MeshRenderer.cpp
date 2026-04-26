@@ -2,6 +2,8 @@
 #include "core/TextureData.h"
 #include <vector>
 #include <map>
+#include <unordered_set>
+#include <cstdint>
 
 namespace MetaVisage {
 
@@ -136,6 +138,58 @@ void MeshRenderer::UploadMesh(const Mesh& mesh) {
 
     indexCount_ = static_cast<GLsizei>(indices.size());
 
+    // Build a quad-aware edge index list — one pair of indices per face edge
+    // (closing back to the first corner), so GL_LINES draws the original
+    // polygon perimeters in wireframe mode without showing fan-triangulation
+    // diagonals. Edges are deduplicated via a min/max canonical key.
+    std::vector<unsigned int> edgeIndices;
+    {
+        edgeIndices.reserve(faces.size() * 8);
+        std::unordered_set<uint64_t> seenEdges;
+        seenEdges.reserve(faces.size() * 4);
+
+        auto pushEdge = [&](unsigned int a, unsigned int b) {
+            if (a == b) return;
+            unsigned int lo = a < b ? a : b;
+            unsigned int hi = a < b ? b : a;
+            uint64_t key = (static_cast<uint64_t>(lo) << 32) | hi;
+            if (!seenEdges.insert(key).second) return;
+            edgeIndices.push_back(a);
+            edgeIndices.push_back(b);
+        };
+
+        if (hasSeparateUVs_) {
+            // Recover GPU index for each (vertexIdx, uvIdx) corner using the
+            // same cornerMap layout that built the triangle buffer.
+            std::map<std::pair<unsigned int, unsigned int>, unsigned int> cornerMap;
+            for (size_t gi = 0; gi < gpuToMeshVertex_.size(); ++gi) {
+                cornerMap[{gpuToMeshVertex_[gi], gpuToMeshUV_[gi]}] =
+                    static_cast<unsigned int>(gi);
+            }
+            for (const auto& face : faces) {
+                const size_t n = face.vertexIndices.size();
+                if (n < 2 || face.uvIndices.size() != n) continue;
+                for (size_t i = 0; i < n; ++i) {
+                    size_t j = (i + 1) % n;
+                    auto itA = cornerMap.find({face.vertexIndices[i], face.uvIndices[i]});
+                    auto itB = cornerMap.find({face.vertexIndices[j], face.uvIndices[j]});
+                    if (itA == cornerMap.end() || itB == cornerMap.end()) continue;
+                    pushEdge(itA->second, itB->second);
+                }
+            }
+        } else {
+            for (const auto& face : faces) {
+                const size_t n = face.vertexIndices.size();
+                if (n < 2) continue;
+                for (size_t i = 0; i < n; ++i) {
+                    size_t j = (i + 1) % n;
+                    pushEdge(face.vertexIndices[i], face.vertexIndices[j]);
+                }
+            }
+        }
+    }
+    edgeIndexCount_ = static_cast<GLsizei>(edgeIndices.size());
+
     // Create VAO
     glGenVertexArrays(1, &vao_);
     glBindVertexArray(vao_);
@@ -162,7 +216,20 @@ void MeshRenderer::UploadMesh(const Mesh& mesh) {
     glBindBuffer(GL_ELEMENT_ARRAY_BUFFER, ibo_);
     glBufferData(GL_ELEMENT_ARRAY_BUFFER, indices.size() * sizeof(unsigned int), indices.data(), GL_STATIC_DRAW);
 
+    // Edge IBO for quad-aware wireframe rendering. Upload it WITHOUT the
+    // VAO bound — otherwise the GL_ELEMENT_ARRAY_BUFFER binding would be
+    // recorded into the VAO and clobber the triangle ibo_ that solid mode
+    // relies on. Wireframe paths bind/restore edgeIBO_ explicitly per draw.
     glBindVertexArray(0);
+
+    if (!edgeIndices.empty()) {
+        glGenBuffers(1, &edgeIBO_);
+        glBindBuffer(GL_ELEMENT_ARRAY_BUFFER, edgeIBO_);
+        glBufferData(GL_ELEMENT_ARRAY_BUFFER,
+                     edgeIndices.size() * sizeof(unsigned int),
+                     edgeIndices.data(), GL_STATIC_DRAW);
+        glBindBuffer(GL_ELEMENT_ARRAY_BUFFER, 0);
+    }
 }
 
 void MeshRenderer::Render(unsigned int shaderProgram, const Matrix4x4& viewProjection, const Transform& transform,
@@ -205,20 +272,36 @@ void MeshRenderer::Render(unsigned int shaderProgram, const Matrix4x4& viewProje
             break;
 
         case ShadingMode::Wireframe:
-            glPolygonMode(GL_FRONT_AND_BACK, GL_LINE);
-            glDrawElements(GL_TRIANGLES, indexCount_, GL_UNSIGNED_INT, 0);
-            glPolygonMode(GL_FRONT_AND_BACK, GL_FILL);
+            // Quad-aware wireframe: draw face perimeters via the edge buffer
+            // with GL_LINES so quads/n-gons display as quads (no fan
+            // diagonals). Falls back to triangulated outline if edges weren't
+            // built — should never happen for a valid mesh.
+            if (edgeIBO_ != 0 && edgeIndexCount_ > 0) {
+                glBindBuffer(GL_ELEMENT_ARRAY_BUFFER, edgeIBO_);
+                glDrawElements(GL_LINES, edgeIndexCount_, GL_UNSIGNED_INT, 0);
+                glBindBuffer(GL_ELEMENT_ARRAY_BUFFER, ibo_);
+            } else {
+                glPolygonMode(GL_FRONT_AND_BACK, GL_LINE);
+                glDrawElements(GL_TRIANGLES, indexCount_, GL_UNSIGNED_INT, 0);
+                glPolygonMode(GL_FRONT_AND_BACK, GL_FILL);
+            }
             break;
 
         case ShadingMode::SolidWireframe:
             // Solid first
             glPolygonMode(GL_FRONT_AND_BACK, GL_FILL);
             glDrawElements(GL_TRIANGLES, indexCount_, GL_UNSIGNED_INT, 0);
-            // Wireframe overlay
-            glPolygonMode(GL_FRONT_AND_BACK, GL_LINE);
+            // Quad-aware wireframe overlay
             glUniform3f(colorLoc, 0.0f, 0.0f, 0.0f);
-            glDrawElements(GL_TRIANGLES, indexCount_, GL_UNSIGNED_INT, 0);
-            glPolygonMode(GL_FRONT_AND_BACK, GL_FILL);
+            if (edgeIBO_ != 0 && edgeIndexCount_ > 0) {
+                glBindBuffer(GL_ELEMENT_ARRAY_BUFFER, edgeIBO_);
+                glDrawElements(GL_LINES, edgeIndexCount_, GL_UNSIGNED_INT, 0);
+                glBindBuffer(GL_ELEMENT_ARRAY_BUFFER, ibo_);
+            } else {
+                glPolygonMode(GL_FRONT_AND_BACK, GL_LINE);
+                glDrawElements(GL_TRIANGLES, indexCount_, GL_UNSIGNED_INT, 0);
+                glPolygonMode(GL_FRONT_AND_BACK, GL_FILL);
+            }
             break;
 
         case ShadingMode::Textured:
@@ -449,19 +532,30 @@ void MeshRenderer::RenderHeatMap(unsigned int shaderProgram, const Matrix4x4& vi
             break;
 
         case ShadingMode::Wireframe:
-            glPolygonMode(GL_FRONT_AND_BACK, GL_LINE);
-            glDrawElements(GL_TRIANGLES, indexCount_, GL_UNSIGNED_INT, 0);
-            glPolygonMode(GL_FRONT_AND_BACK, GL_FILL);
+            if (edgeIBO_ != 0 && edgeIndexCount_ > 0) {
+                glBindBuffer(GL_ELEMENT_ARRAY_BUFFER, edgeIBO_);
+                glDrawElements(GL_LINES, edgeIndexCount_, GL_UNSIGNED_INT, 0);
+                glBindBuffer(GL_ELEMENT_ARRAY_BUFFER, ibo_);
+            } else {
+                glPolygonMode(GL_FRONT_AND_BACK, GL_LINE);
+                glDrawElements(GL_TRIANGLES, indexCount_, GL_UNSIGNED_INT, 0);
+                glPolygonMode(GL_FRONT_AND_BACK, GL_FILL);
+            }
             break;
 
         case ShadingMode::SolidWireframe:
             glPolygonMode(GL_FRONT_AND_BACK, GL_FILL);
             glDrawElements(GL_TRIANGLES, indexCount_, GL_UNSIGNED_INT, 0);
-            // Wireframe overlay in dark color
-            glPolygonMode(GL_FRONT_AND_BACK, GL_LINE);
-            // Use a default dark vertex color for wireframe - just draw lines
-            glDrawElements(GL_TRIANGLES, indexCount_, GL_UNSIGNED_INT, 0);
-            glPolygonMode(GL_FRONT_AND_BACK, GL_FILL);
+            // Quad-aware wireframe overlay
+            if (edgeIBO_ != 0 && edgeIndexCount_ > 0) {
+                glBindBuffer(GL_ELEMENT_ARRAY_BUFFER, edgeIBO_);
+                glDrawElements(GL_LINES, edgeIndexCount_, GL_UNSIGNED_INT, 0);
+                glBindBuffer(GL_ELEMENT_ARRAY_BUFFER, ibo_);
+            } else {
+                glPolygonMode(GL_FRONT_AND_BACK, GL_LINE);
+                glDrawElements(GL_TRIANGLES, indexCount_, GL_UNSIGNED_INT, 0);
+                glPolygonMode(GL_FRONT_AND_BACK, GL_FILL);
+            }
             break;
     }
 
@@ -510,6 +604,11 @@ void MeshRenderer::Clear() {
         glDeleteBuffers(1, &ibo_);
         ibo_ = 0;
     }
+    if (edgeIBO_ != 0) {
+        glDeleteBuffers(1, &edgeIBO_);
+        edgeIBO_ = 0;
+    }
+    edgeIndexCount_ = 0;
     if (colorVBO_ != 0) {
         glDeleteBuffers(1, &colorVBO_);
         colorVBO_ = 0;

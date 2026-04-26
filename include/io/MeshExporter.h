@@ -32,7 +32,11 @@ struct ExportOptions {
 
     ExportOptions()
         : format(ExportFormat::FBX),
-          triangulate(true),
+          // Default OFF — UE5 MetaHuman Conform requires source quad topology
+          // preserved end-to-end. The export modal also forces this to false;
+          // the default here protects any direct callers that build options
+          // outside the modal path.
+          triangulate(false),
           includeMaterials(true),
           applyTransform(true),
           convertToYUp(true),
