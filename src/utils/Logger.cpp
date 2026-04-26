@@ -22,7 +22,7 @@ Logger::~Logger() {
 }
 
 void Logger::Initialize(const QString& logDirectory) {
-    QMutexLocker lock(&mutex_);
+    std::lock_guard<std::mutex> lock(mutex_);
 
     if (initialized_) return;
 
@@ -54,7 +54,7 @@ void Logger::Initialize(const QString& logDirectory) {
 }
 
 void Logger::Log(LogLevel level, const QString& message, const char* file, int line) {
-    QMutexLocker lock(&mutex_);
+    std::lock_guard<std::mutex> lock(mutex_);
 
     QString timestamp = QDateTime::currentDateTime().toString("yyyy-MM-dd hh:mm:ss.zzz");
     QString levelStr = LevelToString(level);

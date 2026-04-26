@@ -6,7 +6,7 @@ description: Strategic vision, target users, and current state for MetaVisage �
 # Product Vision
 
 **Project**: MetaVisage
-**Last Updated**: 2026-04-21
+**Last Updated**: 2026-04-26
 
 ---
 
@@ -45,13 +45,15 @@ Commercial mesh-wrapping solutions (e.g., Faceform's Wrapped) cost ~$500/month a
 ## Current State
 
 - **v1.0.0** shipped under MIT license on Qt 6 with the four-stage workflow, FBX/OBJ/GLTF import-export, point correspondence with symmetry, RBF/TPS-based deformation, and basic sculpting brushes.
-- **v2.0 in progress** on branch `sprint/Framework-Migration-Platform-Layer`. The scope:
+- **v2.0 in progress** on branch `sprint/Framework-Migration-UI-Layer`. The scope:
   - Address all v1.0.0 user feedback (see `.claude/context/Version 1.0.0 Feedback.md`)
   - Migrate off Qt onto Dear ImGui + GLFW to eliminate Qt commercial-license cost (Sprints 3.5 and 3.6)
-  - Replace RBF with NRICP as the wrapping algorithm; introduce Quick Wrap / Fantasy Wrap presets
+  - Replace RBF with the new wrapping algorithm; introduce Quick Wrap / Fantasy Wrap presets (Sprint 4)
   - Add licensing infrastructure, tier enforcement, Inno Setup installer, and WinSparkle auto-update
-- Sprints 1–3 complete. **Sprint 3.5 (Platform Layer migration) complete** as of 2026-04-21 — Qt Gui/Widgets/OpenGL/OpenGLWidgets removed, app re-hosted on GLFW + Dear ImGui + GLEW with camera/input parity. `Qt6::Core` retained transitionally (LGPL; full removal tracked in the product backlog).
-- **Sprint 3.6 (UI reinstatement)** is next: rebuilding menus, sidebars, dialogs, project/mesh loader, and the sculpt/mask/point-click input paths on ImGui, plus integrating the licensing API, NFD file dialogs, and WinSparkle update flow.
+- Sprints 1–3 complete.
+- **Sprint 3.5 (Platform Layer migration) complete** as of 2026-04-21 — Qt Gui/Widgets/OpenGL/OpenGLWidgets removed, app re-hosted on GLFW + Dear ImGui + GLEW with camera/input parity. `Qt6::Core` retained transitionally (LGPL; full removal tracked in the product backlog).
+- **Sprint 3.6 (UI Layer migration) complete** as of 2026-04-26 — full ImGui application shell (dockspace, menu bar, status bar, all four stage sidebars), every modal (Welcome, Confirm, Error, Export, Texture Preview, Shortcuts, About), NFD-backed file pickers, JSON config at `%APPDATA%\MetaVisage\config.json`, named-pipe single-instance + deep-link forwarding, libcurl HTTP client, and `MorphWorker` ported off `QThread`. Stage 1 → 2 → 3 → 4 → Export workflow runs end-to-end on the new stack. Story 3.6.5 (shading-mode overlay & orientation gizmo ImGui port) landed organically through PR-feedback cycles.
+- **Sprint 4 (Wrap Engine Redesign)** is next per `SPRINT_PLAN.md` — the algorithm rework, RBF/TPS removal, and Quick Wrap / Fantasy Wrap preset cards. Open interstitial work between sprints: the four `/review-pr` blockers from the Sprint 3.6 review (CancelTransform Escape revert, `HeaderCallback` off-by-one, gizmo asset paths via `Paths::ExecutableDir()`, plaintext token-storage encryption gap), plus deferred Sprint 3.5 items (smoke-test fixture, CMake guard against Qt6::Gui/Widgets/OpenGL/OpenGLWidgets headers).
 - v2.0 transitions the product from open-source MIT to proprietary/closed-source.
 
 ---

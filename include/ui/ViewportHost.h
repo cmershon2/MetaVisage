@@ -27,7 +27,12 @@ public:
     // Called during ImGui frame build (between NewFrame and Render). Places
     // the fullscreen window + per-viewport InvisibleButton regions, captures
     // each viewport's pixel rect for the GL pass, and queues overlay draws.
-    void BuildLayout(int fbWidth, int fbHeight);
+    // When regionPos/regionSize are non-zero, restricts rendering to that
+    // screen-coord rect (used to cut the viewport out of a docked sidebar's
+    // region); otherwise falls back to the main viewport's WorkPos/WorkSize.
+    void BuildLayout(int fbWidth, int fbHeight,
+                     float regionX = 0.0f, float regionY = 0.0f,
+                     float regionW = 0.0f, float regionH = 0.0f);
 
     // Called after ImGui::Render and the framebuffer clear, before
     // ImGui_ImplOpenGL3_RenderDrawData. Runs the scissored 3D pass for each

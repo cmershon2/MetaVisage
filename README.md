@@ -5,12 +5,12 @@ An open-source desktop application for automated MetaHuman mesh morphing. Wrap M
 ## Features
 
 - **Four-stage workflow**: Alignment, Point Reference, Morph, Touch Up
-- **NRICP deformation**: Non-Rigid ICP algorithm for high-quality surface registration (plus RBF/TPS alternatives)
+- **Non-rigid surface registration** for high-quality mesh wrapping
 - **Sculpting tools**: Smooth, Grab, Push/Pull, and Inflate brushes for manual refinement
 - **Symmetry support**: Mirrored point placement and sculpting
 - **Blender-style controls**: Familiar orbit/pan/zoom camera and G/R/S transform shortcuts
 - **Multiple formats**: Import/export FBX, OBJ, and GLTF meshes
-- **Unreal Engine ready**: Exports preserve topology, UVs, normals, and material slots
+- **Unreal Engine ready**: Exports preserve topology, UVs, normals, and material slots — quad topology is preserved end-to-end for UE5 MetaHuman Conform compatibility
 - **Project management**: Save/load workflow state with full undo/redo support
 - **Included assets**: Ships with a MetaHuman head mesh (LOD0) ready to use
 
@@ -27,7 +27,7 @@ An open-source desktop application for automated MetaHuman mesh morphing. Wrap M
 - CMake 3.16+
 - C++17 compiler — MSVC 2019+ or MinGW
 - OpenGL 4.3+
-- vcpkg (recommended) for the following dependencies:
+- vcpkg for dependencies (manifest pinned in [vcpkg.json](vcpkg.json)):
   - GLFW3, Dear ImGui (with `glfw-binding` + `opengl3-binding`), GLEW
   - nlohmann/json, native-file-dialog-extended (NFD), libcurl
   - Assimp, Eigen3
@@ -66,9 +66,9 @@ See [BUILD.md](BUILD.md) for detailed instructions (MinGW, Qt Creator, vcpkg set
 
 1. **Alignment** - Load your MetaHuman head mesh and custom target mesh, then align them using move (G), rotate (R), and scale (S) tools
 2. **Point Reference** - Place corresponding landmark points on both meshes in synchronized dual viewports
-3. **Morph** - Run the NRICP deformation algorithm to automatically wrap the MetaHuman mesh to your target shape
+3. **Morph** - Run the deformation algorithm to automatically wrap the MetaHuman mesh to your target shape
 4. **Touch Up** - Refine the result with sculpting brushes (smooth, grab, push/pull, inflate)
-5. **Export** - Save the morphed mesh as FBX or OBJ, ready for Unreal Engine
+5. **Export** - Save the morphed mesh as FBX or OBJ, ready for Unreal Engine (quad topology preserved for MetaHuman Conform)
 
 ## Included Assets
 
@@ -78,12 +78,16 @@ A MetaHuman head mesh (LOD0) is included in `assets/models/MetaHumanHeadLod0.obj
 
 ```
 MetaVisage/
-├── assets/           # Shaders, models, icons
-├── docs/             # Documentation (PRD, sprint plan, known issues)
-├── include/          # Header files (core, deformation, rendering, sculpting, ui, io, utils)
-├── src/              # Source files (mirrors include/ structure)
-├── tests/            # Unit tests
+├── assets/           # Shaders, gizmo models, default MetaHuman head, app icons
+├── docs/             # Banner, KNOWN_ISSUES.md
+├── include/          # Public headers — baking/, core/, deformation/, io/,
+│                     # rendering/, sculpting/, thirdparty/, ui/, utils/
+├── src/              # Implementation (mirrors include/ structure) + main.cpp
+├── .claude/          # Sprint plans, retros, agents, hooks, skills (dev tooling)
 ├── CMakeLists.txt    # Build configuration
+├── vcpkg.json        # Pinned dependency manifest
+├── build-msvc.ps1    # MSVC build helper (use -Deploy to stage runtime DLLs)
+├── build-mingw.ps1   # MinGW build helper
 ├── BUILD.md          # Detailed build instructions
 ├── CONTRIBUTING.md   # Contribution guidelines
 └── LICENSE           # MIT License

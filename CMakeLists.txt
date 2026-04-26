@@ -109,10 +109,18 @@ set(CORE_SOURCES
     src/rendering/GizmoRenderer.cpp
     src/ui/Viewport.cpp
     src/ui/ViewportHost.cpp
+    src/ui/FileDialogs.cpp
+    src/ui/Modals.cpp
+    src/ui/StageSidebar.cpp
     src/utils/RayCaster.cpp
     src/utils/Logger.cpp
     src/utils/BVH.cpp
     src/utils/SpatialHash.cpp
+    src/utils/Paths.cpp
+    src/utils/Config.cpp
+    src/utils/OpenUrl.cpp
+    src/utils/SingleInstance.cpp
+    src/utils/HttpClient.cpp
     src/deformation/RBFInterpolator.cpp
     src/deformation/MeshDeformer.cpp
     src/deformation/NRICPDeformer.cpp
@@ -132,6 +140,9 @@ set(CORE_HEADERS
     include/ui/AppWindow.h
     include/ui/Viewport.h
     include/ui/ViewportHost.h
+    include/ui/FileDialogs.h
+    include/ui/Modals.h
+    include/ui/StageSidebar.h
     include/ui/MainWindow.h
     include/ui/ViewportWidget.h
     include/ui/ViewportContainer.h
@@ -154,6 +165,11 @@ set(CORE_HEADERS
     include/utils/Logger.h
     include/utils/BVH.h
     include/utils/SpatialHash.h
+    include/utils/Paths.h
+    include/utils/Config.h
+    include/utils/OpenUrl.h
+    include/utils/SingleInstance.h
+    include/utils/HttpClient.h
     include/deformation/RBFInterpolator.h
     include/deformation/MeshDeformer.h
     include/deformation/NRICPDeformer.h

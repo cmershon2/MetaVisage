@@ -109,7 +109,7 @@ public:
     void SetShowMask(bool show);
 
     // --- Target overlay (Touch Up) ---
-    void SetShowTargetOverlay(bool show) { showTargetOverlay_ = show; }
+    void SetShowTargetOverlay(bool show);
 
     // --- Input (stubs — Story 3.5.4 wires bodies) ---
     // All coordinates are viewport-local pixels (0..width, 0..height), Y-down
@@ -134,13 +134,38 @@ public:
 
 private:
     // Overlay drawing (ImGui draw list)
-    void DrawViewportLabelOverlay(float x, float y);
+    void DrawViewportLabelOverlay(float x, float y, float w, float h);
     void DrawOrientationGizmoOverlay(float x, float y, float w);
     void DrawPointLabelsOverlay(float x, float y, float w, float h);
     void DrawActiveBorderOverlay(float x, float y, float w, float h);
+    void DrawShadingModeOverlay(float x, float y, float w);
 
     bool IsGizmoVisible() const;
     Vector3 GetGizmoPosition() const;
+
+    // Stage 2 point-placement helpers (ported from Qt HandlePointClick).
+    PointSide GetViewportPointSide() const;
+    bool TrySelectExistingPoint(float screenX, float screenY);
+    void HandlePointClick(float screenX, float screenY);
+
+    // Stage 3 mask painting helpers (ported from Qt HandleMask*).
+    Mesh* GetMaskMesh();
+    Transform GetMaskTransform() const;
+    void HandleMaskPress(float screenX, float screenY);
+    void HandleMaskMove(float screenX, float screenY);
+    void HandleMaskRelease();
+    void UpdateMaskBrushCursor(float screenX, float screenY);
+
+    // Stage 4 sculpting helpers (ported from Qt HandleSculpt*).
+    SculptBrush* GetActiveBrush();
+    Mesh* GetSculptMesh();
+    Transform GetSculptTransform() const;
+    Vector3 ComputeWorldNormal(const Mesh& mesh, const Transform& transform,
+                               int vertexIndex) const;
+    void HandleSculptPress(float screenX, float screenY);
+    void HandleSculptMove(float screenX, float screenY);
+    void HandleSculptRelease();
+    void UpdateSculptBrushCursor(float screenX, float screenY);
 
     std::unique_ptr<Camera> camera_;
     std::unique_ptr<Renderer> renderer_;
