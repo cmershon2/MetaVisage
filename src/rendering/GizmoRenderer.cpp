@@ -1,4 +1,5 @@
 #include "rendering/GizmoRenderer.h"
+#include "utils/Paths.h"
 #include <QDebug>
 #include <cmath>
 #include <algorithm>
@@ -30,10 +31,15 @@ GizmoRenderer::~GizmoRenderer() {
 }
 
 bool GizmoRenderer::Initialize() {
+    // Resolve gizmo asset paths relative to the executable so installed builds
+    // (where CWD is not the project root) load assets correctly.
+    const std::string exeDir = Paths::ExecutableDir().toStdString();
+    const std::string base = exeDir.empty() ? std::string("assets/models/gizmos")
+                                            : exeDir + "/assets/models/gizmos";
     bool ok = true;
-    ok &= LoadGizmoModel("assets/models/gizmos/move_gizmo.obj", moveGizmo_);
-    ok &= LoadGizmoModel("assets/models/gizmos/rotate_gizmo.obj", rotateGizmo_);
-    ok &= LoadGizmoModel("assets/models/gizmos/scale_gizmo.obj", scaleGizmo_);
+    ok &= LoadGizmoModel(base + "/move_gizmo.obj", moveGizmo_);
+    ok &= LoadGizmoModel(base + "/rotate_gizmo.obj", rotateGizmo_);
+    ok &= LoadGizmoModel(base + "/scale_gizmo.obj", scaleGizmo_);
 
     if (ok) {
         initialized_ = true;

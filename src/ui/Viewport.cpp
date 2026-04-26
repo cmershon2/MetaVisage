@@ -82,7 +82,10 @@ void Viewport::CancelTransform() {
     isTransforming_ = false;
     activeGizmoAxis_ = GizmoAxis::None;
     axisConstraint_ = AxisConstraint::None;
-    // 3.5.4 restores transformBeforeState_ on the target mesh.
+    if (project_ && project_->GetTargetMesh().isLoaded) {
+        project_->GetTargetMesh().transform = transformBeforeState_;
+        if (OnTargetTransformChanged) OnTargetTransformChanged();
+    }
 }
 
 void Viewport::SetSelectedPointIndex(int index) {

@@ -30,10 +30,14 @@ size_t WriteCallback(char* ptr, size_t size, size_t nmemb, void* userdata) {
 size_t HeaderCallback(char* buffer, size_t size, size_t nitems, void* userdata) {
     const size_t total = size * nitems;
     auto* response = static_cast<HttpResponse*>(userdata);
-    const std::string line(buffer, total);
-    const char* prefix = "Retry-After:";
-    if (line.size() > 13 && _strnicmp(line.c_str(), prefix, 12) == 0) {
-        response->retryAfterSeconds = std::strtol(line.c_str() + 12, nullptr, 10);
+    constexpr const char* kPrefix = "Retry-After:";
+    constexpr size_t kPrefixLen = 12;
+    // Need at least one char after the colon. Some curl builds strip the
+    // trailing CRLF and others don't, so we parse from the prefix end and let
+    // strtol stop at the first non-digit (space, '\r', '\n', or end-of-buffer).
+    if (total > kPrefixLen && _strnicmp(buffer, kPrefix, kPrefixLen) == 0) {
+        const std::string value(buffer + kPrefixLen, total - kPrefixLen);
+        response->retryAfterSeconds = std::strtol(value.c_str(), nullptr, 10);
     }
     return total;
 }
