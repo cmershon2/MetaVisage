@@ -164,19 +164,43 @@ void StageSidebar::RenderAlignment(Project& project, Actions& out) {
     // copy that's only used by the serializer round-trip; writing there alone
     // would leave the on-screen mesh unchanged.
     Transform& xform = project.GetTargetMesh().transform;
+    // Helper: capture-on-activate / emit-on-deactivate so each spinbox drag
+    // produces one undo action per gesture, not one per frame. Only the most
+    // recent activation's pre-state is held — fine because ImGui only allows a
+    // single active widget at a time.
+    auto captureBefore = [&]() {
+        if (ImGui::IsItemActivated()) transformEditCapture_ = xform;
+    };
+    auto emitOnEditEnd = [&]() {
+        if (ImGui::IsItemDeactivatedAfterEdit()) {
+            out.transformEditCompleted = true;
+            out.transformEditBefore = transformEditCapture_;
+            out.transformEditAfter  = xform;
+        }
+    };
+
     float pos[3] = { xform.GetPosition().x, xform.GetPosition().y, xform.GetPosition().z };
     if (ImGui::DragFloat3("Position", pos, 0.01f)) {
         xform.SetPosition(Vector3(pos[0], pos[1], pos[2]));
     }
+    captureBefore();
+    emitOnEditEnd();
+
     Vector3 euler = xform.GetEulerAngles();
     float rot[3] = { euler.x, euler.y, euler.z };
     if (ImGui::DragFloat3("Rotation", rot, 0.5f, -360.0f, 360.0f)) {
         xform.SetRotationFromEuler(rot[0], rot[1], rot[2]);
     }
+    captureBefore();
+    emitOnEditEnd();
+
     float scl[3] = { xform.GetScale().x, xform.GetScale().y, xform.GetScale().z };
     if (ImGui::DragFloat3("Scale", scl, 0.01f, 0.001f, 1000.0f)) {
         xform.SetScale(Vector3(scl[0], scl[1], scl[2]));
     }
+    captureBefore();
+    emitOnEditEnd();
+
     if (ImGui::Button("Reset Transform")) out.resetTransformRequested = true;
 
 }

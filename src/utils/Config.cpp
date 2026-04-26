@@ -1,6 +1,7 @@
 #include "utils/Config.h"
 #include "utils/Paths.h"
 #include "utils/Logger.h"
+#include "utils/SecureStorage.h"
 
 #include <nlohmann/json.hpp>
 
@@ -21,6 +22,24 @@ std::optional<std::string> ReadOptString(const json& j, const char* key) {
     auto it = j.find(key);
     if (it == j.end() || !it->is_string()) return std::nullopt;
     return it->get<std::string>();
+}
+
+// Read an encrypted-string value. Falls back to plaintext for one-time
+// migration of pre-encryption configs (existing dev installs); returns
+// std::nullopt if the value is missing, fails to decrypt, AND is not
+// recognizable plaintext. Forces re-auth on failure rather than throwing —
+// the auth-flow recovery path is well-trodden and safer than guessing.
+std::optional<std::string> ReadEncryptedString(const json& j, const char* key) {
+    auto raw = ReadOptString(j, key);
+    if (!raw) return std::nullopt;
+    if (auto decrypted = SecureStorage::DecryptString(*raw)) {
+        return decrypted;
+    }
+    // Legacy plaintext migration: tokens look like JWTs (start with "eyJ") or
+    // Supabase access tokens (start with "ey"); any other shape we treat as
+    // bogus and drop. The next Save() re-encrypts whatever we surface here.
+    if (raw->size() > 4 && (*raw)[0] == 'e' && (*raw)[1] == 'y') return raw;
+    return std::nullopt;
 }
 
 } // namespace
@@ -69,11 +88,11 @@ void Config::Load() {
     }
 
     if (auto it = j.find("auth"); it != j.end() && it->is_object()) {
-        accessToken_ = ReadOptString(*it, "access_token");
-        refreshToken_ = ReadOptString(*it, "refresh_token");
+        accessToken_ = ReadEncryptedString(*it, "access_token");
+        refreshToken_ = ReadEncryptedString(*it, "refresh_token");
     }
 
-    licenseJwt_ = ReadOptString(j, "license_jwt");
+    licenseJwt_ = ReadEncryptedString(j, "license_jwt");
 }
 
 void Config::Save() const {
@@ -90,13 +109,22 @@ void Config::Save() const {
     for (const auto& p : recentProjects_) recent.push_back(p);
     j["recent_projects"] = std::move(recent);
 
+    // Encrypt tokens with DPAPI before they touch disk. On encryption failure
+    // we drop the value rather than persisting plaintext — the user re-auths
+    // on next launch via the browser flow.
     if (accessToken_ || refreshToken_) {
         json auth = json::object();
-        if (accessToken_) auth["access_token"] = *accessToken_;
-        if (refreshToken_) auth["refresh_token"] = *refreshToken_;
-        j["auth"] = std::move(auth);
+        if (accessToken_) {
+            if (auto enc = SecureStorage::EncryptString(*accessToken_)) auth["access_token"] = *enc;
+        }
+        if (refreshToken_) {
+            if (auto enc = SecureStorage::EncryptString(*refreshToken_)) auth["refresh_token"] = *enc;
+        }
+        if (!auth.empty()) j["auth"] = std::move(auth);
     }
-    if (licenseJwt_) j["license_jwt"] = *licenseJwt_;
+    if (licenseJwt_) {
+        if (auto enc = SecureStorage::EncryptString(*licenseJwt_)) j["license_jwt"] = *enc;
+    }
 
     std::ofstream out(path);
     if (!out.is_open()) {

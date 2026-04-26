@@ -1,6 +1,8 @@
 #ifndef METAVISAGE_UI_STAGESIDEBAR_H
 #define METAVISAGE_UI_STAGESIDEBAR_H
 
+#include "core/Transform.h"
+
 #include <string>
 
 namespace MetaVisage {
@@ -41,6 +43,13 @@ public:
         bool maskShow           = false;
         bool maskEraseMode      = false;
         float maskBrushRadius   = 10.0f;
+
+        // Stage 1 transform-spinbox edit-end signal. Set when the user finishes
+        // a Position/Rotation/Scale drag (one undo action per gesture, not per
+        // frame). AppWindow pushes a TransformUndoAction with these values.
+        bool transformEditCompleted = false;
+        Transform transformEditBefore;
+        Transform transformEditAfter;
     };
 
     // Render docked panel titled "Stage". Returns the actions requested this
@@ -61,6 +70,10 @@ private:
     bool maskShowMask_       = true;
     bool maskEraseMode_      = false;
     float maskBrushRadius_   = 10.0f;
+
+    // Captured target-mesh transform on the frame a Stage 1 spinbox is first
+    // activated, so we can emit a (before, after) pair on edit-end.
+    Transform transformEditCapture_;
 };
 
 } // namespace MetaVisage

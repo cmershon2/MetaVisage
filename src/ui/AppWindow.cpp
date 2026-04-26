@@ -6,6 +6,7 @@
 #include "core/Mesh.h"
 #include "core/Project.h"
 #include "core/TextureData.h"
+#include "core/UndoActions.h"
 #include "core/UndoStack.h"
 #include "core/Types.h"
 #include "deformation/MeshDeformer.h"
@@ -191,6 +192,11 @@ bool AppWindow::Initialize(int width, int height, const char* title) {
         auto& data = project_->GetPointReferenceData();
         auto& correspondences = data.correspondences;
 
+        // Snapshot for undo before mutation. The whole correspondences vector
+        // is small (typically <50 entries), so a copy is cheaper than tracking
+        // diffs across the symmetry-fuse / pair-creation paths below.
+        const std::vector<PointCorrespondence> beforeSnapshot = correspondences;
+
         int nextID = 1;
         for (const auto& c : correspondences) {
             if (c.pointID >= nextID) nextID = c.pointID + 1;
@@ -294,6 +300,13 @@ bool AppWindow::Initialize(int width, int height, const char* title) {
                 }
             }
         }
+
+        // Point placement always mutates (appends or fuses), so push without a
+        // before/after equality check (PointCorrespondence has no operator==).
+        if (undoStack_) {
+            undoStack_->Push(std::make_unique<PointPlacementUndoAction>(
+                project_.get(), beforeSnapshot, correspondences, "Place Point"));
+        }
     };
 
     // Stage 2 delete: Delete key on the active viewport fires this. Removes
@@ -311,6 +324,8 @@ bool AppWindow::Initialize(int width, int height, const char* title) {
         auto& correspondences = project_->GetPointReferenceData().correspondences;
         if (selected >= static_cast<int>(correspondences.size())) return;
 
+        const std::vector<PointCorrespondence> beforeSnapshot = correspondences;
+
         int pairID = -1;
         if (correspondences[selected].isSymmetric) {
             pairID = correspondences[selected].symmetricPairID;
@@ -322,15 +337,32 @@ bool AppWindow::Initialize(int width, int height, const char* title) {
             }
         }
         viewportHost_->SetSelectedPointIndex(-1);
+
+        if (undoStack_) {
+            undoStack_->Push(std::make_unique<PointPlacementUndoAction>(
+                project_.get(), beforeSnapshot, correspondences, "Delete Point"));
+        }
+    };
+
+    // Stage 1 gizmo drag: Viewport fires OnTransformApplied on LMB release with
+    // (before, after) target-mesh transforms. Pushing a TransformUndoAction here
+    // makes Ctrl+Z reverse the drag in one step, matching v1.0 behaviour.
+    auto onTransformApplied = [this](Transform before, Transform after) {
+        if (undoStack_ && project_) {
+            undoStack_->Push(std::make_unique<TransformUndoAction>(
+                project_.get(), before, after));
+        }
     };
 
     if (auto* left = viewportHost_->GetPrimaryViewport()) {
         left->OnPointPlaced          = onPointPlaced;
         left->OnPointDeleteRequested = onPointDelete;
+        left->OnTransformApplied     = onTransformApplied;
     }
     if (auto* right = viewportHost_->GetSecondaryViewport()) {
         right->OnPointPlaced          = onPointPlaced;
         right->OnPointDeleteRequested = onPointDelete;
+        right->OnTransformApplied     = onTransformApplied;
     }
 
     glfwSetWindowUserPointer(window_, this);
@@ -489,8 +521,20 @@ void AppWindow::Run() {
             if (actions.useDefaultMorphMeshRequested) UseDefaultMorphMesh();
             if (!actions.importTextureSlot.empty()) ImportTextureForSlot(actions.importTextureSlot);
             if (actions.resetTransformRequested && project_) {
+                if (undoStack_) {
+                    undoStack_->Push(std::make_unique<TransformUndoAction>(
+                        project_.get(),
+                        project_->GetTargetMesh().transform,
+                        Transform()));
+                }
                 project_->GetTargetMesh().transform = Transform();
                 project_->GetAlignmentData().targetMeshTransform = Transform();
+            }
+            if (actions.transformEditCompleted && project_ && undoStack_) {
+                undoStack_->Push(std::make_unique<TransformUndoAction>(
+                    project_.get(),
+                    actions.transformEditBefore,
+                    actions.transformEditAfter));
             }
             if (actions.clearAllPointsRequested && project_) {
                 project_->GetPointReferenceData().correspondences.clear();
