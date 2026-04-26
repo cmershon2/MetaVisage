@@ -213,6 +213,14 @@ void Viewport::SetShowMask(bool show) {
     if (renderer_) renderer_->SetShowMask(show);
 }
 
+void Viewport::SetShowTargetOverlay(bool show) {
+    showTargetOverlay_ = show;
+    // The renderer owns the actual overlay state; without forwarding the
+    // checkbox in StageSidebar would just toggle a local bool that nothing
+    // reads, which is what users hit before.
+    if (renderer_) renderer_->SetShowTargetOverlay(show);
+}
+
 // --- Input (Story 3.5.4) ---
 // Coordinates arrive in viewport-local screen-coord pixels. Sculpt/mask/point
 // LMB handlers and gizmo drag are deferred to Sprint 3.6 — they early-return
@@ -374,6 +382,22 @@ void Viewport::OnMouseMove(float x, float y) {
             default: break;
         }
         if (OnTargetTransformChanged) OnTargetTransformChanged();
+    }
+
+    // Stage 1 gizmo hover. axisConstraint_ is set on PRESS from the hovered
+    // axis, so the hover hit test must run on every move while the user has
+    // a transform mode active — otherwise hoveredGizmoAxis_ is always None
+    // and Move/Rotate/Scale never constrain to a single axis.
+    if (!isTransforming_ && IsGizmoVisible() && renderer_) {
+        const int vpW = static_cast<int>(std::ceil(lastW_));
+        const int vpH = static_cast<int>(std::ceil(lastH_));
+        if (vpW > 0 && vpH > 0) {
+            Ray ray = RayCaster::ScreenToRay(x, y, vpW, vpH, *camera_);
+            hoveredGizmoAxis_ = renderer_->GizmoHitTest(
+                transformMode_, GetGizmoPosition(), ray, *camera_, vpW, vpH);
+        }
+    } else if (!isTransforming_) {
+        hoveredGizmoAxis_ = GizmoAxis::None;
     }
 
     // Stage-specific brush cursor / stroke handling. The renderer draws the
@@ -713,16 +737,29 @@ void Viewport::DrawOrientationGizmoOverlay(float x, float y, float w) {
     ImFont* font = ImGui::GetFont();
     float fontSize = ImGui::GetFontSize();
 
-    for (const auto& axis : axes) {
-        float cx = vp.m[0]*axis.tip.x + vp.m[4]*axis.tip.y + vp.m[8]*axis.tip.z  + vp.m[12];
-        float cy = vp.m[1]*axis.tip.x + vp.m[5]*axis.tip.y + vp.m[9]*axis.tip.z  + vp.m[13];
-        float cw = vp.m[3]*axis.tip.x + vp.m[7]*axis.tip.y + vp.m[11]*axis.tip.z + vp.m[15];
-        if (std::abs(cw) < 0.0001f) continue;
+    // Project the origin once — every axis line starts here.
+    auto projectToScreen = [&](const Vector3& p, ImVec2& out) -> bool {
+        float cx = vp.m[0]*p.x + vp.m[4]*p.y + vp.m[8]*p.z  + vp.m[12];
+        float cy = vp.m[1]*p.x + vp.m[5]*p.y + vp.m[9]*p.z  + vp.m[13];
+        float cw = vp.m[3]*p.x + vp.m[7]*p.y + vp.m[11]*p.z + vp.m[15];
+        if (std::abs(cw) < 0.0001f) return false;
         float ndcX = cx / cw;
         float ndcY = cy / cw;
-        float sx = gx + (ndcX * 0.5f + 0.5f) * gizmoSize;
-        float sy = gy + (1.0f - (ndcY * 0.5f + 0.5f)) * gizmoSize;
-        dl->AddText(font, fontSize, ImVec2(sx - 4.0f, sy - fontSize * 0.5f),
+        out.x = gx + (ndcX * 0.5f + 0.5f) * gizmoSize;
+        out.y = gy + (1.0f - (ndcY * 0.5f + 0.5f)) * gizmoSize;
+        return true;
+    };
+
+    ImVec2 originScreen;
+    if (!projectToScreen(Vector3(0, 0, 0), originScreen)) return;
+
+    for (const auto& axis : axes) {
+        ImVec2 tipScreen;
+        if (!projectToScreen(axis.tip, tipScreen)) continue;
+        dl->AddLine(originScreen, tipScreen, axis.color, 2.0f);
+        dl->AddCircleFilled(tipScreen, 3.0f, axis.color);
+        dl->AddText(font, fontSize,
+                    ImVec2(tipScreen.x - 4.0f, tipScreen.y - fontSize * 0.5f - 10.0f),
                     axis.color, axis.label);
     }
 }

@@ -109,7 +109,7 @@ public:
     void SetShowMask(bool show);
 
     // --- Target overlay (Touch Up) ---
-    void SetShowTargetOverlay(bool show) { showTargetOverlay_ = show; }
+    void SetShowTargetOverlay(bool show);
 
     // --- Input (stubs — Story 3.5.4 wires bodies) ---
     // All coordinates are viewport-local pixels (0..width, 0..height), Y-down

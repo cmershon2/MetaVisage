@@ -288,7 +288,10 @@ void StageSidebar::RenderMorph(Project& project, bool processing, float progress
         ImGui::Text("Max displacement: %.3f", morph.maxDisplacement);
         ImGui::Text("Avg displacement: %.3f", morph.avgDisplacement);
 
-        static int previewIdx = static_cast<int>(MorphPreviewMode::Deformed);
+        // Drive directly off morph.previewMode rather than a static — the
+        // value is also restored from disk on project load, and a static
+        // would keep showing whatever the user last picked in this session.
+        int previewIdx = static_cast<int>(morph.previewMode);
         const char* modes[] = {"Deformed", "Original", "Overlay", "Heat Map"};
         if (ImGui::Combo("Preview", &previewIdx, modes, 4)) {
             morph.previewMode = static_cast<MorphPreviewMode>(previewIdx);

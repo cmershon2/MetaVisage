@@ -494,6 +494,11 @@ void AppWindow::Run() {
                     vp->SetMaskEraseMode(actions.maskEraseMode);
                     if (inMorph) {
                         vp->SetMaskData(&project_->GetMorphData().vertexMask);
+                        // Push the preview-mode combo selection through to the
+                        // renderer. The sidebar writes MorphData::previewMode
+                        // directly; without this mirror call the dropdown
+                        // updates state but never rebinds the renderer.
+                        vp->SetMorphPreviewMode(project_->GetMorphData().previewMode);
                     }
                 }
             }
@@ -677,15 +682,11 @@ void AppWindow::RenderMainMenuBar() {
         if (ImGui::MenuItem("Save Project", "Ctrl+S")) pendingAction_ = PendingAction::SaveProject;
         if (ImGui::MenuItem("Save Project As...", "Ctrl+Shift+S")) pendingAction_ = PendingAction::SaveProjectAs;
         ImGui::Separator();
-        if (ImGui::MenuItem("Import Morph Mesh...")) pendingAction_ = PendingAction::ImportMorphMesh;
-        if (ImGui::MenuItem("Import Target Mesh...")) pendingAction_ = PendingAction::ImportTargetMesh;
-        ImGui::Separator();
-        // Export is stage-gated — visible only in Touch Up, matching the
-        // Qt build's behaviour from Sprint 1.2.
-        ImGui::BeginDisabled(!inTouchUp);
-        if (ImGui::MenuItem("Export Mesh...", "Ctrl+E")) pendingAction_ = PendingAction::ExportMesh;
-        ImGui::EndDisabled();
-        ImGui::Separator();
+        // Import Morph Mesh / Import Target Mesh / Export Mesh are stage-gated
+        // workflows — the sidebar surfaces them in the stages where they make
+        // sense (Stage 1 for imports, Stage 4 for export). Mirroring them in
+        // the File menu duplicated entry points and confused users about when
+        // they apply, so the menu entries were removed.
         if (ImGui::MenuItem("Exit", "Alt+F4")) OnFileExit();
         ImGui::EndMenu();
     }
@@ -701,16 +702,10 @@ void AppWindow::RenderMainMenuBar() {
     }
 
     if (ImGui::BeginMenu("View")) {
-        // Shading mode, grid toggle, and camera view presets are stubbed for
-        // 3.6.1. They wire into ViewportHost / Viewport APIs in 3.6.5 and the
-        // follow-up sprint polish pass.
-        if (ImGui::BeginMenu("Shading Mode")) {
-            ImGui::MenuItem("Solid", nullptr, false, false);
-            ImGui::MenuItem("Wireframe", nullptr, false, false);
-            ImGui::MenuItem("Solid + Wireframe", nullptr, false, false);
-            ImGui::MenuItem("Textured", nullptr, false, false);
-            ImGui::EndMenu();
-        }
+        // Shading mode lives on the viewport overlay (top-right combo) where
+        // it's adjusted directly while looking at the model — duplicating it
+        // in the menu just gave users two places to set the same thing.
+        // Grid toggle and camera-view presets remain stubbed for 3.6.5.
         ImGui::MenuItem("Show Grid", nullptr, false, false);
         ImGui::Separator();
         ImGui::MenuItem("Front View (Numpad 1)", nullptr, false, false);
@@ -963,8 +958,62 @@ void AppWindow::OpenProjectFromDisk(const QString& path) {
     project_ = std::move(fresh);
     projectPath_ = path;
     project_->SetPath(path);
+
+    // Reconstruct the deformed morph mesh from saved vertex/normal data —
+    // ProjectSerializer parks the arrays in MorphData::savedDeformed*; the
+    // actual `Mesh` object has to be assembled here so Stage 3/4 see a
+    // populated `deformedMorphMesh` and the viewport renders the morph.
+    MorphData& morphData = project_->GetMorphData();
+    if (morphData.hasDeformedData && morphData.isProcessed &&
+        project_->GetMorphMesh().isLoaded && project_->GetMorphMesh().mesh) {
+
+        morphData.originalMorphMesh = project_->GetMorphMesh().mesh;
+
+        auto deformed = std::make_shared<Mesh>();
+        const Mesh& original = *project_->GetMorphMesh().mesh;
+        deformed->SetVertices(morphData.savedDeformedVertices);
+        deformed->SetNormals(morphData.savedDeformedNormals);
+        deformed->SetUVs(original.GetUVs());
+        deformed->SetFaces(original.GetFaces());
+        deformed->SetMaterials(original.GetMaterials());
+        deformed->SetName(original.GetName());
+
+        morphData.deformedMorphMesh = deformed;
+        morphData.savedDeformedVertices.clear();
+        morphData.savedDeformedNormals.clear();
+        morphData.hasDeformedData = false;
+    }
+
     if (undoStack_) undoStack_->Clear();
     if (viewportHost_) viewportHost_->SetProject(project_.get());
+
+    // Push the saved mask back onto the viewport so the heatmap reappears.
+    // Without this the painted mask survives in MorphData but never reaches
+    // the renderer until the user toggles Show Mask in the sidebar.
+    if (viewportHost_ && morphData.deformedMorphMesh &&
+        !morphData.vertexMask.empty()) {
+        if (Viewport* vp = viewportHost_->GetPrimaryViewport()) {
+            vp->SetMaskData(&morphData.vertexMask);
+            vp->UploadMaskColors(morphData.deformedMorphMesh.get(),
+                                 morphData.vertexMask);
+        }
+    }
+
+    // Aim the camera at whatever mesh is on screen so a freshly loaded
+    // project doesn't open with the model parked off-frame.
+    if (viewportHost_) {
+        const Mesh* focusMesh = morphData.deformedMorphMesh
+            ? morphData.deformedMorphMesh.get()
+            : (project_->GetMorphMesh().isLoaded ? project_->GetMorphMesh().mesh.get()
+                                                  : nullptr);
+        if (focusMesh) {
+            const BoundingBox& bounds = focusMesh->GetBounds();
+            if (Viewport* vp = viewportHost_->GetPrimaryViewport()) {
+                vp->GetCamera()->FocusOnBounds(bounds);
+            }
+        }
+    }
+
     ApplyStageViewportMode();
     Config::Instance().AddRecentProject(path);
     statusMessage_ = QString("Opened %1").arg(QFileInfo(path).fileName()).toStdString();
