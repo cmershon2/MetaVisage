@@ -4,6 +4,8 @@
 #include "utils/Logger.h"
 #include <algorithm>
 #include <cmath>
+#include <filesystem>
+#include <format>
 #include <numeric>
 #include <tuple>
 #include <unordered_map>
@@ -13,7 +15,6 @@
 #include <assimp/scene.h>
 #include <assimp/postprocess.h>
 #endif
-#include <QFileInfo>
 
 namespace MetaVisage {
 
@@ -23,35 +24,34 @@ Mesh::Mesh() : name_("Untitled"), filepath_("") {
 Mesh::~Mesh() {
 }
 
-bool Mesh::Load(const QString& filepath) {
+bool Mesh::Load(const std::string& filepath) {
     Clear();
     filepath_ = filepath;
 
 #ifdef HAVE_ASSIMP
     Assimp::Importer importer;
     const aiScene* scene = importer.ReadFile(
-        filepath.toStdString(),
+        filepath,
         aiProcess_JoinIdenticalVertices |
         aiProcess_GenSmoothNormals |
         aiProcess_FlipUVs
     );
 
     if (!scene || scene->mFlags & AI_SCENE_FLAGS_INCOMPLETE || !scene->mRootNode) {
-        MV_LOG_ERROR(QString("Assimp error loading '%1': %2").arg(filepath, importer.GetErrorString()));
+        MV_LOG_ERROR(std::format("Assimp error loading '{}': {}", filepath, importer.GetErrorString()));
         return false;
     }
 
     // For simplicity, load only the first mesh
     if (scene->mNumMeshes == 0) {
-        MV_LOG_WARNING(QString("No meshes found in file: %1").arg(filepath));
+        MV_LOG_WARNING(std::format("No meshes found in file: {}", filepath));
         return false;
     }
 
     aiMesh* mesh = scene->mMeshes[0];
-    name_ = QString::fromStdString(mesh->mName.C_Str());
-    if (name_.isEmpty()) {
-        QFileInfo fileInfo(filepath);
-        name_ = fileInfo.baseName();
+    name_ = mesh->mName.C_Str();
+    if (name_.empty()) {
+        name_ = std::filesystem::path(filepath).stem().string();
     }
 
     // Load vertices
@@ -131,9 +131,9 @@ bool Mesh::Load(const QString& filepath) {
 
     CalculateBounds();
 
-    MV_LOG_INFO(QString("Loaded mesh '%1': %2 vertices, %3 faces, %4 normals, %5 UVs, %6 materials")
-        .arg(name_).arg(vertices_.size()).arg(faces_.size())
-        .arg(normals_.size()).arg(uvs_.size()).arg(materials_.size()));
+    MV_LOG_INFO(std::format("Loaded mesh '{}': {} vertices, {} faces, {} normals, {} UVs, {} materials",
+        name_, vertices_.size(), faces_.size(),
+        normals_.size(), uvs_.size(), materials_.size()));
 
     // --- Post-import: Merge vertices split at UV seams ---
     // Assimp creates separate vertices for each unique (position, normal, UV) combination.
@@ -227,8 +227,8 @@ bool Mesh::Load(const QString& filepath) {
                 }
             }
 
-            MV_LOG_INFO(QString("Mesh '%1': Merged %2 UV-seam vertices (%3 -> %4 vertices)")
-                .arg(name_).arg(mergeCount).arg(vCount).arg(mergedVertices.size()));
+            MV_LOG_INFO(std::format("Mesh '{}': Merged {} UV-seam vertices ({} -> {} vertices)",
+                name_, mergeCount, vCount, mergedVertices.size()));
 
             // Store mapping data for MetaHuman-compatible export (must be done before overwriting normals_)
             originalAssimpVertexCount_ = static_cast<size_t>(vCount);
@@ -248,12 +248,12 @@ bool Mesh::Load(const QString& filepath) {
 
     return Validate();
 #else
-    MV_LOG_WARNING(QString("Assimp not available - cannot load mesh: %1").arg(filepath));
+    MV_LOG_WARNING(std::format("Assimp not available - cannot load mesh: {}", filepath));
     return false;
 #endif
 }
 
-bool Mesh::Save(const QString& filepath) {
+bool Mesh::Save(const std::string& filepath) {
 #ifdef HAVE_ASSIMP
     Assimp::Exporter exporter;
 
@@ -269,7 +269,7 @@ bool Mesh::Save(const QString& filepath) {
     scene.mRootNode->mMeshes[0] = 0;
 
     aiMesh* outMesh = scene.mMeshes[0];
-    outMesh->mName = aiString(name_.toStdString());
+    outMesh->mName = aiString(name_);
 
     outMesh->mNumVertices = static_cast<unsigned int>(vertices_.size());
     outMesh->mVertices = new aiVector3D[outMesh->mNumVertices];
@@ -308,20 +308,23 @@ bool Mesh::Save(const QString& filepath) {
     scene.mMaterials[0] = new aiMaterial();
     outMesh->mMaterialIndex = 0;
 
+    std::string ext = std::filesystem::path(filepath).extension().string();
+    std::transform(ext.begin(), ext.end(), ext.begin(),
+                   [](unsigned char c) { return std::tolower(c); });
     std::string formatId = "fbx";
-    if (filepath.endsWith(".obj", Qt::CaseInsensitive)) formatId = "obj";
-    else if (filepath.endsWith(".gltf", Qt::CaseInsensitive)) formatId = "gltf2";
+    if (ext == ".obj") formatId = "obj";
+    else if (ext == ".gltf") formatId = "gltf2";
 
-    aiReturn ret = exporter.Export(&scene, formatId, filepath.toStdString());
+    aiReturn ret = exporter.Export(&scene, formatId, filepath);
     if (ret != aiReturn_SUCCESS) {
-        MV_LOG_ERROR(QString("Mesh save failed: %1").arg(exporter.GetErrorString()));
+        MV_LOG_ERROR(std::format("Mesh save failed: {}", exporter.GetErrorString()));
         return false;
     }
 
-    MV_LOG_INFO(QString("Mesh saved to: %1").arg(filepath));
+    MV_LOG_INFO(std::format("Mesh saved to: {}", filepath));
     return true;
 #else
-    Q_UNUSED(filepath);
+    (void)filepath;
     MV_LOG_WARNING("Assimp not available - cannot save mesh");
     return false;
 #endif
@@ -433,13 +436,13 @@ bool Mesh::Validate() const {
     for (size_t fi = 0; fi < faces_.size(); ++fi) {
         const auto& face = faces_[fi];
         if (face.vertexIndices.size() < 3) {
-            MV_LOG_WARNING(QString("Mesh validation: face %1 has fewer than 3 vertices").arg(fi));
+            MV_LOG_WARNING(std::format("Mesh validation: face {} has fewer than 3 vertices", fi));
             return false;
         }
         for (unsigned int idx : face.vertexIndices) {
             if (idx >= vertices_.size()) {
-                MV_LOG_WARNING(QString("Mesh validation: face %1 has out-of-bounds vertex index %2 (max %3)")
-                    .arg(fi).arg(idx).arg(vertices_.size() - 1));
+                MV_LOG_WARNING(std::format("Mesh validation: face {} has out-of-bounds vertex index {} (max {})",
+                    fi, idx, vertices_.size() - 1));
                 return false;
             }
         }
@@ -447,8 +450,8 @@ bool Mesh::Validate() const {
 
     // Check normals match vertices if present
     if (!normals_.empty() && normals_.size() != vertices_.size()) {
-        MV_LOG_WARNING(QString("Mesh validation: normal count (%1) doesn't match vertex count (%2)")
-            .arg(normals_.size()).arg(vertices_.size()));
+        MV_LOG_WARNING(std::format("Mesh validation: normal count ({}) doesn't match vertex count ({})",
+            normals_.size(), vertices_.size()));
         return false;
     }
 

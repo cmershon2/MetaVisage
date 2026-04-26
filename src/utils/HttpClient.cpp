@@ -5,6 +5,7 @@
 
 #include <atomic>
 #include <cstdlib>
+#include <format>
 #include <mutex>
 
 namespace MetaVisage {
@@ -42,7 +43,7 @@ size_t HeaderCallback(char* buffer, size_t size, size_t nitems, void* userdata) 
     return total;
 }
 
-HttpResponse Execute(const QString& url,
+HttpResponse Execute(const std::string& url,
                      const std::string& body,
                      const std::map<std::string, std::string>& headers,
                      bool isPost) {
@@ -55,8 +56,7 @@ HttpResponse Execute(const QString& url,
         return response;
     }
 
-    const std::string urlUtf8 = url.toUtf8().toStdString();
-    curl_easy_setopt(curl, CURLOPT_URL, urlUtf8.c_str());
+    curl_easy_setopt(curl, CURLOPT_URL, url.c_str());
     curl_easy_setopt(curl, CURLOPT_WRITEFUNCTION, WriteCallback);
     curl_easy_setopt(curl, CURLOPT_WRITEDATA, &response.body);
     curl_easy_setopt(curl, CURLOPT_HEADERFUNCTION, HeaderCallback);
@@ -81,7 +81,7 @@ HttpResponse Execute(const QString& url,
     const CURLcode rc = curl_easy_perform(curl);
     if (rc != CURLE_OK) {
         response.errorMessage = curl_easy_strerror(rc);
-        MV_LOG_WARNING(QString("HttpClient: %1 -> %2").arg(url, response.errorMessage.c_str()));
+        MV_LOG_WARNING(std::format("HttpClient: {} -> {}", url, response.errorMessage));
     } else {
         long code = 0;
         curl_easy_getinfo(curl, CURLINFO_RESPONSE_CODE, &code);
@@ -98,7 +98,7 @@ HttpResponse Execute(const QString& url,
 HttpClient::HttpClient() { EnsureGlobalInit(); }
 HttpClient::~HttpClient() = default;
 
-HttpResponse HttpClient::PostJson(const QString& url,
+HttpResponse HttpClient::PostJson(const std::string& url,
                                   const std::string& jsonBody,
                                   const std::map<std::string, std::string>& headers) const {
     auto full = headers;
@@ -107,18 +107,18 @@ HttpResponse HttpClient::PostJson(const QString& url,
     return Execute(url, jsonBody, full, /*isPost=*/true);
 }
 
-HttpResponse HttpClient::PostJsonBearer(const QString& url,
+HttpResponse HttpClient::PostJsonBearer(const std::string& url,
                                         const std::string& jsonBody,
-                                        const QString& bearerToken) const {
+                                        const std::string& bearerToken) const {
     std::map<std::string, std::string> headers;
-    headers["Authorization"] = std::string("Bearer ") + bearerToken.toUtf8().toStdString();
+    headers["Authorization"] = "Bearer " + bearerToken;
     return PostJson(url, jsonBody, headers);
 }
 
-HttpResponse HttpClient::GetJsonBearer(const QString& url,
-                                       const QString& bearerToken) const {
+HttpResponse HttpClient::GetJsonBearer(const std::string& url,
+                                       const std::string& bearerToken) const {
     std::map<std::string, std::string> headers;
-    headers["Authorization"] = std::string("Bearer ") + bearerToken.toUtf8().toStdString();
+    headers["Authorization"] = "Bearer " + bearerToken;
     headers["Accept"] = "application/json";
     return Execute(url, /*body=*/{}, headers, /*isPost=*/false);
 }

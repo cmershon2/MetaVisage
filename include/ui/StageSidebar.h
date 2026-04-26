@@ -1,7 +1,7 @@
 #ifndef METAVISAGE_UI_STAGESIDEBAR_H
 #define METAVISAGE_UI_STAGESIDEBAR_H
 
-#include <QString>
+#include <string>
 
 namespace MetaVisage {
 
@@ -31,7 +31,7 @@ public:
         bool useDefaultMorphMeshRequested = false;
         // When non-empty, AppWindow opens an NFD picker, loads the texture,
         // and adds it to Project::GetTargetTextures() under this slot name.
-        QString importTextureSlot;
+        std::string importTextureSlot;
 
         // Stage 3 mask-painting push state — the sidebar is the source of
         // truth for these UI-only toggles; AppWindow mirrors them onto the

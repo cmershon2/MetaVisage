@@ -1,7 +1,8 @@
 #include "deformation/RBFInterpolator.h"
-#include <QDebug>
-#include <cmath>
+#include "utils/Logger.h"
 #include <algorithm>
+#include <cmath>
+#include <format>
 #include <numeric>
 
 namespace MetaVisage {
@@ -109,12 +110,12 @@ bool RBFInterpolator::Solve() {
     const int N = static_cast<int>(sourcePoints_.size());
 
     if (N == 0) {
-        qWarning() << "RBFInterpolator: No control points set";
+        MV_LOG_WARNING("RBFInterpolator: No control points set");
         return false;
     }
 
     if (sourcePoints_.size() != targetPoints_.size()) {
-        qWarning() << "RBFInterpolator: Source and target point counts don't match";
+        MV_LOG_WARNING("RBFInterpolator: Source and target point counts don't match");
         return false;
     }
 
@@ -204,14 +205,14 @@ bool RBFInterpolator::Solve() {
 
     if (!solver.isInvertible() && stiffness_ < 0.01f) {
         // If system is singular without regularization, add minimal regularization
-        qDebug() << "RBFInterpolator: System near-singular, adding minimal regularization";
+        MV_LOG_DEBUG("RBFInterpolator: System near-singular, adding minimal regularization");
         for (int i = 0; i < N; ++i) {
             A(i, i) += 1e-6;
         }
         solver.compute(A);
 
         if (!solver.isInvertible()) {
-            qWarning() << "RBFInterpolator: System still singular after regularization";
+            MV_LOG_WARNING("RBFInterpolator: System still singular after regularization");
             return false;
         }
     }
@@ -226,14 +227,12 @@ bool RBFInterpolator::Solve() {
     double residualZ = (A * weightsZ_ - bz).norm();
     double totalResidual = residualX + residualY + residualZ;
 
-    qDebug() << "RBFInterpolator: System solved with residual:" << totalResidual;
-    qDebug() << "  Control points:" << N;
-    qDebug() << "  Kernel width:" << kernelWidth_;
-    qDebug() << "  Stiffness:" << stiffness_;
-    qDebug() << "  Smoothness:" << smoothness_;
+    MV_LOG_DEBUG(std::format(
+        "RBFInterpolator: System solved with residual: {} (controlPoints={}, kernelWidth={}, stiffness={}, smoothness={})",
+        totalResidual, N, kernelWidth_, stiffness_, smoothness_));
 
     if (std::isnan(totalResidual) || std::isinf(totalResidual)) {
-        qWarning() << "RBFInterpolator: Solution contains NaN or Inf values";
+        MV_LOG_WARNING("RBFInterpolator: Solution contains NaN or Inf values");
         return false;
     }
 

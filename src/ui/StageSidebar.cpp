@@ -4,8 +4,8 @@
 
 #include <imgui.h>
 
-#include <QFileInfo>
 #include <array>
+#include <filesystem>
 
 namespace MetaVisage {
 
@@ -35,9 +35,9 @@ const char* StageHint(WorkflowStage s) {
     return "";
 }
 
-QString FileNameOrEmpty(const QString& path) {
-    if (path.isEmpty()) return {};
-    return QFileInfo(path).fileName();
+std::string FileNameOrEmpty(const std::string& path) {
+    if (path.empty()) return {};
+    return std::filesystem::path(path).filename().string();
 }
 
 int AxisToIndex(Axis a) {
@@ -114,10 +114,10 @@ void StageSidebar::RenderAlignment(Project& project, Actions& out) {
     auto& target = project.GetTargetMesh();
 
     ImGui::TextUnformatted("Morph Mesh");
-    if (morph.filepath.isEmpty()) {
+    if (morph.filepath.empty()) {
         ImGui::TextDisabled("(not set)");
     } else {
-        ImGui::TextWrapped("%s", FileNameOrEmpty(morph.filepath).toUtf8().constData());
+        ImGui::TextWrapped("%s", FileNameOrEmpty(morph.filepath).c_str());
     }
     if (ImGui::Button("Import Morph Mesh...")) out.importMorphMeshRequested = true;
     ImGui::SameLine();
@@ -125,10 +125,10 @@ void StageSidebar::RenderAlignment(Project& project, Actions& out) {
 
     ImGui::Spacing();
     ImGui::TextUnformatted("Target Mesh");
-    if (target.filepath.isEmpty()) {
+    if (target.filepath.empty()) {
         ImGui::TextDisabled("(not set)");
     } else {
-        ImGui::TextWrapped("%s", FileNameOrEmpty(target.filepath).toUtf8().constData());
+        ImGui::TextWrapped("%s", FileNameOrEmpty(target.filepath).c_str());
     }
     if (ImGui::Button("Import Target Mesh...")) out.importTargetMeshRequested = true;
 
@@ -140,7 +140,7 @@ void StageSidebar::RenderAlignment(Project& project, Actions& out) {
         ImGui::TextDisabled("(no textures)");
     } else {
         for (const auto& t : textures.textures) {
-            ImGui::BulletText("%s", t.name.toUtf8().constData());
+            ImGui::BulletText("%s", t.name.c_str());
         }
     }
     static const char* kSlotNames[] = {
@@ -152,7 +152,7 @@ void StageSidebar::RenderAlignment(Project& project, Actions& out) {
     ImGui::PopItemWidth();
     ImGui::SameLine();
     if (ImGui::Button("+ Add Texture")) {
-        out.importTextureSlot = QString::fromUtf8(kSlotNames[sSelectedSlot]);
+        out.importTextureSlot = kSlotNames[sSelectedSlot];
     }
 
     ImGui::Spacing();

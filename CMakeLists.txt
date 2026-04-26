@@ -1,28 +1,12 @@
 cmake_minimum_required(VERSION 3.16)
 project(MetaVisage VERSION 2.0.0 LANGUAGES CXX)
 
-set(CMAKE_CXX_STANDARD 17)
+set(CMAKE_CXX_STANDARD 20)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 
-# Sprint 3.5 in progress — Qt Gui/Widgets/OpenGL/OpenGLWidgets are being removed
-# and replaced with GLFW + Dear ImGui. Qt6::Core remains transitionally (see
-# product_backlog.md → "Qt6Core removal"). AUTOMOC/AUTORCC/AUTOUIC were only
-# needed by the Qt Widgets-based UI layer and are no longer required.
-
-# Find Qt6 (Core only) - check common installation paths for pre-installed Qt
-# Build scripts (build-msvc.ps1 / build-mingw.ps1) pass CMAKE_PREFIX_PATH
-# explicitly. This fallback is only consulted when invoking cmake directly.
-if(NOT DEFINED CMAKE_PREFIX_PATH)
-    if(EXISTS "C:/Qt/6.10.3/msvc2022_64")
-        list(APPEND CMAKE_PREFIX_PATH "C:/Qt/6.10.3/msvc2022_64")
-    elseif(EXISTS "C:/Qt/6.10.3/mingw_64")
-        list(APPEND CMAKE_PREFIX_PATH "C:/Qt/6.10.3/mingw_64")
-    elseif(EXISTS "C:/Qt/6.10.1/msvc2022_64")
-        list(APPEND CMAKE_PREFIX_PATH "C:/Qt/6.10.1/msvc2022_64")
-    elseif(EXISTS "C:/Qt/6.10.1/mingw_64")
-        list(APPEND CMAKE_PREFIX_PATH "C:/Qt/6.10.1/mingw_64")
-    endif()
-endif()
+# Sprint 3.7 — Qt6 fully removed. The application is now self-hosted on
+# GLFW + Dear ImGui + standard C++ libraries (std::format, std::filesystem,
+# std::chrono, nlohmann::json). No Qt link or build dependency remains.
 
 # Output directories
 set(CMAKE_RUNTIME_OUTPUT_DIRECTORY ${CMAKE_BINARY_DIR}/bin)
@@ -32,10 +16,6 @@ set(CMAKE_ARCHIVE_OUTPUT_DIRECTORY ${CMAKE_BINARY_DIR}/lib)
 # ---------------------------------------------------------------------------
 # Dependencies
 # ---------------------------------------------------------------------------
-
-# Transitional: Qt6::Core remains for QString/QFile/QJson/QDateTime in
-# core/io/deformation/baking layers. Full removal tracked in product_backlog.md.
-find_package(Qt6 REQUIRED COMPONENTS Core)
 
 # OpenGL (system)
 find_package(OpenGL REQUIRED)
@@ -143,10 +123,6 @@ set(CORE_HEADERS
     include/ui/FileDialogs.h
     include/ui/Modals.h
     include/ui/StageSidebar.h
-    include/ui/MainWindow.h
-    include/ui/ViewportWidget.h
-    include/ui/ViewportContainer.h
-    include/ui/SidebarWidget.h
     include/core/Mesh.h
     include/core/Transform.h
     include/core/Project.h
@@ -186,10 +162,12 @@ set(CORE_HEADERS
     include/baking/TextureWriter.h
 )
 
-# NOTE: Remaining UI-layer headers (MainWindow, ViewportWidget,
-# ViewportContainer, SidebarWidget) are listed above for IDE visibility but
-# their .cpp files are intentionally absent from CORE_SOURCES — they compile
-# again in Story 3.5.3 (Viewport) and Sprint 3.6 (sidebars + dialogs).
+# NOTE: Sprint 3.6 retired the dead Qt-era UI files (MainWindow.cpp,
+# ViewportWidget.cpp, ViewportContainer.cpp, SidebarWidget.cpp, ExportDialog.cpp,
+# ShortcutsDialog.cpp, TexturePreviewDialog.cpp, WelcomeDialog.cpp,
+# ErrorHelper.cpp) and Sprint 3.7 dropped their headers from CORE_HEADERS too,
+# since they no longer compile after the Qt6::Core removal. They remain on disk
+# as historical reference until a follow-up purge.
 
 # Static library of engine + rendering translation units, consumed by the
 # executable target below.
@@ -214,7 +192,6 @@ target_link_libraries(${PROJECT_NAME}
 # ---------------------------------------------------------------------------
 target_link_libraries(${PROJECT_NAME}Core
     PUBLIC
-        Qt6::Core
         OpenGL::GL
         GLEW::GLEW
         glfw

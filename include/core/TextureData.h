@@ -2,11 +2,11 @@
 #define TEXTUREDATA_H
 
 #include "core/Types.h"
-#include <QString>
 #include <vector>
 #include <cstdint>
 #include <memory>
 #include <algorithm>
+#include <string>
 
 namespace MetaVisage {
 
@@ -17,7 +17,7 @@ public:
     ~TextureData();
 
     // Load an image from disk (PNG, TGA, JPG, BMP supported)
-    static std::shared_ptr<TextureData> LoadFromFile(const QString& path);
+    static std::shared_ptr<TextureData> LoadFromFile(const std::string& path);
 
     // Create an empty texture with given dimensions (RGBA, initialized to zero)
     static std::shared_ptr<TextureData> Create(int width, int height);
@@ -37,7 +37,7 @@ public:
     int GetHeight() const { return height_; }
     int GetChannels() const { return channels_; }
     bool IsLoaded() const { return !pixels_.empty() && width_ > 0 && height_ > 0; }
-    const QString& GetFilePath() const { return filePath_; }
+    const std::string& GetFilePath() const { return filePath_; }
     const std::vector<uint8_t>& GetPixels() const { return pixels_; }
     std::vector<uint8_t>& GetPixels() { return pixels_; }
 
@@ -46,7 +46,7 @@ private:
     int width_;
     int height_;
     int channels_;                 // Always stored as 4 (RGBA) internally
-    QString filePath_;
+    std::string filePath_;
 
     // Helper: clamp and wrap UV, return pixel coords
     void UVToPixel(float u, float v, float& px, float& py) const;
@@ -54,7 +54,7 @@ private:
 
 // A single named texture slot
 struct NamedTexture {
-    QString name;
+    std::string name;
     std::shared_ptr<TextureData> data;
 };
 
@@ -63,7 +63,7 @@ struct TextureSet {
     std::vector<NamedTexture> textures;
 
     // Add or replace a named texture
-    void Add(const QString& name, std::shared_ptr<TextureData> data) {
+    void Add(const std::string& name, std::shared_ptr<TextureData> data) {
         for (auto& t : textures) {
             if (t.name == name) { t.data = data; return; }
         }
@@ -71,7 +71,7 @@ struct TextureSet {
     }
 
     // Remove a texture by name
-    void Remove(const QString& name) {
+    void Remove(const std::string& name) {
         textures.erase(
             std::remove_if(textures.begin(), textures.end(),
                            [&](const NamedTexture& t) { return t.name == name; }),
@@ -79,7 +79,7 @@ struct TextureSet {
     }
 
     // Lookup by name
-    std::shared_ptr<TextureData> GetByName(const QString& name) const {
+    std::shared_ptr<TextureData> GetByName(const std::string& name) const {
         for (const auto& t : textures) {
             if (t.name == name) return t.data;
         }

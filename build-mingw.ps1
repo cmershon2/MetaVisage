@@ -1,11 +1,11 @@
 # MetaVisage Build Script for MinGW
-# This script automates the build process for Qt MinGW builds
+# Sprint 3.7 — Qt removed; this script is retained for cross-toolchain use.
+# MSVC remains the authoritative build (build-msvc.ps1).
 
 param(
     [switch]$Clean,
     [switch]$Deploy,
     [string]$BuildType = "Release",
-    [string]$QtPath = "C:/Qt/6.10.3/mingw_64",
     [string]$MinGWPath = "C:/Qt/Tools/mingw1310_64",
     [string]$VcpkgToolchain = ""
 )
@@ -53,7 +53,6 @@ Set-Location $BuildDir
 
 $CMakeArgs = @(
     "..",
-    "-DCMAKE_PREFIX_PATH=`"$QtPath`"",
     "-G", "MinGW Makefiles",
     "-DCMAKE_BUILD_TYPE=$BuildType",
     "-DCMAKE_C_COMPILER=`"$MinGWPath/bin/gcc.exe`"",
@@ -97,28 +96,16 @@ if ($LASTEXITCODE -ne 0) {
 Write-Host ""
 Write-Host "Build completed successfully!" -ForegroundColor Green
 
-# Deploy runtime dependencies if requested
-# Sprint 3.5.1 builds MetaVisageCore as a static library only; the executable
-# target returns in Story 3.5.2. Skip deployment when the .exe is absent.
+# Deploy runtime dependencies if requested. Qt was removed in Sprint 3.7; the
+# executable's runtime DLLs are now staged by vcpkg's applocal post-build step.
 if ($Deploy) {
     $ExePath = Join-Path $BinDir "MetaVisage.exe"
     if (Test-Path $ExePath) {
         Write-Host ""
-        Write-Host "Deploying runtime dependencies..." -ForegroundColor Green
-        Set-Location $BinDir
-
-        # windeployqt still handles Qt6Core.dll (transitional Qt6::Core dependency)
-        & windeployqt MetaVisage.exe
-        if ($LASTEXITCODE -ne 0) {
-            Write-Host "WARNING: windeployqt failed" -ForegroundColor Yellow
-        }
-
-        # vcpkg applocal deployment stages GLFW / GLEW / ImGui / libcurl / etc. DLLs
-        # This runs automatically as a post-build step under the vcpkg toolchain.
-        Write-Host "Runtime dependencies deployed." -ForegroundColor Green
+        Write-Host "Runtime dependencies staged by vcpkg applocal." -ForegroundColor Green
     } else {
         Write-Host ""
-        Write-Host "Skipping deploy: no executable yet (Sprint 3.5.1 builds a static library only)." -ForegroundColor Yellow
+        Write-Host "Skipping deploy: no executable was produced." -ForegroundColor Yellow
     }
 }
 

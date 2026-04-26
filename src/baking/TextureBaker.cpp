@@ -4,6 +4,7 @@
 #include "utils/Logger.h"
 #include <algorithm>
 #include <cmath>
+#include <format>
 #include <unordered_map>
 
 #ifdef _OPENMP
@@ -251,8 +252,8 @@ BakeResult TextureBaker::Bake(
         return result;
     }
 
-    MV_LOG_INFO(QString("Starting texture bake: %1x%1, albedo=%2, normal=%3")
-        .arg(res).arg(settings.bakeAlbedo).arg(settings.bakeNormalMap));
+    MV_LOG_INFO(std::format("Starting texture bake: {}x{}, albedo={}, normal={}",
+        res, res, settings.bakeAlbedo, settings.bakeNormalMap));
 
     // Compute the morph-to-target coordinate transform:
     //   morphLocal -> world (via morphTransform) -> targetLocal (via inverse targetTransform)
@@ -358,7 +359,7 @@ BakeResult TextureBaker::Bake(
         BoundingBox targetBounds = targetMesh.GetBounds();
         Vector3 diag = targetBounds.Size();
         maxDist = std::sqrt(diag.x * diag.x + diag.y * diag.y + diag.z * diag.z) * 0.5f;
-        MV_LOG_INFO(QString("Auto max ray distance: %1").arg(maxDist));
+        MV_LOG_INFO(std::format("Auto max ray distance: {}", maxDist));
     }
 
     // Stats for debugging
@@ -556,8 +557,8 @@ BakeResult TextureBaker::Bake(
         }
     }
 
-    MV_LOG_INFO(QString("Bake stats: %1 total texels, %2 ray hits, %3 closest-point fallbacks")
-        .arg(totalTexels).arg(rayHits).arg(closestPointFallbacks));
+    MV_LOG_INFO(std::format("Bake stats: {} total texels, {} ray hits, {} closest-point fallbacks",
+        totalTexels, rayHits, closestPointFallbacks));
 
     // Apply seam bleeding
     if (settings.paddingPixels > 0) {
@@ -575,7 +576,7 @@ BakeResult TextureBaker::Bake(
     result.bakedAlbedo = bakedAlbedo;
     result.bakedNormalMap = bakedNormal;
 
-    MV_LOG_INFO(QString("Texture bake completed: %1x%1").arg(res));
+    MV_LOG_INFO(std::format("Texture bake completed: {}x{}", res, res));
     return result;
 }
 

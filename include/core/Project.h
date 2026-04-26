@@ -5,14 +5,14 @@
 #include "core/Mesh.h"
 #include "core/TextureData.h"
 #include "core/Transform.h"
-#include <QString>
-#include <QDateTime>
+#include <chrono>
 #include <memory>
+#include <string>
 
 namespace MetaVisage {
 
 struct MeshReference {
-    QString filepath;
+    std::string filepath;
     Transform transform;
     bool isLoaded;
     std::shared_ptr<Mesh> mesh;
@@ -148,15 +148,17 @@ public:
     Project();
     ~Project();
 
+    using TimePoint = std::chrono::system_clock::time_point;
+
     // File operations
-    bool Save(const QString& filepath);
-    bool Load(const QString& filepath);
+    bool Save(const std::string& filepath);
+    bool Load(const std::string& filepath);
 
     // Accessors
-    const QString& GetName() const { return projectName_; }
-    const QString& GetPath() const { return projectPath_; }
-    const QDateTime& GetCreated() const { return created_; }
-    const QDateTime& GetLastModified() const { return lastModified_; }
+    const std::string& GetName() const { return projectName_; }
+    const std::string& GetPath() const { return projectPath_; }
+    const TimePoint& GetCreated() const { return created_; }
+    const TimePoint& GetLastModified() const { return lastModified_; }
     WorkflowStage GetCurrentStage() const { return currentStage_; }
 
     MeshReference& GetMorphMesh() { return morphMesh_; }
@@ -176,18 +178,18 @@ public:
     const SculptState& GetSculptState() const { return sculpt_; }
 
     // Modifiers
-    void SetName(const QString& name) { projectName_ = name; }
-    void SetPath(const QString& path) { projectPath_ = path; }
+    void SetName(const std::string& name) { projectName_ = name; }
+    void SetPath(const std::string& path) { projectPath_ = path; }
     void SetCurrentStage(WorkflowStage stage) { currentStage_ = stage; }
 
     // Validation
     bool CanProceedToNextStage() const;
 
 private:
-    QString projectName_;
-    QString projectPath_;
-    QDateTime created_;
-    QDateTime lastModified_;
+    std::string projectName_;
+    std::string projectPath_;
+    TimePoint created_;
+    TimePoint lastModified_;
     WorkflowStage currentStage_;
 
     MeshReference morphMesh_;

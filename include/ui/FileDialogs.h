@@ -1,7 +1,6 @@
 #ifndef METAVISAGE_UI_FILEDIALOGS_H
 #define METAVISAGE_UI_FILEDIALOGS_H
 
-#include <QString>
 #include <optional>
 #include <string>
 #include <vector>
@@ -15,9 +14,9 @@ struct Filter {
 
 // Blocking open/save dialogs backed by nativefiledialog-extended. Return
 // std::nullopt on cancel. Optional `defaultName` is only used by SaveFile.
-std::optional<QString> OpenFile(const std::vector<Filter>& filters);
-std::optional<QString> SaveFile(const std::vector<Filter>& filters,
-                                const QString& defaultName);
+std::optional<std::string> OpenFile(const std::vector<Filter>& filters);
+std::optional<std::string> SaveFile(const std::vector<Filter>& filters,
+                                    const std::string& defaultName);
 
 } // namespace MetaVisage::FileDialogs
 

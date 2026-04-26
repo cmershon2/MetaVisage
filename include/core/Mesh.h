@@ -2,8 +2,9 @@
 #define MESH_H
 
 #include "core/Types.h"
-#include <QString>
 #include <memory>
+#include <string>
+#include <vector>
 
 namespace MetaVisage {
 
@@ -16,8 +17,8 @@ public:
     ~Mesh();
 
     // Load and save
-    bool Load(const QString& filepath);
-    bool Save(const QString& filepath);
+    bool Load(const std::string& filepath);
+    bool Save(const std::string& filepath);
 
     // Accessors
     const std::vector<Vector3>& GetVertices() const { return vertices_; }
@@ -26,8 +27,8 @@ public:
     const std::vector<Face>& GetFaces() const { return faces_; }
     const std::vector<Material>& GetMaterials() const { return materials_; }
     const BoundingBox& GetBounds() const { return bounds_; }
-    const QString& GetName() const { return name_; }
-    const QString& GetFilePath() const { return filepath_; }
+    const std::string& GetName() const { return name_; }
+    const std::string& GetFilePath() const { return filepath_; }
 
     // Modifiers
     void SetVertices(const std::vector<Vector3>& vertices);
@@ -38,7 +39,7 @@ public:
     void SetUVs(const std::vector<Vector2>& uvs);
     void SetFaces(const std::vector<Face>& faces);
     void SetMaterials(const std::vector<Material>& materials);
-    void SetName(const QString& name) { name_ = name; }
+    void SetName(const std::string& name) { name_ = name; }
 
     // Mesh operations
     void CalculateNormals();
@@ -66,8 +67,8 @@ public:
     void InvalidateAccelerationStructures();
 
 private:
-    QString name_;
-    QString filepath_;
+    std::string name_;
+    std::string filepath_;
 
     std::vector<Vector3> vertices_;
     std::vector<Vector3> normals_;

@@ -5,36 +5,57 @@
 #include <windows.h>
 #include <shellapi.h>
 
+#include <cctype>
+#include <format>
+#include <string>
 #include <vector>
 
 namespace MetaVisage {
 
 namespace {
 
-bool IsAllowedScheme(const QString& url) {
-    return url.startsWith("https://", Qt::CaseInsensitive)
-        || url.startsWith("http://", Qt::CaseInsensitive)
-        || url.startsWith("mailto:", Qt::CaseInsensitive);
+bool StartsWithICase(const std::string& s, const char* prefix) {
+    const size_t n = std::char_traits<char>::length(prefix);
+    if (s.size() < n) return false;
+    for (size_t i = 0; i < n; ++i) {
+        if (std::tolower(static_cast<unsigned char>(s[i])) !=
+            std::tolower(static_cast<unsigned char>(prefix[i]))) {
+            return false;
+        }
+    }
+    return true;
+}
+
+bool IsAllowedScheme(const std::string& url) {
+    return StartsWithICase(url, "https://")
+        || StartsWithICase(url, "http://")
+        || StartsWithICase(url, "mailto:");
+}
+
+std::wstring Utf8ToWide(const std::string& s) {
+    if (s.empty()) return {};
+    const int chars = MultiByteToWideChar(CP_UTF8, 0, s.c_str(), static_cast<int>(s.size()), nullptr, 0);
+    std::wstring out(static_cast<size_t>(chars), L'\0');
+    MultiByteToWideChar(CP_UTF8, 0, s.c_str(), static_cast<int>(s.size()), out.data(), chars);
+    return out;
 }
 
 } // namespace
 
-bool OpenUrl(const QString& url) {
-    if (url.isEmpty()) return false;
+bool OpenUrl(const std::string& url) {
+    if (url.empty()) return false;
 
     if (!IsAllowedScheme(url)) {
-        MV_LOG_WARNING(QString("OpenUrl: rejected scheme in %1").arg(url));
+        MV_LOG_WARNING(std::format("OpenUrl: rejected scheme in {}", url));
         return false;
     }
 
-    std::vector<wchar_t> buf(static_cast<size_t>(url.size()) + 1);
-    const int written = url.toWCharArray(buf.data());
-    buf[written] = L'\0';
-
-    const HINSTANCE rc = ShellExecuteW(nullptr, L"open", buf.data(), nullptr, nullptr, SW_SHOWNORMAL);
+    const std::wstring wide = Utf8ToWide(url);
+    const HINSTANCE rc = ShellExecuteW(nullptr, L"open", wide.c_str(), nullptr, nullptr, SW_SHOWNORMAL);
     const auto code = reinterpret_cast<INT_PTR>(rc);
     if (code <= 32) {
-        MV_LOG_WARNING(QString("OpenUrl: ShellExecuteW failed (code=%1) for %2").arg(code).arg(url));
+        MV_LOG_WARNING(std::format("OpenUrl: ShellExecuteW failed (code={}) for {}",
+            static_cast<long long>(code), url));
         return false;
     }
     return true;

@@ -5,6 +5,7 @@
 #include "utils/Logger.h"
 #include <algorithm>
 #include <cmath>
+#include <format>
 
 namespace MetaVisage {
 
@@ -15,16 +16,16 @@ TextureData::TextureData()
 TextureData::~TextureData() {
 }
 
-std::shared_ptr<TextureData> TextureData::LoadFromFile(const QString& path) {
+std::shared_ptr<TextureData> TextureData::LoadFromFile(const std::string& path) {
     auto texture = std::make_shared<TextureData>();
     texture->filePath_ = path;
 
     int reqChannels = 4; // Always load as RGBA
     int w, h, c;
-    unsigned char* data = stbi_load(path.toStdString().c_str(), &w, &h, &c, reqChannels);
+    unsigned char* data = stbi_load(path.c_str(), &w, &h, &c, reqChannels);
     if (!data) {
-        MV_LOG_ERROR(QString("Failed to load texture '%1': %2")
-            .arg(path, stbi_failure_reason()));
+        MV_LOG_ERROR(std::format("Failed to load texture '{}': {}",
+            path, stbi_failure_reason()));
         return nullptr;
     }
 
@@ -35,8 +36,8 @@ std::shared_ptr<TextureData> TextureData::LoadFromFile(const QString& path) {
 
     stbi_image_free(data);
 
-    MV_LOG_INFO(QString("Loaded texture '%1': %2x%3 (%4 channels in source)")
-        .arg(path).arg(w).arg(h).arg(c));
+    MV_LOG_INFO(std::format("Loaded texture '{}': {}x{} ({} channels in source)",
+        path, w, h, c));
 
     return texture;
 }

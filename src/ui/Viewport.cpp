@@ -692,10 +692,10 @@ static inline ImU32 PackColor(int r, int g, int b, int a = 255) {
 }
 
 void Viewport::DrawViewportLabelOverlay(float x, float y, float w, float h) {
-    if (viewportLabel_.isEmpty()) return;
+    if (viewportLabel_.empty()) return;
     (void)w;
     ImDrawList* dl = ImGui::GetForegroundDrawList(ImGui::GetMainViewport());
-    std::string label = viewportLabel_.toStdString();
+    const std::string& label = viewportLabel_;
     ImFont* font = ImGui::GetFont();
     float fontSize = ImGui::GetFontSize();
     ImVec2 textSize = font->CalcTextSizeA(fontSize, FLT_MAX, 0.0f, label.c_str());

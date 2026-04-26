@@ -20,8 +20,6 @@
 #include "utils/Paths.h"
 #include "utils/RayCaster.h"
 
-#include <QFileInfo>
-
 #include <GL/glew.h>
 #include <GLFW/glfw3.h>
 #include <imgui.h>
@@ -29,9 +27,12 @@
 #include <imgui_impl_glfw.h>
 #include <imgui_impl_opengl3.h>
 
-#include <QString>
 #include <algorithm>
+#include <cctype>
 #include <cstdio>
+#include <filesystem>
+#include <format>
+#include <string>
 
 namespace MetaVisage {
 
@@ -39,7 +40,24 @@ namespace {
 
 void GlfwErrorCallback(int error, const char* description) {
     std::fprintf(stderr, "GLFW error %d: %s\n", error, description);
-    MV_LOG_ERROR(QString("GLFW error %1: %2").arg(error).arg(description));
+    MV_LOG_ERROR(std::format("GLFW error {}: {}", error, description));
+}
+
+// Case-insensitive suffix check used in path-extension comparisons.
+bool EndsWithICase(const std::string& s, const std::string& suffix) {
+    if (s.size() < suffix.size()) return false;
+    for (size_t i = 0; i < suffix.size(); ++i) {
+        if (std::tolower(static_cast<unsigned char>(s[s.size() - suffix.size() + i])) !=
+            std::tolower(static_cast<unsigned char>(suffix[i]))) {
+            return false;
+        }
+    }
+    return true;
+}
+
+// Filename portion of a path (no directory).
+std::string FileName(const std::string& path) {
+    return std::filesystem::path(path).filename().string();
 }
 
 const char* StageDisplayName(WorkflowStage s) {
@@ -111,8 +129,8 @@ bool AppWindow::Initialize(int width, int height, const char* title) {
     glewExperimental = GL_TRUE;
     GLenum glewStatus = glewInit();
     if (glewStatus != GLEW_OK) {
-        MV_LOG_CRITICAL(QString("glewInit failed: %1")
-            .arg(reinterpret_cast<const char*>(glewGetErrorString(glewStatus))));
+        MV_LOG_CRITICAL(std::format("glewInit failed: {}",
+            reinterpret_cast<const char*>(glewGetErrorString(glewStatus))));
         glfwDestroyWindow(window_);
         window_ = nullptr;
         glfwTerminate();
@@ -146,10 +164,10 @@ bool AppWindow::Initialize(int width, int height, const char* title) {
     }
     imguiOpenGLInitialized_ = true;
 
-    MV_LOG_INFO(QString("AppWindow initialized: %1x%2, GL %3, GLSL %4")
-        .arg(width).arg(height)
-        .arg(reinterpret_cast<const char*>(glGetString(GL_VERSION)))
-        .arg(reinterpret_cast<const char*>(glGetString(GL_SHADING_LANGUAGE_VERSION))));
+    MV_LOG_INFO(std::format("AppWindow initialized: {}x{}, GL {}, GLSL {}",
+        width, height,
+        reinterpret_cast<const char*>(glGetString(GL_VERSION)),
+        reinterpret_cast<const char*>(glGetString(GL_SHADING_LANGUAGE_VERSION))));
 
     viewportHost_ = std::make_unique<ViewportHost>();
     if (!viewportHost_->Initialize()) {
@@ -469,7 +487,7 @@ void AppWindow::Run() {
             if (actions.importTargetMeshRequested) pendingAction_ = PendingAction::ImportTargetMesh;
             if (actions.exportMeshRequested)       pendingAction_ = PendingAction::ExportMesh;
             if (actions.useDefaultMorphMeshRequested) UseDefaultMorphMesh();
-            if (!actions.importTextureSlot.isEmpty()) ImportTextureForSlot(actions.importTextureSlot);
+            if (!actions.importTextureSlot.empty()) ImportTextureForSlot(actions.importTextureSlot);
             if (actions.resetTransformRequested && project_) {
                 project_->GetTargetMesh().transform = Transform();
                 project_->GetAlignmentData().targetMeshTransform = Transform();
@@ -549,8 +567,8 @@ void AppWindow::Run() {
         // already populated state.
         if (!welcomeShownOnLaunch_) {
             welcomeShownOnLaunch_ = true;
-            if (project_ && project_->GetMorphMesh().filepath.isEmpty() &&
-                project_->GetPath().isEmpty()) {
+            if (project_ && project_->GetMorphMesh().filepath.empty() &&
+                project_->GetPath().empty()) {
                 welcomeModal_.Open();
             }
         }
@@ -775,7 +793,7 @@ void AppWindow::DispatchPendingAction() {
         case PendingAction::SaveProject: {
             // Ctrl+S: silent save to the current path. If no path is known
             // yet, fall through to Save-As behaviour.
-            if (!projectPath_.isEmpty()) {
+            if (!projectPath_.empty()) {
                 SaveProjectToDisk(projectPath_);
                 break;
             }
@@ -785,14 +803,14 @@ void AppWindow::DispatchPendingAction() {
         case PendingAction::SaveProjectAs: {
             // Ctrl+Shift+S or "Save As...": always prompt for a new path so
             // the user can save a copy under a different name.
-            const QString suggested = !projectPath_.isEmpty()
-                ? QFileInfo(projectPath_).fileName()
-                : (project_ && !project_->GetName().isEmpty()
+            const std::string suggested = !projectPath_.empty()
+                ? FileName(projectPath_)
+                : (project_ && !project_->GetName().empty()
                     ? project_->GetName() + ".mmproj"
-                    : QString("untitled.mmproj"));
+                    : std::string("untitled.mmproj"));
             if (auto picked = FileDialogs::SaveFile(ProjectFilters(), suggested)) {
-                QString target = *picked;
-                if (!target.endsWith(".mmproj", Qt::CaseInsensitive)) target += ".mmproj";
+                std::string target = *picked;
+                if (!EndsWithICase(target, ".mmproj")) target += ".mmproj";
                 SaveProjectToDisk(target);
             }
             break;
@@ -880,8 +898,8 @@ void AppWindow::RenderModals() {
         // formatIndex (0=FBX,1=OBJ,2=GLTF) to ExportFormat for the dialog
         // filter and the suggested filename extension.
         const auto fmt = static_cast<ExportFormat>(exportModal_.formatIndex);
-        const QString suggested = exportModal_.filepath.isEmpty()
-            ? QString("export") + MeshExporter::GetFormatExtension(fmt)
+        const std::string suggested = exportModal_.filepath.empty()
+            ? std::string("export") + MeshExporter::GetFormatExtension(fmt)
             : exportModal_.filepath;
         if (auto picked = FileDialogs::SaveFile(ExportFiltersFor(fmt), suggested)) {
             exportModal_.filepath = *picked;
@@ -889,16 +907,16 @@ void AppWindow::RenderModals() {
     }
     if (exportModal_.action == ExportAction::Export) {
         exportModal_.action = ExportAction::None;
-        if (exportModal_.filepath.isEmpty()) {
+        if (exportModal_.filepath.empty()) {
             // Defensive fallback — the Browse button writes filepath, but if
             // the user submits with an empty field we still prompt before
             // bailing out so they're never silently sent back to the viewport.
             auto picked = FileDialogs::SaveFile(
                 ExportFiltersFor(exportModal_.options.format),
-                QString("export") + MeshExporter::GetFormatExtension(exportModal_.options.format));
+                std::string("export") + MeshExporter::GetFormatExtension(exportModal_.options.format));
             if (picked) exportModal_.filepath = *picked;
         }
-        if (!exportModal_.filepath.isEmpty()) DoExport();
+        if (!exportModal_.filepath.empty()) DoExport();
     }
 }
 
@@ -946,13 +964,13 @@ void AppWindow::OnFileNewProject() {
     MV_LOG_INFO("File > New Project");
 }
 
-void AppWindow::OpenProjectFromDisk(const QString& path) {
-    if (path.isEmpty()) return;
+void AppWindow::OpenProjectFromDisk(const std::string& path) {
+    if (path.empty()) return;
     auto fresh = std::make_unique<Project>();
     ProjectSerializer serializer;
     const SerializationResult result = serializer.Load(*fresh, path);
     if (!result.success) {
-        errorModal_.Open(QString("Could not open project:\n%1").arg(result.errorMessage));
+        errorModal_.Open(std::format("Could not open project:\n{}", result.errorMessage));
         return;
     }
     project_ = std::move(fresh);
@@ -1016,33 +1034,33 @@ void AppWindow::OpenProjectFromDisk(const QString& path) {
 
     ApplyStageViewportMode();
     Config::Instance().AddRecentProject(path);
-    statusMessage_ = QString("Opened %1").arg(QFileInfo(path).fileName()).toStdString();
-    MV_LOG_INFO(QString("Opened project %1").arg(path));
+    statusMessage_ = std::format("Opened {}", FileName(path));
+    MV_LOG_INFO(std::format("Opened project {}", path));
 }
 
-void AppWindow::SaveProjectToDisk(const QString& path) {
-    if (!project_ || path.isEmpty()) return;
+void AppWindow::SaveProjectToDisk(const std::string& path) {
+    if (!project_ || path.empty()) return;
     ProjectSerializer serializer;
     const SerializationResult result = serializer.Save(*project_, path);
     if (!result.success) {
-        errorModal_.Open(QString("Could not save project:\n%1").arg(result.errorMessage));
+        errorModal_.Open(std::format("Could not save project:\n{}", result.errorMessage));
         return;
     }
     projectPath_ = path;
     project_->SetPath(path);
     Config::Instance().AddRecentProject(path);
-    statusMessage_ = QString("Saved to %1").arg(QFileInfo(path).fileName()).toStdString();
-    MV_LOG_INFO(QString("Saved project %1").arg(path));
+    statusMessage_ = std::format("Saved to {}", FileName(path));
+    MV_LOG_INFO(std::format("Saved project {}", path));
 }
 
-void AppWindow::ImportMorphMeshFromDisk(const QString& path) {
-    if (!project_ || path.isEmpty()) return;
+void AppWindow::ImportMorphMeshFromDisk(const std::string& path) {
+    if (!project_ || path.empty()) return;
     MeshReference& ref = project_->GetMorphMesh();
     ref.mesh = std::make_shared<Mesh>();
     if (!ref.mesh->Load(path)) {
         ref.mesh.reset();
         ref.isLoaded = false;
-        errorModal_.Open(QString("Failed to load morph mesh:\n%1").arg(path));
+        errorModal_.Open(std::format("Failed to load morph mesh:\n{}", path));
         return;
     }
     ref.filepath = path;
@@ -1052,18 +1070,18 @@ void AppWindow::ImportMorphMeshFromDisk(const QString& path) {
     if (viewportHost_ && viewportHost_->GetPrimaryViewport()) {
         viewportHost_->GetPrimaryViewport()->GetCamera()->FocusOnBounds(ref.mesh->GetBounds());
     }
-    statusMessage_ = QString("Loaded morph mesh: %1").arg(QFileInfo(path).fileName()).toStdString();
-    MV_LOG_INFO(QString("Loaded morph mesh: %1").arg(path));
+    statusMessage_ = std::format("Loaded morph mesh: {}", FileName(path));
+    MV_LOG_INFO(std::format("Loaded morph mesh: {}", path));
 }
 
-void AppWindow::ImportTargetMeshFromDisk(const QString& path) {
-    if (!project_ || path.isEmpty()) return;
+void AppWindow::ImportTargetMeshFromDisk(const std::string& path) {
+    if (!project_ || path.empty()) return;
     MeshReference& ref = project_->GetTargetMesh();
     ref.mesh = std::make_shared<Mesh>();
     if (!ref.mesh->Load(path)) {
         ref.mesh.reset();
         ref.isLoaded = false;
-        errorModal_.Open(QString("Failed to load target mesh:\n%1").arg(path));
+        errorModal_.Open(std::format("Failed to load target mesh:\n{}", path));
         return;
     }
     ref.filepath = path;
@@ -1071,20 +1089,20 @@ void AppWindow::ImportTargetMeshFromDisk(const QString& path) {
     if (viewportHost_ && viewportHost_->GetPrimaryViewport()) {
         viewportHost_->GetPrimaryViewport()->GetCamera()->FocusOnBounds(ref.mesh->GetBounds());
     }
-    statusMessage_ = QString("Loaded target mesh: %1").arg(QFileInfo(path).fileName()).toStdString();
-    MV_LOG_INFO(QString("Loaded target mesh: %1").arg(path));
+    statusMessage_ = std::format("Loaded target mesh: {}", FileName(path));
+    MV_LOG_INFO(std::format("Loaded target mesh: {}", path));
 }
 
 void AppWindow::UseDefaultMorphMesh() {
     if (!project_) return;
-    const QString exeDir = Paths::ExecutableDir();
-    if (exeDir.isEmpty()) {
+    const std::string exeDir = Paths::ExecutableDir();
+    if (exeDir.empty()) {
         errorModal_.Open("Could not locate the application directory.");
         return;
     }
-    const QString path = exeDir + "/assets/models/MetaHumanHeadLod0.obj";
-    if (!QFileInfo(path).exists()) {
-        errorModal_.Open(QString("Default MetaHuman head not found at:\n%1").arg(path));
+    const std::string path = exeDir + "/assets/models/MetaHumanHeadLod0.obj";
+    if (!std::filesystem::exists(path)) {
+        errorModal_.Open(std::format("Default MetaHuman head not found at:\n{}", path));
         return;
     }
     ImportMorphMeshFromDisk(path);
@@ -1098,8 +1116,8 @@ void AppWindow::UseDefaultMorphMesh() {
     }
 }
 
-void AppWindow::ImportTextureForSlot(const QString& slot) {
-    if (!project_ || slot.isEmpty()) return;
+void AppWindow::ImportTextureForSlot(const std::string& slot) {
+    if (!project_ || slot.empty()) return;
     std::vector<FileDialogs::Filter> filters = {
         {"Image (PNG, JPG, TGA, BMP)", "png,jpg,jpeg,tga,bmp"},
         {"PNG", "png"},
@@ -1109,21 +1127,20 @@ void AppWindow::ImportTextureForSlot(const QString& slot) {
     if (!picked) return;
     auto tex = TextureData::LoadFromFile(*picked);
     if (!tex) {
-        errorModal_.Open(QString("Failed to load texture:\n%1").arg(*picked));
+        errorModal_.Open(std::format("Failed to load texture:\n{}", *picked));
         return;
     }
     project_->GetTargetTextures().Add(slot, tex);
     // Mirror Qt-era behaviour: only Albedo is uploaded as the active mesh
     // texture for preview; other slots are stored for baking/export use.
-    if (slot == QStringLiteral("Albedo") &&
+    if (slot == "Albedo" &&
         viewportHost_ && viewportHost_->GetPrimaryViewport() &&
         project_->GetTargetMesh().mesh) {
         viewportHost_->GetPrimaryViewport()->UploadMeshTexture(
             project_->GetTargetMesh().mesh.get(), *tex);
     }
-    statusMessage_ = QString("Loaded %1 texture: %2")
-                         .arg(slot, QFileInfo(*picked).fileName()).toStdString();
-    MV_LOG_INFO(QString("Loaded %1 texture: %2").arg(slot, *picked));
+    statusMessage_ = std::format("Loaded {} texture: {}", slot, FileName(*picked));
+    MV_LOG_INFO(std::format("Loaded {} texture: {}", slot, *picked));
 }
 
 void AppWindow::ApplyStageViewportMode() {
@@ -1133,7 +1150,7 @@ void AppWindow::ApplyStageViewportMode() {
 }
 
 void AppWindow::DoExport() {
-    if (!project_ || exportModal_.filepath.isEmpty()) return;
+    if (!project_ || exportModal_.filepath.empty()) return;
     auto& morph = project_->GetMorphData();
 
     // Mirror the Qt-era selection: prefer the deformed morph mesh, otherwise
@@ -1182,29 +1199,29 @@ void AppWindow::DoExport() {
             bakeSettings);
 
         if (!bakeResult.success) {
-            errorModal_.Open(QString("Texture bake failed:\n%1").arg(bakeResult.errorMessage));
+            errorModal_.Open(std::format("Texture bake failed:\n{}", bakeResult.errorMessage));
             return;
         }
 
         // Write baked textures next to the mesh file using the convention
         // <basename>_albedo.<ext> / <basename>_normal.<ext>.
-        QFileInfo fileInfo(exportModal_.filepath);
-        const QString basePath = fileInfo.absolutePath() + "/" + fileInfo.completeBaseName();
-        const QString ext = "." + options.textureFormat;
+        const std::filesystem::path filePath(exportModal_.filepath);
+        const std::string basePath = (filePath.parent_path() / filePath.stem()).string();
+        const std::string ext = "." + options.textureFormat;
 
         if (bakeResult.bakedAlbedo) {
-            const QString albedoPath = basePath + "_albedo" + ext;
+            const std::string albedoPath = basePath + "_albedo" + ext;
             const bool ok = (options.textureFormat == "tga")
                 ? TextureWriter::WriteTGA(*bakeResult.bakedAlbedo, albedoPath)
                 : TextureWriter::WritePNG(*bakeResult.bakedAlbedo, albedoPath);
-            if (!ok) MV_LOG_ERROR(QString("Failed to write baked albedo: %1").arg(albedoPath));
+            if (!ok) MV_LOG_ERROR(std::format("Failed to write baked albedo: {}", albedoPath));
         }
         if (bakeResult.bakedNormalMap) {
-            const QString normalPath = basePath + "_normal" + ext;
+            const std::string normalPath = basePath + "_normal" + ext;
             const bool ok = (options.textureFormat == "tga")
                 ? TextureWriter::WriteTGA(*bakeResult.bakedNormalMap, normalPath)
                 : TextureWriter::WritePNG(*bakeResult.bakedNormalMap, normalPath);
-            if (!ok) MV_LOG_ERROR(QString("Failed to write baked normal: %1").arg(normalPath));
+            if (!ok) MV_LOG_ERROR(std::format("Failed to write baked normal: {}", normalPath));
         }
     }
 
@@ -1227,11 +1244,11 @@ void AppWindow::DoExport() {
         &project_->GetMorphMesh().transform,
         originalForCompat);
     if (!result.success) {
-        errorModal_.Open(QString("Export failed:\n%1").arg(result.errorMessage));
+        errorModal_.Open(std::format("Export failed:\n{}", result.errorMessage));
         return;
     }
-    statusMessage_ = QString("Exported to %1").arg(QFileInfo(exportModal_.filepath).fileName()).toStdString();
-    MV_LOG_INFO(QString("Exported mesh to %1").arg(exportModal_.filepath));
+    statusMessage_ = std::format("Exported to {}", FileName(exportModal_.filepath));
+    MV_LOG_INFO(std::format("Exported mesh to {}", exportModal_.filepath));
 }
 
 void AppWindow::OnFileExit() {
@@ -1314,8 +1331,8 @@ void AppWindow::StartMorph() {
 
     if (!morphMeshRef.isLoaded || !morphMeshRef.mesh ||
         !targetMeshRef.isLoaded || !targetMeshRef.mesh) {
-        errorModal_.Open(QStringLiteral("Both meshes must be loaded before processing."),
-                         QStringLiteral("Morph Failed"));
+        errorModal_.Open("Both meshes must be loaded before processing.",
+                         "Morph Failed");
         return;
     }
 
@@ -1439,10 +1456,8 @@ void AppWindow::PollMorphCompletion() {
             }
         }
     } else {
-        errorModal_.Open(QString::fromStdString(error.empty()
-                             ? std::string("Processing cancelled or failed.")
-                             : error),
-                         QStringLiteral("Morph Failed"));
+        errorModal_.Open(error.empty() ? std::string("Processing cancelled or failed.") : error,
+                         "Morph Failed");
     }
 
     morphDeformer_.reset();

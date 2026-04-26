@@ -1,7 +1,6 @@
 param(
     [switch]$Clean,
     [switch]$Deploy,
-    [string]$QtPath = "C:/Qt/6.10.3/msvc2022_64",
     [string]$VcpkgToolchain = "",
     [string]$BuildType = "Release"
 )
@@ -39,7 +38,6 @@ Write-Host "Configuring CMake..." -ForegroundColor Green
 
 $CMakeArgs = @(
     ".."
-    "-DCMAKE_PREFIX_PATH=`"$QtPath`""
     "-G", "Visual Studio 17 2022"
     "-A", "x64"
 )
@@ -70,35 +68,19 @@ if ($LASTEXITCODE -ne 0) {
 Write-Host ""
 Write-Host "Build completed successfully!" -ForegroundColor Green
 
-# Deploy runtime dependencies if requested
-# Sprint 3.5.1 builds MetaVisageCore as a static library only; the executable
-# target returns in Story 3.5.2. Skip deployment when the .exe is absent.
+# Deploy runtime dependencies if requested. Qt was removed in Sprint 3.7,
+# so the only DLLs the .exe needs are the GLFW / GLEW / ImGui / libcurl /
+# Eigen / Assimp set staged by vcpkg's applocal post-build step (which runs
+# automatically when configuring with -DCMAKE_TOOLCHAIN_FILE=<vcpkg.cmake>).
 if ($Deploy) {
     $ExePath = Join-Path $BuildDir "bin\$BuildType\MetaVisage.exe"
-    $BinDir = Split-Path -Parent $ExePath
 
     if (Test-Path $ExePath) {
         Write-Host ""
-        Write-Host "Deploying runtime dependencies..." -ForegroundColor Green
-
-        # windeployqt handles Qt6Core.dll (transitional Qt6::Core dependency)
-        $WinDeployQt = Join-Path $QtPath "bin\windeployqt.exe"
-        if (Test-Path $WinDeployQt) {
-            Set-Location $BinDir
-            & $WinDeployQt MetaVisage.exe
-            if ($LASTEXITCODE -ne 0) {
-                Write-Host "WARNING: windeployqt failed" -ForegroundColor Yellow
-            }
-        } else {
-            Write-Host "WARNING: windeployqt not found at $WinDeployQt" -ForegroundColor Yellow
-        }
-
-        # vcpkg applocal deployment stages GLFW / GLEW / ImGui / libcurl / etc. DLLs
-        # This runs automatically as a post-build step under the vcpkg toolchain.
-        Write-Host "Runtime dependencies deployed." -ForegroundColor Green
+        Write-Host "Runtime dependencies staged by vcpkg applocal." -ForegroundColor Green
     } else {
         Write-Host ""
-        Write-Host "Skipping deploy: no executable yet (Sprint 3.5.1 builds a static library only)." -ForegroundColor Yellow
+        Write-Host "Skipping deploy: no executable was produced." -ForegroundColor Yellow
     }
 }
 

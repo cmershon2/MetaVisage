@@ -1,8 +1,8 @@
 #ifndef METAVISAGE_UTILS_CONFIG_H
 #define METAVISAGE_UTILS_CONFIG_H
 
-#include <QString>
 #include <optional>
+#include <string>
 #include <vector>
 
 namespace MetaVisage {
@@ -26,19 +26,19 @@ public:
     void SetWindowGeometry(int width, int height, bool maximized);
 
     // Recent projects (most-recent-first, capped at 10).
-    const std::vector<QString>& RecentProjects() const { return recentProjects_; }
-    void AddRecentProject(const QString& absolutePath);
+    const std::vector<std::string>& RecentProjects() const { return recentProjects_; }
+    void AddRecentProject(const std::string& absolutePath);
     void ClearRecentProjects();
 
     // Auth tokens cached between launches. std::nullopt means "no token stored".
-    std::optional<QString> AccessToken() const;
-    std::optional<QString> RefreshToken() const;
-    void SetTokens(const QString& access, const QString& refresh);
+    std::optional<std::string> AccessToken() const;
+    std::optional<std::string> RefreshToken() const;
+    void SetTokens(const std::string& access, const std::string& refresh);
     void ClearTokens();
 
     // Cached license JWT (7-day offline grace period — see DESKTOP_APP_INTEGRATION.md).
-    std::optional<QString> LicenseJwt() const;
-    void SetLicenseJwt(const QString& jwt);
+    std::optional<std::string> LicenseJwt() const;
+    void SetLicenseJwt(const std::string& jwt);
     void ClearLicenseJwt();
 
 private:
@@ -52,10 +52,10 @@ private:
     int windowWidth_ = 1600;
     int windowHeight_ = 900;
     bool windowMaximized_ = false;
-    std::vector<QString> recentProjects_;
-    std::optional<QString> accessToken_;
-    std::optional<QString> refreshToken_;
-    std::optional<QString> licenseJwt_;
+    std::vector<std::string> recentProjects_;
+    std::optional<std::string> accessToken_;
+    std::optional<std::string> refreshToken_;
+    std::optional<std::string> licenseJwt_;
     bool loaded_ = false;
 };
 

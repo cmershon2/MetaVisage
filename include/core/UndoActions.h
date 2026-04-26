@@ -7,10 +7,11 @@
 #include "core/Project.h"
 #include "core/Mesh.h"
 #include "sculpting/BrushStroke.h"
-#include <vector>
+#include <functional>
 #include <map>
 #include <memory>
-#include <functional>
+#include <string>
+#include <vector>
 
 namespace MetaVisage {
 
@@ -30,7 +31,7 @@ public:
         project_->GetAlignmentData().targetMeshTransform = after_;
     }
 
-    QString Description() const override { return "Transform"; }
+    std::string Description() const override { return "Transform"; }
 
 private:
     Project* project_;
@@ -44,7 +45,7 @@ public:
     PointPlacementUndoAction(Project* project,
                               const std::vector<PointCorrespondence>& before,
                               const std::vector<PointCorrespondence>& after,
-                              const QString& description = "Point Placement")
+                              const std::string& description = "Point Placement")
         : project_(project), before_(before), after_(after), description_(description) {}
 
     void Undo() override {
@@ -55,13 +56,13 @@ public:
         project_->GetPointReferenceData().correspondences = after_;
     }
 
-    QString Description() const override { return description_; }
+    std::string Description() const override { return description_; }
 
 private:
     Project* project_;
     std::vector<PointCorrespondence> before_;
     std::vector<PointCorrespondence> after_;
-    QString description_;
+    std::string description_;
 };
 
 // Undo action for morph processing
@@ -81,7 +82,7 @@ public:
 
     void Undo() override { ApplyState(before_); }
     void Redo() override { ApplyState(after_); }
-    QString Description() const override { return "Morph"; }
+    std::string Description() const override { return "Morph"; }
 
 private:
     void ApplyState(const MorphState& state) {
@@ -124,7 +125,7 @@ public:
         mesh_->CalculateNormals();
     }
 
-    QString Description() const override { return "Sculpt Stroke"; }
+    std::string Description() const override { return "Sculpt Stroke"; }
 
 private:
     Mesh* mesh_;

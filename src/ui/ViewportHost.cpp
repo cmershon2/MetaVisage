@@ -49,15 +49,15 @@ void ViewportHost::SetDualMode(bool dual) {
     dualMode_ = dual;
     if (dual) {
         left_->SetRenderFilter(RenderFilter::TargetOnly);
-        left_->SetViewportLabel(QStringLiteral("Target Mesh"));
+        left_->SetViewportLabel("Target Mesh");
         right_->SetRenderFilter(RenderFilter::MorphOnly);
-        right_->SetViewportLabel(QStringLiteral("Morph Mesh"));
+        right_->SetViewportLabel("Morph Mesh");
         right_->SyncCameraFrom(*left_->GetCamera());
         left_->SetActive(true);
         right_->SetActive(false);
     } else {
         left_->SetRenderFilter(RenderFilter::All);
-        left_->SetViewportLabel(QString());
+        left_->SetViewportLabel({});
         left_->SetActive(false);
         right_->SetActive(false);
     }

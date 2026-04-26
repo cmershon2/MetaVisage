@@ -6,6 +6,7 @@
 #include "core/TextureData.h"
 #include <functional>
 #include <memory>
+#include <string>
 
 namespace MetaVisage {
 
@@ -27,7 +28,7 @@ struct BakeSettings {
 
 struct BakeResult {
     bool success;
-    QString errorMessage;
+    std::string errorMessage;
     std::shared_ptr<TextureData> bakedAlbedo;
     std::shared_ptr<TextureData> bakedNormalMap;
 

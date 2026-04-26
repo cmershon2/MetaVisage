@@ -1,8 +1,9 @@
 #include "rendering/GizmoRenderer.h"
+#include "utils/Logger.h"
 #include "utils/Paths.h"
-#include <QDebug>
-#include <cmath>
 #include <algorithm>
+#include <cmath>
+#include <format>
 #include <limits>
 
 #ifdef HAVE_ASSIMP
@@ -33,7 +34,7 @@ GizmoRenderer::~GizmoRenderer() {
 bool GizmoRenderer::Initialize() {
     // Resolve gizmo asset paths relative to the executable so installed builds
     // (where CWD is not the project root) load assets correctly.
-    const std::string exeDir = Paths::ExecutableDir().toStdString();
+    const std::string exeDir = Paths::ExecutableDir();
     const std::string base = exeDir.empty() ? std::string("assets/models/gizmos")
                                             : exeDir + "/assets/models/gizmos";
     bool ok = true;
@@ -43,9 +44,9 @@ bool GizmoRenderer::Initialize() {
 
     if (ok) {
         initialized_ = true;
-        qDebug() << "GizmoRenderer: All gizmo models loaded successfully";
+        MV_LOG_DEBUG("GizmoRenderer: All gizmo models loaded successfully");
     } else {
-        qWarning() << "GizmoRenderer: Failed to load one or more gizmo models";
+        MV_LOG_WARNING("GizmoRenderer: Failed to load one or more gizmo models");
     }
 
     return ok;
@@ -62,8 +63,8 @@ bool GizmoRenderer::LoadGizmoModel(const std::string& filepath, GizmoModel& mode
     );
 
     if (!scene || scene->mFlags & AI_SCENE_FLAGS_INCOMPLETE || !scene->mRootNode) {
-        qWarning() << "GizmoRenderer: Assimp error loading" << filepath.c_str()
-                   << ":" << importer.GetErrorString();
+        MV_LOG_WARNING(std::format("GizmoRenderer: Assimp error loading {}: {}",
+            filepath, importer.GetErrorString()));
         return false;
     }
 
@@ -133,18 +134,20 @@ bool GizmoRenderer::LoadGizmoModel(const std::string& filepath, GizmoModel& mode
 
         glBindVertexArray(0);
 
+        const std::string subName = sub.name;
+        const unsigned int vCount = aiMesh->mNumVertices;
+        const GLsizei triCount = sub.indexCount / 3;
         model.subMeshes.push_back(std::move(sub));
 
-        qDebug() << "  Loaded gizmo sub-mesh:" << sub.name.c_str()
-                 << "verts:" << aiMesh->mNumVertices
-                 << "tris:" << sub.indexCount / 3;
+        MV_LOG_DEBUG(std::format("  Loaded gizmo sub-mesh: {} verts: {} tris: {}",
+            subName, vCount, triCount));
     }
 
     return !model.subMeshes.empty();
 #else
     (void)filepath;
     (void)model;
-    qWarning() << "GizmoRenderer: Assimp not available, cannot load gizmo models";
+    MV_LOG_WARNING("GizmoRenderer: Assimp not available, cannot load gizmo models");
     return false;
 #endif
 }
