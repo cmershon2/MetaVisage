@@ -8,13 +8,14 @@ See @.claude/context/product-vision.md for strategic goals and current state.
 
 ## Technical Stack
 
-- **UI Framework**: Dear ImGui + GLFW + GLEW (platform cut landed in Sprint 3.5; UI surface — menus, sidebars, dialogs — being rebuilt in Sprint 3.6). `Qt6::Core` retained transitionally for QString/QFile/QJson; full removal tracked in the product backlog.
+- **UI Framework**: Dear ImGui + GLFW + GLEW. Sprint 3.5 cut Qt Gui/Widgets/OpenGL/OpenGLWidgets; Sprint 3.6 rebuilt the menus, sidebars, modals, viewport host, and system services on the new stack. `Qt6::Core` retained transitionally for QString/QFile/QJson; full removal tracked in the product backlog.
 - **Graphics API**: OpenGL 4.3+
 - **Mesh I/O**: Assimp (FBX, OBJ, GLTF)
 - **Mesh Processing**: libigl / OpenMesh / CGAL
 - **Deformation**: NRICP (replaces v1.0 RBF/TPS) · custom implementation using Eigen
 - **Math**: Eigen / GLM
 - **Serialization**: nlohmann/json for `.mmproj` project files
+- **System services** (added in Sprint 3.6): `utils/Config` (JSON config at `%APPDATA%\MetaVisage\config.json`), `utils/HttpClient` (libcurl POST), `utils/SingleInstance` (Win32 named pipe at `\\.\pipe\MetaVisageSingleInstance`), `utils/OpenUrl` (`ShellExecuteEx`), `utils/Paths` (exe-relative asset resolution), NFD for native file dialogs.
 - **Installer**: Inno Setup · **Auto-update**: WinSparkle
 
 > **Algorithm secrecy**: Do not reference NRICP by name in user-facing UI text, logs, documentation, or error messages. Internal code comments and sprint docs are fine.
@@ -24,13 +25,44 @@ See @.claude/context/product-vision.md for strategic goals and current state.
 Layered architecture — keep concerns separated across layers:
 
 ```
-Presentation  → ImGui widgets (MainWindow, ViewportWidget, SidebarWidget)
-Application   → StageManager, stage controllers, CommandManager (undo/redo)
-Domain        → Mesh engine, deformation algorithm, sculpting engine
-Infrastructure → File I/O, OpenGL renderer, project persistence
+Presentation   → ImGui shell (AppWindow, StageSidebar, Modals, ViewportHost, Viewport)
+Application    → Project (per-frame source of truth), StageManager, UndoStack
+Domain         → Mesh engine, deformation algorithm, sculpting engine
+Infrastructure → File I/O (MeshExporter, ProjectSerializer), Renderer (OpenGL),
+                 system services (Config, HttpClient, SingleInstance, OpenUrl, Paths)
 ```
 
 Key components: Mesh Engine (load/validate/optimize/export), Deformation Algorithm (NRICP with Quick Wrap / Fantasy Wrap presets), Sculpting Engine (brush-based editing), Renderer (OpenGL), Project Manager (save/load `.mmproj`).
+
+**Per-frame state model**: `Project` is the single source of truth that the ImGui sidebars read and write each frame — no signal/slot bus. Sidebars surface action requests via the `StageSidebar::Actions` struct, which `AppWindow` consumes per frame and dispatches to the appropriate command, worker, or modal.
+
+## Repository Structure
+
+```
+MetaVisage/
+├── assets/             # Shaders, gizmo models, default MetaHuman head, app icons
+├── docs/               # Banner, KNOWN_ISSUES.md
+├── include/            # Public headers, mirrored by src/ layout below
+│   ├── baking/         # Texture baking + writer (PNG/TGA via stb)
+│   ├── core/           # Mesh, Project, Camera, Transform, Types, UndoStack
+│   ├── deformation/    # MeshDeformer, NRICPDeformer, RBFInterpolator
+│   ├── io/             # MeshExporter, ProjectSerializer
+│   ├── rendering/      # Renderer, MeshRenderer, GizmoRenderer, PointRenderer, ShaderManager
+│   ├── sculpting/      # Brush base + Smooth/Grab/PushPull/Inflate/Mask brushes
+│   ├── thirdparty/     # stb_image, stb_image_write
+│   ├── ui/             # AppWindow, StageSidebar, Modals, Viewport, ViewportHost
+│   └── utils/          # Config, HttpClient, SingleInstance, OpenUrl, Paths,
+│                       # BVH, Logger, RayCaster, SpatialHash, ErrorHelper
+├── src/                # Implementation, mirroring include/ structure
+│   └── main.cpp        # GLFW window + ImGui init + main loop entry
+├── .claude/            # Slash skills, agents, hooks, rules, sprint context
+├── CMakeLists.txt      # Build config (vcpkg toolchain expected)
+├── build-msvc.ps1      # MSVC build helper with optional DLL staging
+├── build-mingw.ps1     # MinGW build helper
+└── vcpkg.json          # Pinned dependency manifest
+```
+
+UI files retain transitional names (`MainWindow.{h,cpp}`, `ViewportWidget`, `SidebarWidget`, `ExportDialog`, etc.) from the Qt era — they are being progressively folded into the ImGui hosts (`AppWindow`, `Viewport`, `StageSidebar`, `Modals`) as Sprint 3.6 work shakes out remaining call sites.
 
 ## Four-Stage Workflow
 
@@ -61,8 +93,21 @@ Topology, UVs, and normals must survive the full pipeline unmodified. Any regres
 ## File Formats
 
 - **Import**: FBX (primary), OBJ, GLTF
-- **Export**: FBX with Unreal Engine naming conventions — Y-up, optional triangulation, includes geometry + UVs + normals + materials
+- **Export**: FBX with Unreal Engine naming conventions — Y-up, geometry + UVs + normals + materials. **Triangulation defaults OFF** because UE5 MetaHuman Conform requires source quad topology end-to-end; do not flip this default without a UE5 import test.
 - **Project files**: `.mmproj` (JSON), optional zlib compression
+
+## Build & Run
+
+Build via the helper scripts — they handle vcpkg toolchain wiring and (with `-Deploy`) stage runtime DLLs next to the executable:
+
+```powershell
+.\build-msvc.ps1 -Deploy        # MSVC Release build with DLL staging
+.\build-mingw.ps1               # MinGW build
+```
+
+Output: `build\bin\Release\MetaVisage.exe`. **Kill any running instance before relinking** — Windows MSVC fails with `LNK1104` if `MetaVisage.exe` is held open by a previous run.
+
+A successful CMake configure step requires `VCPKG_ROOT` (or `-DCMAKE_TOOLCHAIN_FILE=...`) and a Qt 6.10+ install for the transitional `Qt6::Core` link. See `BUILD.md` for the full prerequisite list.
 
 ## Web Team Integration (v2.0)
 
