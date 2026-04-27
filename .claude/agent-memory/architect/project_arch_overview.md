@@ -1,306 +1,279 @@
 ---
 name: MetaVisage Architecture Overview
-description: High-level layer map, key files, build system, and Qt coupling as of Sprint 3.5 audit
+description: High-level layer map, Qt6::Core surface inventory (Sprint 3.7 audit), MorphWorker state, Undo/Redo wiring state, and key build system facts as of 2026-04-26
 type: project
 ---
 
 ## Layer Map
 
 ```
-Presentation  → src/ui/ (MainWindow, ViewportWidget, ViewportContainer, SidebarWidget, dialogs)
-Application   → src/ui/MainWindow.cpp (stage orchestration, morph threading, undo/redo wiring)
+Presentation  → src/ui/AppWindow.cpp, StageSidebar.cpp, Modals.cpp, ViewportHost.cpp, Viewport.cpp, FileDialogs.cpp
+Application   → src/ui/AppWindow.cpp (stage orchestration, morph threading, undo/redo wiring)
 Domain        → src/core/, src/deformation/, src/sculpting/, src/baking/
 Infrastructure → src/rendering/, src/io/, src/utils/
 ```
 
-Single root CMakeLists.txt only — no subdirectory cmake files.
+Dead files still present (never instantiated, not in CORE_SOURCES):
+- src/ui/MainWindow.cpp — Qt QMainWindow; contains old MorphWorker (QThread-based, lines 36–102)
+- src/ui/ViewportContainer.cpp, ViewportWidget.cpp, SidebarWidget.cpp
+- src/ui/WelcomeDialog.cpp, ExportDialog.cpp, ShortcutsDialog.cpp, TexturePreviewDialog.cpp
 
-## Entry Point
+## MorphWorker — Sprint 3.7.4 status (ALREADY DONE in AppWindow)
 
-`src/main.cpp` — QApplication init, OpenGL format (4.3 core, 4xMSAA), dark Fusion palette, icon load, Logger init, MainWindow show.
+AppWindow.cpp already ports MorphWorker to std::thread + std::atomic:
+- `morphThread_` is `std::thread` (AppWindow.h:133)
+- `morphRunning_`, `morphFinished_`, `morphProgress_` are `std::atomic<bool/float>` (h:134-136)
+- `morphResultMutex_` is `std::mutex` (h:137)
+- `StartMorph()` at AppWindow.cpp:1304 — spawns std::thread, wires MeshDeformer directly
+- `CancelMorph()` at AppWindow.cpp:1394 — calls morphDeformer_->Cancel() (std::atomic<bool>)
+- `PollMorphCompletion()` at AppWindow.cpp:1400 — joins thread each frame on finish
+- `AcceptMorph()` at AppWindow.cpp:1451
+- All four sidebar flags (processMorphRequested, cancelMorphRequested, acceptMorphRequested) ARE wired at AppWindow.cpp:480-482
+- Story 3.7.4 is effectively DONE — only remaining issue: QStringLiteral in two errorModal_.Open() calls at AppWindow.cpp:1317-1318 and :1442-1445
 
-## Key Structural Facts
+## Qt6::Core Surface — Full Inventory (Sprint 3.7 audit)
 
-- No .qrc files; no embedded resources. Shaders/assets copied to build dir via file(COPY) in CMakeLists.
-- No vcpkg.json — must be created for Sprint 3.5.
-- No single-instance detection, crash handler, or CLI arg parsing in main.cpp.
-- tr() used ~50+ times but no QTranslator installed — pure string literals, no real i18n.
-- QSettings appears only in WelcomeDialog.cpp (recently-opened projects).
-- MorphWorker is a QObject defined inside MainWindow.cpp (lines 36-99), requires #include "MainWindow.moc" at line 1855.
+### Headers with Qt symbols (LIVE, in CORE_SOURCES):
 
-## Qt Threading Pattern
+**include/core/Mesh.h** — QString in public API
+- Line 5: #include <QString>
+- Lines 19-20: Load(const QString&), Save(const QString&)
+- Lines 29-30: GetName(), GetFilePath() return const QString&
+- Line 41: SetName(const QString&)
+- Lines 69-70: QString name_, filepath_ members
 
-QThread + moveToThread pattern for morph deformation:
-- MainWindow.cpp:1491 creates QThread, MorphWorker moved to it
-- Signals: progressUpdated, finished — connect back to MainWindow slots
-- Replacement: std::thread + std::atomic + callback/future
+**include/core/Project.h** — QString + QDateTime
+- Lines 8-9: #include <QString>, #include <QDateTime>
+- Line 15: MeshReference::filepath is QString
+- Lines 152-153: Save/Load take const QString&
+- Lines 156-159: GetName/GetPath return const QString&; GetCreated/GetLastModified return const QDateTime&
+- Lines 179-180: SetName/SetPath take const QString&
+- Lines 187-190: projectName_, projectPath_ QString; created_, lastModified_ QDateTime
 
-## Rendering Layer Qt Coupling (Risk)
+**include/core/TextureData.h** — QString throughout
+- Line 5: #include <QString>
+- Line 20: LoadFromFile(const QString& path)
+- Line 40: GetFilePath() returns const QString&
+- Line 49: QString filePath_ member
+- Line 57: NamedTexture::name is QString
+- Lines 66,74,82: TextureSet::Add/Remove/GetByName take const QString&
 
-All 5 renderer classes inherit QOpenGLFunctions_4_3_Core as base:
-- Renderer, ShaderManager, MeshRenderer, PointRenderer, GizmoRenderer
-- Each calls initializeOpenGLFunctions() in constructor
-- ShaderManager uses QFile/QTextStream for shader file loading
-- Under GLAD, GL functions are global — base class and initializeOpenGLFunctions() both go away
+**include/core/UndoableAction.h**
+- Line 4: #include <QString>
+- Line 13: virtual QString Description() const = 0
 
-## Domain Layer Qt Coupling (Risk)
+**include/core/UndoStack.h** (via UndoableAction)
+- Lines 21-22: UndoDescription()/RedoDescription() return QString
 
-QString used as cross-layer currency in:
-- include/core/Mesh.h (Load/Save/GetName/GetFilePath)
-- include/core/Project.h (QString + QDateTime in structs)
-- include/core/TextureData.h (QString + QImage — ToQImage() used only by TexturePreviewDialog)
-- include/core/UndoableAction.h (Description() returns QString)
-- include/utils/Logger.h (entire API surface: QString, QFile, QMutex, QTextStream)
-- include/utils/ErrorHelper.h (QString, QWidget* params)
-- include/io/ProjectSerializer.h (QString, QJsonObject, QJsonArray)
-- include/io/MeshExporter.h (QString)
-- include/baking/TextureWriter.h (QString)
+**include/core/UndoActions.h**
+- All four action classes return QString from Description()
+- PointPlacementUndoAction ctor takes const QString& description
+- QString description_ member
 
-## Serialization
+**include/utils/Logger.h** — full Qt API surface
+- Lines 4-6: #include <QString>, <QFile>, <QTextStream>
+- Lines 17-18: Initialize(const QString&), Log(LogLevel, const QString&, ...)
+- Line 21: GetLogFilePath() returns QString
+- Lines 30-31: WriteToFile(const QString&), LevelToString returns QString
+- Lines 33-34: QFile logFile_, QString logFilePath_ members
+- Line 40: qint64 MAX_LOG_SIZE constant (Qt type)
+- MV_LOG_* macros pass QString to Log()
 
-ProjectSerializer uses QJsonDocument/QJsonObject/QJsonArray/QFile throughout.
-.mmproj format is plain JSON. nlohmann/json + std::fstream is the planned replacement.
+**include/utils/Paths.h** — all 4 functions return QString
+- Line 4: #include <QString>
 
-## Dialog Contracts (Sprint 3.6.3 audit — 2026-04-21)
+**include/utils/HttpClient.h** — QString in all public methods
+- Line 4: #include <QString>
+- Lines 27,31,33,35-36: PostJson/PostJsonBearer/GetJsonBearer take const QString&
 
-### ExportDialog (src/ui/ExportDialog.cpp)
-- Modal QDialog; no signals emitted
-- Public API: GetOptions() → ExportOptions, GetFilePath() → QString, SetTexturesAvailable(bool)
-- Contains its own QFileDialog::getSaveFileName call (ExportDialog.cpp:134)
-- Launch: MainWindow::OnExportMesh() at MainWindow.cpp:780
+**include/utils/Config.h** — QString throughout
+- Line 4: #include <QString>
+- Lines 29-30,34-41,55-58: all token/path storage uses QString/std::optional<QString>
 
-### WelcomeDialog (src/ui/WelcomeDialog.cpp)
-- Modal QDialog; Result enum: NewProject / OpenProject / OpenRecent / Cancelled
-- Public API: GetResult(), GetSelectedProjectPath(); static GetRecentProjects(), AddRecentProject()
-- Contains QFileDialog::getOpenFileName at WelcomeDialog.cpp:220 (Open Project button)
-- QSettings at lines 237,242,246 — key "recentProjects" (QStringList, max 5 MRU)
-- Launch: MainWindow::ShowWelcomeDialog() via QTimer::singleShot(0,...) in MainWindow ctor (line 142)
-- AddRecentProject called from MainWindow at lines 544, 565, 587, 1102
+**include/utils/OpenUrl.h**
+- Line 4: #include <QString>; OpenUrl(const QString&)
 
-### ShortcutsDialog (src/ui/ShortcutsDialog.cpp)
-- Modal read-only QDialog; hardcoded shortcut table; no signals, no output
-- Launch: MainWindow::OnKeyboardShortcuts() at MainWindow.cpp:1151
-- Content: 6 categories, ~21 shortcut rows
+**include/io/ProjectSerializer.h** — QJsonObject/QJsonArray/QStringList/QString everywhere
+- Lines 5-7: #include <QString>, <QJsonObject>, <QJsonArray>
+- Line 13: SerializationResult::errorMessage is QString
+- Line 14: SerializationResult::warnings is QStringList
+- Lines 25,28: Save/Load take const QString&
+- All 10 serialize helpers return QJsonObject / take QJsonObject& with QStringList&
+- Path helpers return/take QString
 
-### TexturePreviewDialog (src/ui/TexturePreviewDialog.cpp)
-- Non-modal (show(), WA_DeleteOnClose); no signals, no output
-- Accepts (QString textureName, const TextureData& texture)
-- Calls texture.ToQImage() — only consumer of that method; removing this dialog frees ToQImage()
-- Launch: SidebarWidget.cpp:2156 — texture thumbnail click in Morph sidebar
+**include/io/MeshExporter.h** — QString in structs + all methods
+- Line 6: #include <QString>
+- ExportOptions: ueNamingPrefix (QString), textureFormat (QString)
+- ExportResult: errorMessage, exportedFilePath, bakedAlbedoPath, bakedNormalMapPath (all QString)
+- ExportProgressCallback typedef uses QString
+- Export(), ExportOBJDirect(), ExportWithAssimp(), etc. all take const QString&
 
-## QFileDialog Call Sites (7 total — all → NFD)
-- WelcomeDialog.cpp:220 — getOpenFileName, *.mmproj
-- MainWindow.cpp:452 — getOpenFileName, *.mmproj
-- MainWindow.cpp:575 — getSaveFileName, *.mmproj
-- MainWindow.cpp:598 — getOpenFileName, mesh files
-- MainWindow.cpp:675 — getOpenFileName, mesh files
-- MainWindow.cpp:717 — getOpenFileName, image files
-- ExportDialog.cpp:134 — getSaveFileName, format-specific
+**include/baking/TextureWriter.h** — WritePNG/WriteTGA take const QString&
 
-## QMessageBox Call Sites
-- All via ErrorHelper.cpp (ShowError/ShowWarning/ConfirmAction) — 14 call sites in MainWindow.cpp
-- Direct QMessageBox in MainWindow.cpp: lines 894, 1189, 1719, 1842
-- Replacement: queued ImGui modal system (cannot show mid-frame synchronously)
+**include/rendering/ShaderManager.h** — all methods take/return QString, map key is QString
 
-## System Services (Sprint 3.6.4 audit — 2026-04-21)
+**include/ui/AppWindow.h** — #include <QString>, projectPath_ is QString, private methods take const QString&
 
-### QSettings
-- Only in WelcomeDialog.cpp:237,242,246
-- Key: "recentProjects", value: QStringList of absolute paths, max 5 MRU
-- Migration target: %APPDATA%\MetaVisage\config.json
+**include/ui/Viewport.h** — #include <QString>, viewportLabel_ is QString, SetViewportLabel takes const QString&
 
-### QDesktopServices::openUrl (3 call sites, MainWindow.cpp)
-- Line 900: open export folder in Explorer (fromLocalFile)
-- Line 1147: https://docs.metavisage.io
-- Line 1156: https://github.com/cmershon2/MetaVisage/issues
-- Replacement: ShellExecuteW for all three
+**include/ui/StageSidebar.h** — #include <QString>, Actions::importTextureSlot is QString
 
-### QLocalServer / QLocalSocket — ABSENT; net-new via CreateMutexW
-### QNetworkAccessManager — ABSENT; net-new via WinHTTP or libcurl
+**include/ui/Modals.h** — #include <QString>; all modal structs (ConfirmModalState, ErrorModalState, WelcomeModalState, ExportModalState) have QString fields and Open() methods taking QString
 
-### Qt Threading (all sites)
-- morphThread_: MainWindow.cpp:1491-1514 (MorphWorker defined inline MainWindow.cpp:36-99)
-- statsTimer_: MainWindow.cpp:133-135, QTimer 500ms stats tick
-- QTimer::singleShot: MainWindow.cpp:142, deferred welcome dialog
-- QProgressDialog: MainWindow.cpp:798, export progress
-- QMutex: Logger.h:38, Logger.cpp:25,57 only
-- QWaitCondition, QAtomicInt: ABSENT
-- No texture thumbnail loader thread exists — only MorphWorker
+**include/ui/FileDialogs.h** — #include <QString>; OpenFile/SaveFile return std::optional<QString>
 
-### About Dialog
-- Does NOT exist. Help menu has Documentation + Report Issue → both QDesktopServices::openUrl.
+**include/baking/TextureBaker.h** — BakeResult::errorMessage is QString
 
-## ViewportWidget Deep Structure (Sprint 3.5 port target)
+### Dead headers (never compiled in CORE_SOURCES, still in include/):
+- include/utils/ErrorHelper.h — QWidget* params, QString throughout
+- include/ui/MainWindow.h — QThread*, QTimer*, QString throughout
+- include/ui/SidebarWidget.h, ViewportWidget.h, ViewportContainer.h — full Qt Widgets
+- include/ui/WelcomeDialog.h, ExportDialog.h, ShortcutsDialog.h, TexturePreviewDialog.h
 
-### Owns (must survive port)
-- unique_ptr<Camera> — zero Qt deps, portable as-is
-- unique_ptr<Renderer> — needs QOpenGLFunctions→GLAD rework
-- All brush instances (SmoothBrush, GrabBrush, PushPullBrush, InflateBrush, MaskBrush)
-- QComboBox* shadingModeCombo_ at (8,8) — becomes ImGui::Combo in viewport window
-- QPoint lastMousePos_, transformStartPos_ — become plain int/float pairs
+### Implementation files with Qt usage (LIVE in CORE_SOURCES):
 
-### GL context lifecycle
-- initializeGL(): calls initializeOpenGLFunctions(), creates Renderer, glEnable(GL_MULTISAMPLE)
-- paintGL(): renderer_->Render() then QPainter overlay pass (label, axis letters, point numbers)
-- resizeGL(): only glViewport(0, 0, w, h)
+**src/core/Mesh.cpp** — 13 MV_LOG_* calls with QString().arg(); #include <QFileInfo>; QFileInfo for baseName extraction at line 53
 
-### QPainter overlays in paintGL (lines 835–968) — must become ImGui draw-list calls
-1. Viewport label text (e.g. "Target Mesh") — line 840–856
-2. Orientation gizmo X/Y/Z axis letter labels with NDC projection — lines 862–904
-3. Point number labels with WorldToScreen projection (Stage 2 only) — lines 907–968
+**src/core/Project.cpp** — QDateTime::currentDateTime() at lines 9,10,22
 
-### makeCurrent()/doneCurrent() call sites (GPU uploads from sculpt/mask strokes)
-Lines: 194, 201, 209, 388, 420, 492, 532, 627, 681, 715
-All on main thread — become no-ops under GLFW (context permanently current on main thread).
+**src/core/UndoStack.cpp** — 4 MV_LOG_* calls with QString().arg(); UndoDescription/RedoDescription return QString
 
-### Keyboard shortcuts in keyPressEvent (line 1209)
-All via QKeyEvent::key() switch — no QShortcut objects:
-- G/R/S: transform modes (Alignment stage only)
-- X/Y/Z: axis constraints (when transform mode active)
-- [/]: brush radius ±10% (TouchUp stage only) — emits BrushRadiusChanged
-- Escape: cancel transform or deselect point
-- Delete: remove selected point (PointReference stage) — emits PointDeleteRequested
-- Home: camera reset
-- 1/3/5/7: ortho views (MAIN ROW numbers, not numpad — critical GLFW distinction)
-- 5: toggle perspective/ortho
-- F: focus on mesh bounds
+**src/core/TextureData.cpp** — 2 MV_LOG_* calls; LoadFromFile(const QString&)
 
-### QPoint member variable coupling
-QPoint lastMousePos_ and QPoint transformStartPos_ (h:180–181) come transitively from QMouseEvent.
-ApplyTransform(const QPoint& delta) (cpp:1436) takes QPoint. Must replace with plain struct { int x, y; } or glm::ivec2 when QMouseEvent is removed.
+**src/io/ProjectSerializer.cpp** — #include <QFile>, <QJsonDocument>, <QDir>, <QFileInfo>; entire file uses QFile + QJsonDocument + QJsonObject + QJsonArray + QDir + QFileInfo + QDateTime; ~95 Qt symbol uses across ~250 lines
 
-### Signals emitted by ViewportWidget (h:107–127)
-TransformModeChanged, TargetTransformChanged, CameraChanged, PointPlaced, PointSelected,
-PointDeleteRequested, BrushRadiusChanged, TransformApplied, SculptStrokeCompleted, MaskStrokeCompleted.
-SculptStrokeCompleted, MaskStrokeCompleted, BrushRadiusChanged, TransformApplied are NOT connected
-inside the viewport layer files — wired upstream in stage controllers or MainWindow.
+**src/io/MeshExporter.cpp** — (not read in full but header implies QString throughout)
 
-### Dead code in ViewportContainer
-OnLeftViewportClicked() and OnRightViewportClicked() are declared (h:50–51) and defined (container.cpp:162–168)
-but are never connected via connect() anywhere in these files. Safe to remove.
+**src/baking/TextureBaker.cpp** — 7 MV_LOG_* with QString().arg()
 
-### Camera orbit/pan/zoom
-- MMB → orbit; Shift+MMB → pan; scroll → zoom
-- Qt modifier check: event->modifiers() & Qt::ShiftModifier (line 1027)
-- GLFW: check GLFW_KEY_LEFT_SHIFT state at time of MMB press
-- Camera::Orbit/Pan/Zoom take plain floats — portable
+**src/baking/TextureWriter.cpp** — 6 MV_LOG_* with QString; WritePNG/WriteTGA take const QString&; uses path.toUtf8().constData() for stb_image_write
 
-### Dual viewport camera sync (ViewportContainer)
-- CameraChanged signal → OnLeft/RightCameraChanged → SyncCameraFrom()
-- syncing_ bool prevents re-entrant loops (lines 134–160)
-- Cameras are COPIED, not shared pointer
-- Splitter sizes: setSizes({w/2, w/2}) — no QSettings persistence — becomes ImGui 50/50 default
+**src/rendering/ShaderManager.cpp** — #include <QFile>, <QTextStream>, <QDebug>; QFile + QTextStream for shader file reading; all methods take QString; map key is QString
 
-## Sprint 3.6 Regression Audit (as of 2026-04-23)
+**src/rendering/GizmoRenderer.cpp** — #include <QDebug>; qDebug()/qWarning() for load logging; CWD-relative paths "assets/models/gizmos/..." at lines 34-36
 
-### Issue 1 — Sidebar Dock (AppWindow.cpp:380–393, StageSidebar.cpp:60–61)
-DockingEnable is set and DockBuilder fires. Root cause: `io.IniFilename = nullptr` (line 122) means the corrected dock state is never persisted. `StageSidebar::Render` passes a fixed pixel size hint (`ImVec2(320, 520)`, `ImGuiCond_FirstUseEver`) which can override the proportional dock slot before dockspace geometry resolves, causing the window to land undocked and stay there.
+**src/utils/Logger.cpp** — #include <QDir>, <QDateTime>, <QDebug>, <QFileInfo>; QDir/QFile/QTextStream/QDateTime/QFileInfo/qDebug throughout; entire file is Qt-dependent
 
-### Issue 2 — Transform Gizmo (Viewport.cpp:208–244, StageSidebar.cpp:156–170)
-G/R/S keys set `transformMode_` and the gizmo renders. LMB drag path is explicitly deferred — `isTransforming_` is never set true, `OnMouseButton` has no gizmo-hit logic (Viewport.cpp:226–227 comment). The sidebar DragFloat3 spinboxes (Position/Rotation/Scale) DO write to `project_->GetAlignmentData().targetMeshTransform` and work.
+**src/utils/Paths.cpp** — #include <QDir>; QDir for EnsureDir, QString::fromWCharArray for Windows API results
 
-### Issue 3 — Font Size (AppWindow.cpp:116–141)
-No `io.Fonts->AddFontFromFileTTF` call anywhere — falls back to ProggyClean 13px bitmap font. No `glfwGetWindowContentScale` / `io.FontGlobalScale` DPI scaling. Dark theme is correctly applied via `ApplyDarkTheme()`.
+**src/utils/Config.cpp** — #include <QFile>, <QByteArray>; QFile + QByteArray for file I/O; conversion helpers QsToUtf8/Utf8ToQs throughout; stores tokens as plaintext in config.json
 
-### Issue 4 — Texture Preview (Modals.cpp, StageSidebar.cpp:130–150)
-`TexturePreviewDialog` was never ported. No `ImGui::Image`, no `ImTextureID`, no GL texture upload for preview in sidebar. Texture list renders as BulletText labels only.
+**src/utils/HttpClient.cpp** — 1 MV_LOG_WARNING with QString().arg(); url.toUtf8().toStdString() conversions at lines 54, 110, 116
 
-### Issue 5 — Shading Mode (AppWindow.cpp:447–452, Viewport.cpp:50–57)
-View > Shading Mode submenu exists but all items stubbed with `false, false` (display only). `Viewport::SetShadingMode()` and renderer plumbing are intact. Story 3.6.5 deferred — hook lands in `RenderMainMenuBar`.
+**src/deformation/MeshDeformer.cpp** — 4 MV_LOG_* with QString().arg()
 
-### Issue 6 — Status Bar Cut Off (AppWindow.cpp:370–400)
-`statusH` is correctly reserved from dockspace. However `ImGui::SetCursorPosY(ImGui::GetCursorPosY())` at line 398 is a no-op — cursor is not explicitly advanced to `avail.y - statusH` after `DockSpace()`, so `RenderStatusBar` renders at an incorrect Y position.
+**src/deformation/NRICPDeformer.cpp** — 21 MV_LOG_* with QString().arg() (largest single consumer)
 
-### Issue 7 — Default Head Orientation (AppWindow.cpp:747–765, src/rendering/Renderer.cpp)
-`UseDefaultMorphMesh()` applies -90° X rotation to `MorphMesh.transform` (matching Qt era). Coordinate system did not change between sprints. Suspected cause: `Renderer::Render()` may not consume `MeshReference::transform` for the morph mesh's model matrix. Needs verification in Renderer.cpp.
+**src/deformation/RBFInterpolator.cpp** — #include <QDebug>
 
-## Sprint 3.5 Completed State (as of 2026-04-21)
+**src/ui/AppWindow.cpp** — #include <QFileInfo>, <QString>; ~25 MV_LOG_* with QString().arg(); QFileInfo for fileName() extraction at multiple sites; QStringLiteral at lines 1118, 1317, 1318, 1442, 1445
 
-**Live (new ImGui/GLFW shell):**
-- `src/ui/AppWindow.cpp` — owns GLFW window, GLEW init, ImGui context, render loop (Run/RenderFrame/Shutdown)
-- `src/ui/ViewportHost.cpp` — replaced ViewportContainer; dual-viewport layout via ImGui InvisibleButton regions
-- `src/ui/Viewport.cpp` — replaced ViewportWidget; plain C++ with GLFW/ImGui callbacks
+**src/ui/StageSidebar.cpp** — #include <QFileInfo>; QString FileNameOrEmpty helper; QFileInfo(path).fileName(); QString::fromUtf8 at line 155; morph.filepath.isEmpty() (QString API)
 
-**Dead (still compile, never instantiated):**
-- `src/ui/MainWindow.cpp` — Qt QMainWindow; all stage orchestration/undo lived here
-- `src/ui/ViewportContainer.cpp` — Qt QSplitter dual-viewport
-- `src/ui/ViewportWidget.cpp` — Qt QOpenGLWidget
+**src/ui/ViewportHost.cpp** — QStringLiteral for viewport labels at lines 52, 54, 60 (in SetDualMode)
 
-**Key gaps entering Sprint 3.6:**
-- `ImGuiConfigFlags_DockingEnable` NOT set (AppWindow.cpp:72 — only NavEnableKeyboard)
-- No Project instance constructed in shell — ViewportHost::SetProject never called
-- No UndoStack instantiated anywhere (was owned by dead MainWindow)
-- No StageManager class exists — stage set directly via Project::SetCurrentStage()
-- No application-level shortcut handling (Ctrl+Z/S/O etc.) — only viewport shortcuts in Viewport::OnKey
-- Menu bar: clean slate — RenderFrame contains only debug HUD (AppWindow.cpp:221–233)
-- GLEW is used (not GLAD) — note for 3.6 implementation
+## Build System
 
-**3.6 scope** (next sprint):
-- SidebarWidget, ExportDialog, ShortcutsDialog, WelcomeDialog, TexturePreviewDialog
-- Menu bar, toolbar, status bar — extend AppWindow::RenderFrame
-- File dialogs (QFileDialog → NFD), QSettings, QDesktopServices
-- ErrorHelper (QMessageBox)
+**CMakeLists.txt:**
+- Line 38: find_package(Qt6 REQUIRED COMPONENTS Core)
+- Line 217: Qt6::Core linked PUBLIC to MetaVisageCore static library
+- No qt_add_executable, no qt_standard_project_setup, no AUTOMOC/AUTORCC/AUTOUIC
+- No enable_testing(), no add_test(), no CTest infrastructure
+- No CMake guard against Qt6::Gui/Widgets/OpenGL/OpenGLWidgets headers
 
-**Why:** The category B portable layers (core, rendering, io, utils) all have hidden Qt coupling that was not originally intended. The rendering layer's QOpenGLFunctions inheritance is the largest structural risk.
+**vcpkg.json:** No qt* dependency listed — Qt is a system install, NOT a vcpkg package.
+This means "drop qtbase from vcpkg.json" is a no-op; the real change is find_package(Qt6) removal from CMakeLists.txt and the -DCMAKE_PREFIX_PATH=$QtPath removal from build-msvc.ps1.
 
-## Stage 1 (Alignment) UI Inventory — Qt Reference (for ImGui port)
+**build-msvc.ps1:**
+- Line 4: $QtPath = "C:/Qt/6.10.3/msvc2022_64" default parameter
+- Line 41: -DCMAKE_PREFIX_PATH="$QtPath" in CMake args (needs removal)
+- Lines 84-94: windeployqt invocation to deploy Qt6Core.dll (needs removal)
+- No build-mingw.ps1 content read but presumably similar
 
-### Import group buttons (SidebarWidget.cpp:201–252)
-- "Import Morph Mesh (MetaHuman)" → emits ImportMorphMeshRequested
-- "Use Default MetaHuman Head" → emits UseDefaultMorphMeshRequested
-- "Import Target Mesh (Custom)" → emits ImportTargetMeshRequested
+## Sprint 3.6 Code Review Blockers — Current State
 
-### Default MetaHuman head — single preset, no picker
-- Hardcoded path: `<appDir>/assets/models/MetaHumanHeadLod0.obj`
-- File exists at: `assets/models/MetaHumanHeadLod0.obj`
-- After load, applies -90° X rotation: `Quaternion::FromAxisAngle({1,0,0}, -90.0f)` — MainWindow.cpp:651-653
-- Then calls `camera->FocusOnBounds(bounds)` and re-evaluates CanProceedToNextStage
+### CancelTransform Escape (Story 3.7.5a)
+- Viewport.cpp:80-86: CancelTransform() sets isTransforming_=false, clears activeGizmoAxis_ and axisConstraint_, but the comment "3.5.4 restores transformBeforeState_" at line 85 is a TODO — the actual restoration of project_->GetTargetMesh().transform = transformBeforeState_ is NOT implemented.
+- transformBeforeState_ IS captured at Viewport.cpp:272 on LMB press.
+- OnKey at Viewport.cpp:493-499: Escape calls CancelTransform() — but CancelTransform doesn't restore the transform.
+- BUG CONFIRMED: restore is missing from CancelTransform().
 
-### Mesh Status group (SidebarWidget.cpp:255–268)
-- Two QLabel* with objectNames "morphStatus" and "targetStatus" — red when unloaded, green when loaded
+### HeaderCallback off-by-one (Story 3.7.5b)
+- HttpClient.cpp:35: checks line.size() > 13 (should be >= 13 for "Retry-After: " = 12 chars + value)
+- HttpClient.cpp:35-36: _strnicmp checks 12 chars ("Retry-After:"), then strtol starts at line.c_str() + 12 which is the space after the colon — strtol naturally skips leading whitespace, so the space is handled correctly
+- BUT: the line captured from curl includes the CRLF ("\r\n"). strtol stops at '\r', so retryAfterSeconds gets correct digits. No off-by-one in the actual value parsed.
+- HOWEVER: The sprint plan says "drops the last char" — this may refer to the fact that the full header line including \r\n is passed to strtol, and \r would terminate parsing. Need to verify if curl strips \r\n from header lines (it does NOT by default). If the value is "120\r\n", strtol("120\r\n") = 120 correctly. The "off-by-one" bug is that size > 13 check may silently skip lines where "Retry-After: " + value < 13 total chars (e.g. "Retry-After: 1" = 15 chars, fine). The actual documented bug may be different from what's apparent from reading — needs runtime verification.
 
-### Target Textures group (SidebarWidget.cpp:271–338)
-- Dynamic list populated by `RefreshTextureList(const TextureSet&)`
-- Preset slot names (offered in order, filtered if in use): "Albedo", "Normal Map", "Roughness", "AO", "Emissive", "Metallic"
-- "+ Add Texture" button opens name picker dialog, emits `ImportTextureRequested(name)`
-- Per-slot: emits `ImportTextureRequested(name)` and `RemoveTextureRequested(name)`
-- importAlbedoButton_ and importNormalMapButton_ are nullptr — legacy signals not active
-- project_->GetTargetTextures().textures is the backing store (vector of named TextureEntry)
+### Gizmo asset paths (Story 3.7.5c)
+- GizmoRenderer.cpp:34-36: LoadGizmoModel called with literal "assets/models/gizmos/move_gizmo.obj" etc. — CWD-relative, NOT via Paths::ExecutableDir()
+- Paths::ExecutableDir() exists at include/utils/Paths.h:19 and is implemented
+- BUG CONFIRMED: needs change to Paths::ExecutableDir() + "/assets/models/gizmos/..."
 
-### Transform Tools group (SidebarWidget.cpp:341–359)
-- Static keybind hint label: "G - Move | R - Rotate | S - Scale / X/Y/Z - Constrain to axis / Esc - Cancel | Left-click + drag to apply"
-- transformModeLabel_ initialized "Mode: None", updated by OnTransformModeChanged(TransformMode, AxisConstraint)
+### Plaintext token storage (Story 3.7.5d)
+- Config.cpp:96-102: accessToken_, refreshToken_, licenseJwt_ written as plaintext JSON strings in %APPDATA%\MetaVisage\config.json
+- No CryptProtectData/CryptUnprotectData anywhere in the codebase
+- No SecureStorage class exists
+- BUG CONFIRMED: tokens are plaintext; DPAPI wrapper needed
 
-### Target Transform group (SidebarWidget.cpp:361–547)
-- Pos XYZ spinboxes: range ±1000, 2dp, step 0.01
-- Rot XYZ spinboxes: range ±360, 1dp, step 1, degree suffix
-- Scale XYZ spinboxes: range 0.001–100, 3dp, step 0.01
-- All 9 spinboxes → OnSpinBoxValueChanged() → emits TransformValuesChanged
-- Reset Transform button → emits ResetTransformRequested
-- NO axis lock checkboxes; NO snap; NO symmetry (symmetry is Stage 2 only)
+## Undo/Redo Wiring — Current State (Story 3.7.7)
 
-### FocusOnBounds (camera framing after import)
-- Qt path: camera->FocusOnBounds(bounds) after every successful Mesh::Load()
-- MainWindow.cpp:624-626 (morph import), :665-667 (default), :698-699 (target)
-- ImGui AppWindow::ImportMorphMeshFromDisk / ImportTargetMeshFromDisk are STUBS — only set filepath/isLoaded=false, no actual Mesh::Load() call, no FocusOnBounds. Must be fully implemented.
+### UndoStack and action classes — all defined
+- UndoStack: include/core/UndoStack.h — Push/Undo/Redo/CanUndo/CanRedo all implemented
+- UndoableAction subclasses in include/core/UndoActions.h:
+  - TransformUndoAction (line 18) — class exists, Undo/Redo implemented
+  - PointPlacementUndoAction (line 42) — class exists, Undo/Redo implemented
+  - MorphUndoAction (line 68) — class exists
+  - SculptStrokeUndoAction (line 103) — class exists
 
-### CanProceedToNextStage — Stage 1 → Stage 2 (Project.cpp:36-40)
-- Condition: morphMesh_.isLoaded && targetMesh_.isLoaded (both must be true)
-- isLoaded set to false in current ImGui stubs — "Next Stage" will never enable until load is real
+### AppWindow onPointPlaced (AppWindow.cpp:171-278)
+- Fully implemented point placement + symmetry mirror — DOES NOT push to undoStack_
+- No PointPlacementUndoAction push anywhere in the lambda
 
-### Grid rendering
-- Owned by Renderer (src/rendering/Renderer.cpp)
-- Flag: showGrid_ (bool, defaults true in constructor)
-- API: Renderer::SetShowGrid(bool) / GetShowGrid() — Renderer.h:29-30
-- Fullscreen triangle approach: empty gridVAO_, gridVertexCount_=3, gl_VertexID driven
-- Shaders: assets/shaders/grid.vert + grid.frag
-- No Project or Config field gates it — purely runtime renderer flag
+### AppWindow onPointDelete (AppWindow.cpp:283-306)
+- Fully implemented deletion — DOES NOT push to undoStack_
 
-## Qt-isms Remaining in UI-Adjacent Code (Post-3.5)
+### Viewport::OnTransformApplied callback
+- Defined in Viewport.h:131: std::function<void(Transform, Transform)> OnTransformApplied
+- Called at Viewport.cpp:291-294 on LMB release when isTransforming_
+- In AppWindow.cpp Initialize(): NO OnTransformApplied callback is wired to any viewport
 
-- AppWindow.cpp:20 — #include <QString> for MV_LOG macros
-- Viewport.h:4,68,167 — QString for viewportLabel_ member and setter
-- ViewportHost.cpp:52–63 — QStringLiteral for viewport labels in SetDualMode (easy to convert to const char*)
-- Project.h:8–9 — QString + QDateTime throughout; all Save/Load paths use QString
-- UndoStack::UndoDescription/RedoDescription return QString
-- Logger entire API: QString, QFile, QMutex, QTextStream
+### StageSidebar transform spinboxes (StageSidebar.cpp:168-179)
+- DragFloat3 for Position/Rotation/Scale at lines 168/173/177
+- No edit-end detection; no undo push per-frame or at deactivation
+- ImGui::DragFloat3 returns true every frame during drag, not just on release
+
+### AppWindow Edit menu (AppWindow.cpp:694-701)
+- Undo/Redo menu items call OnEditUndo()/OnEditRedo() — wired
+- HandleGlobalShortcut handles Ctrl+Z/Ctrl+Shift+Z — wired
+- undoStack_->CanUndo/CanRedo gates menu items correctly
+- BUT: no actions are ever pushed, so Ctrl+Z does nothing
+
+## Sprint 3.5 Hygiene (Story 3.7.6)
+- No tests/ directory exists
+- No enable_testing() in CMakeLists.txt
+- No CTest, gtest, catch2, doctest wiring
+- No add_custom_target(qt_purity_check) or configure-time Qt header guard
+- Both items are net-new work
+
+## MV_LOG_* call counts per file (all use QString().arg() pattern):
+- src/deformation/NRICPDeformer.cpp: 21 calls (largest)
+- src/ui/AppWindow.cpp: 18 calls
+- src/core/Mesh.cpp: 13 calls
+- src/baking/TextureBaker.cpp: 7
+- src/baking/TextureWriter.cpp: 6
+- src/utils/HttpClient.cpp: 1
+- src/core/UndoStack.cpp: 4
+- src/deformation/MeshDeformer.cpp: 4
+- src/ui/FileDialogs.cpp: 4
+- src/core/TextureData.cpp: 2
+- src/utils/SingleInstance.cpp: 2
+- src/utils/Config.cpp: 2
+- src/utils/OpenUrl.cpp: 2
+- src/utils/ErrorHelper.cpp: 3
+- src/io/ProjectSerializer.cpp: 3
+- src/ui/Viewport.cpp: 1
+- src/main.cpp: 6
+- src/ui/MainWindow.cpp: 1 (dead file)
+- Total across live files: ~99 calls
+
+**Why:** Full audit for Sprint 3.7 Qt removal planning as of branch sprint/qt-decouple-and-deferred (clean, no uncommitted changes).
