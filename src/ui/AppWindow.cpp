@@ -1,6 +1,7 @@
 #include "ui/AppWindow.h"
 #include "ui/FileDialogs.h"
 #include "ui/MvStyle.h"
+#include "ui/StageStepper.h"
 #include "ui/Viewport.h"
 #include "ui/ViewportHost.h"
 #include "core/Camera.h"
@@ -703,6 +704,27 @@ void AppWindow::RenderAppShell() {
     ImGui::PopStyleVar(3);
 
     RenderMainMenuBar();
+
+    // Story 3.8.3 — full-width stage stepper between the menu bar and the
+    // dockspace. Returns the 0-based stage index the user clicked, or
+    // nullopt. Forward-jump validation lives inside StageStepper::Render
+    // (mirroring StageSidebar's `Next >` gate); we re-validate the result
+    // here as a belt-and-braces guard before mutating Project state.
+    if (auto clicked = StageStepper::Render(project_.get(),
+                                            ImGui::GetContentRegionAvail().x)) {
+        if (project_) {
+            const int target  = *clicked;
+            const int current = static_cast<int>(project_->GetCurrentStage());
+            const bool allowed =
+                (target != current) &&
+                (target < current ||
+                 (target == current + 1 && project_->CanProceedToNextStage()));
+            if (allowed) {
+                project_->SetCurrentStage(static_cast<WorkflowStage>(target));
+                ApplyStageViewportMode();
+            }
+        }
+    }
 
     // Reserve a 28 px row for the status bar at the bottom of the host window.
     // Spec value (Sprint 3.8 design); the previous GetFrameHeight() reservation

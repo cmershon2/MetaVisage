@@ -110,6 +110,7 @@ set(CORE_SOURCES
     src/ui/Modals.cpp
     src/ui/MvStyle.cpp
     src/ui/StageSidebar.cpp
+    src/ui/StageStepper.cpp
     src/utils/RayCaster.cpp
     src/utils/Logger.cpp
     src/utils/BVH.cpp
@@ -143,6 +144,7 @@ set(CORE_HEADERS
     include/ui/Modals.h
     include/ui/MvStyle.h
     include/ui/StageSidebar.h
+    include/ui/StageStepper.h
     include/core/Mesh.h
     include/core/Transform.h
     include/core/Project.h
