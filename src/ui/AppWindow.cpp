@@ -1446,6 +1446,13 @@ void AppWindow::StartMorph() {
             vp->InvalidateMesh(morphData.deformedMorphMesh.get());
         }
     }
+    // PR #20 review blocker: SculptStrokeUndoAction stores a raw Mesh* into
+    // morphData.deformedMorphMesh.get(). PollMorphCompletion will replace that
+    // shared_ptr when this morph finishes — destroying the Mesh those undo
+    // actions point at. Clearing the stack here matches the discipline
+    // OnFileNewProject and OpenProjectFromDisk already use, and is the same
+    // pattern the Qt-era MainWindow::OnMorphPreviewModeChanged followed.
+    if (undoStack_) undoStack_->Clear();
     morphData.isProcessed = false;
     morphData.isAccepted  = false;
 
