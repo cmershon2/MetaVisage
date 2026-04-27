@@ -509,6 +509,16 @@ void AppWindow::Run() {
                 fbWidth, fbHeight,
                 centralRectPos_.x, centralRectPos_.y,
                 centralRectSize_.x, centralRectSize_.y);
+            // Story 3.8.5 — Stage 3 viewport toolbar shows a READY/PROCESSING
+            // status pill driven by the morph worker. Mirror the atomic into
+            // each viewport so its overlay can read it without locking.
+            const bool processing = morphRunning_.load();
+            if (Viewport* vp = viewportHost_->GetPrimaryViewport()) {
+                vp->SetMorphProcessing(processing);
+            }
+            if (Viewport* vp = viewportHost_->GetSecondaryViewport()) {
+                vp->SetMorphProcessing(processing);
+            }
         }
         RenderFrame(fbWidth, fbHeight);
 

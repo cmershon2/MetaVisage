@@ -72,6 +72,7 @@
 #define MV_ICON_TARGET      "\xEE\x86\x80"  // U+E180  — target
 #define MV_ICON_SLIDERS     "\xEE\x85\xA2"  // U+E162  — sliders
 #define MV_ICON_FLIP_HORIZ  "\xEE\x8D\x9D"  // U+E35D  — flip-horizontal (symmetry X)
+#define MV_ICON_CIRCLE_DASHED "\xEE\x92\xB0"  // U+E4B0  — circle-dashed (Stage 3 source view)
 
 // =============================================================================
 // File / project (Stories 3.8.7, 3.8.11)

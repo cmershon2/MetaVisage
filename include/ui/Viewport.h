@@ -137,13 +137,21 @@ public:
     // mask so Ctrl+Z reverts a whole gesture, not one paint frame.
     std::function<void(std::vector<bool>)> OnMaskStrokeCompleted;
 
+    // --- Stage 3 morph state (drives the Stage 3 toolbar status indicator) ---
+    // Mirrored from AppWindow's morph worker each frame. Read-only signal.
+    void SetMorphProcessing(bool running) { morphProcessing_ = running; }
+
 private:
     // Overlay drawing (ImGui draw list)
     void DrawViewportLabelOverlay(float x, float y, float w, float h);
     void DrawOrientationGizmoOverlay(float x, float y, float w);
     void DrawPointLabelsOverlay(float x, float y, float w, float h);
     void DrawActiveBorderOverlay(float x, float y, float w, float h);
-    void DrawShadingModeOverlay(float x, float y, float w);
+
+    // Sprint 3.8.5 — viewport chrome
+    void DrawTopCenterToolbar(float x, float y, float w, float h);
+    void DrawTopRightPills   (float x, float y, float w, float h);
+    void DrawBottomLeftHud   (float x, float y, float w, float h);
 
     bool IsGizmoVisible() const;
     Vector3 GetGizmoPosition() const;
@@ -192,6 +200,7 @@ private:
 
     // Render filter + active/label
     RenderFilter renderFilter_ = RenderFilter::All;
+    bool morphProcessing_ = false;  // Story 3.8.5 — drives Stage 3 toolbar status pill
     bool isActive_ = false;
     std::string viewportLabel_;
 
