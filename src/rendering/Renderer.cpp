@@ -210,8 +210,15 @@ void Renderer::RenderMorphStage(const Camera& camera, int /*width*/, int /*heigh
     Vector3 morphColor(0.3f, 0.5f, 0.9f);
     Vector3 viewPos = camera.GetPosition();
 
-    // If mask is being shown, render with mask colors using heat map shader
-    if (showMask_ && !morphData.vertexMask.empty()) {
+    // If mask is being shown AND any bits are actually painted, render with
+    // mask colors using the heat-map shader. The any-bit-set check matters
+    // because Viewport::HandleMaskPress used to allocate an all-false mask
+    // on the first hover-click before any paint, which made an empty stroke
+    // pin the morph mesh into mask-render and blocked the preview dropdown.
+    const bool maskHasPaintedBits = !morphData.vertexMask.empty() &&
+        std::any_of(morphData.vertexMask.begin(), morphData.vertexMask.end(),
+                    [](bool v) { return v; });
+    if (showMask_ && maskHasPaintedBits) {
         // Render the morph mesh (original or deformed) with mask vertex colors
         const Mesh* meshToRender = morphMeshRef.mesh.get();
         if (morphData.isProcessed && morphData.deformedMorphMesh) {

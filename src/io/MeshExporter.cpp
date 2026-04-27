@@ -1,9 +1,18 @@
 #include "io/MeshExporter.h"
-#include <QFileInfo>
-#include <QFile>
-#include <QTextStream>
-#include <QDebug>
+#include "utils/Logger.h"
+
+#include <algorithm>
+#include <cctype>
+#include <cmath>
+#include <cstdlib>
+#include <format>
+#include <fstream>
 #include <map>
+#include <sstream>
+#include <string>
+#include <tuple>
+#include <unordered_map>
+#include <vector>
 
 #ifdef HAVE_ASSIMP
 #include <assimp/Exporter.hpp>
@@ -13,19 +22,62 @@
 
 namespace MetaVisage {
 
+namespace {
+
+bool EndsWithICase(const std::string& s, const std::string& suffix) {
+    if (s.size() < suffix.size()) return false;
+    for (size_t i = 0; i < suffix.size(); ++i) {
+        if (std::tolower(static_cast<unsigned char>(s[s.size() - suffix.size() + i])) !=
+            std::tolower(static_cast<unsigned char>(suffix[i]))) {
+            return false;
+        }
+    }
+    return true;
+}
+
+// Split on whitespace, skipping empty tokens. Mirrors QString::split(' ', SkipEmptyParts).
+std::vector<std::string> SplitWhitespace(const std::string& line) {
+    std::vector<std::string> out;
+    std::istringstream iss(line);
+    std::string tok;
+    while (iss >> tok) out.push_back(std::move(tok));
+    return out;
+}
+
+std::string Trim(const std::string& s) {
+    size_t start = 0;
+    while (start < s.size() && std::isspace(static_cast<unsigned char>(s[start]))) ++start;
+    size_t end = s.size();
+    while (end > start && std::isspace(static_cast<unsigned char>(s[end - 1]))) --end;
+    return s.substr(start, end - start);
+}
+
+bool StartsWith(const std::string& s, const char* prefix) {
+    const size_t n = std::char_traits<char>::length(prefix);
+    if (s.size() < n) return false;
+    return std::equal(prefix, prefix + n, s.begin());
+}
+
+void WriteFloat(std::ostream& out, float value) {
+    out.precision(8);
+    out << value;
+}
+
+} // namespace
+
 MeshExporter::MeshExporter() {
 }
 
 MeshExporter::~MeshExporter() {
 }
 
-void MeshExporter::ReportProgress(float progress, const QString& message) {
+void MeshExporter::ReportProgress(float progress, const std::string& message) {
     if (progressCallback_) {
         progressCallback_(progress, message);
     }
 }
 
-QString MeshExporter::GetFormatExtension(ExportFormat format) {
+std::string MeshExporter::GetFormatExtension(ExportFormat format) {
     switch (format) {
         case ExportFormat::FBX: return ".fbx";
         case ExportFormat::OBJ: return ".obj";
@@ -34,7 +86,7 @@ QString MeshExporter::GetFormatExtension(ExportFormat format) {
     return ".fbx";
 }
 
-QString MeshExporter::GetFormatFilter(ExportFormat format) {
+std::string MeshExporter::GetFormatFilter(ExportFormat format) {
     switch (format) {
         case ExportFormat::FBX: return "FBX (*.fbx)";
         case ExportFormat::OBJ: return "OBJ (*.obj)";
@@ -43,11 +95,11 @@ QString MeshExporter::GetFormatFilter(ExportFormat format) {
     return "FBX (*.fbx)";
 }
 
-QString MeshExporter::GetAllFormatsFilter() {
+std::string MeshExporter::GetAllFormatsFilter() {
     return "FBX (*.fbx);;OBJ (*.obj);;GLTF (*.gltf);;All Files (*.*)";
 }
 
-ExportResult MeshExporter::Export(const Mesh& mesh, const QString& filepath,
+ExportResult MeshExporter::Export(const Mesh& mesh, const std::string& filepath,
                                    const ExportOptions& options,
                                    const Transform* transform,
                                    const Mesh* originalMorphMesh) {
@@ -58,7 +110,7 @@ ExportResult MeshExporter::Export(const Mesh& mesh, const QString& filepath,
         return result;
     }
 
-    if (filepath.isEmpty()) {
+    if (filepath.empty()) {
         result.errorMessage = "No filepath specified.";
         return result;
     }
@@ -69,8 +121,8 @@ ExportResult MeshExporter::Export(const Mesh& mesh, const QString& filepath,
     if (options.metaHumanCompatible) {
         // Prefer OBJ rewrite if original morph mesh is available and was loaded from OBJ
         if (originalMorphMesh) {
-            QString origPath = originalMorphMesh->GetFilePath();
-            if (!origPath.isEmpty() && origPath.endsWith(".obj", Qt::CaseInsensitive)) {
+            const std::string& origPath = originalMorphMesh->GetFilePath();
+            if (!origPath.empty() && EndsWithICase(origPath, ".obj")) {
                 result = ExportOBJMetaHuman(mesh, *originalMorphMesh, filepath, options, transform);
                 return result;
             }
@@ -101,7 +153,7 @@ ExportResult MeshExporter::Export(const Mesh& mesh, const QString& filepath,
     return result;
 }
 
-ExportResult MeshExporter::ExportOBJDirect(const Mesh& mesh, const QString& filepath,
+ExportResult MeshExporter::ExportOBJDirect(const Mesh& mesh, const std::string& filepath,
                                              const ExportOptions& options,
                                              const Transform* transform) {
     ExportResult result;
@@ -118,14 +170,12 @@ ExportResult MeshExporter::ExportOBJDirect(const Mesh& mesh, const QString& file
         transformMatrix = transform->GetMatrix();
     }
 
-    QFile file(filepath);
-    if (!file.open(QIODevice::WriteOnly | QIODevice::Text)) {
-        result.errorMessage = QString("Cannot open file for writing: %1").arg(filepath);
+    std::ofstream out(filepath);
+    if (!out.is_open()) {
+        result.errorMessage = std::format("Cannot open file for writing: {}", filepath);
         return result;
     }
-
-    QTextStream out(&file);
-    out.setRealNumberPrecision(8);
+    out.precision(8);
 
     out << "# MetaVisage OBJ Export\n";
     out << "# Vertices: " << vertices.size() << "\n";
@@ -200,7 +250,7 @@ ExportResult MeshExporter::ExportOBJDirect(const Mesh& mesh, const QString& file
         out << "\n";
     }
 
-    file.close();
+    out.close();
 
     ReportProgress(1.0f, "Export complete!");
 
@@ -209,17 +259,16 @@ ExportResult MeshExporter::ExportOBJDirect(const Mesh& mesh, const QString& file
     result.vertexCount = static_cast<int>(vertices.size());
     result.faceCount = static_cast<int>(faces.size());
 
-    qDebug() << "Exported OBJ (direct) to:" << filepath;
-    qDebug() << "  Vertices:" << result.vertexCount;
-    qDebug() << "  UVs:" << uvs.size();
-    qDebug() << "  Faces:" << result.faceCount;
+    MV_LOG_DEBUG(std::format("Exported OBJ (direct) to: {}", filepath));
+    MV_LOG_DEBUG(std::format("  Vertices: {}  UVs: {}  Faces: {}",
+                              result.vertexCount, uvs.size(), result.faceCount));
 
     return result;
 }
 
 #ifdef HAVE_ASSIMP
 
-ExportResult MeshExporter::ExportWithAssimp(const Mesh& mesh, const QString& filepath,
+ExportResult MeshExporter::ExportWithAssimp(const Mesh& mesh, const std::string& filepath,
                                               const ExportOptions& options,
                                               const Transform* transform) {
     ExportResult result;
@@ -243,11 +292,11 @@ ExportResult MeshExporter::ExportWithAssimp(const Mesh& mesh, const QString& fil
     aiMesh* outMesh = scene.mMeshes[0];
 
     // Set mesh name with optional UE prefix
-    QString meshName = mesh.GetName();
-    if (!options.ueNamingPrefix.isEmpty()) {
+    std::string meshName = mesh.GetName();
+    if (!options.ueNamingPrefix.empty()) {
         meshName = options.ueNamingPrefix + meshName;
     }
-    outMesh->mName = aiString(meshName.toStdString());
+    outMesh->mName = aiString(meshName);
 
     ReportProgress(0.2f, "Writing vertices...");
 
@@ -455,11 +504,11 @@ ExportResult MeshExporter::ExportWithAssimp(const Mesh& mesh, const QString& fil
 
     // Export using Assimp
     Assimp::Exporter exporter;
-    aiReturn exportResult = exporter.Export(&scene, formatId, filepath.toStdString(), postProcessFlags);
+    aiReturn exportResult = exporter.Export(&scene, formatId, filepath, postProcessFlags);
 
     if (exportResult != aiReturn_SUCCESS) {
-        result.errorMessage = QString("Export failed: %1").arg(exporter.GetErrorString());
-        qWarning() << result.errorMessage;
+        result.errorMessage = std::format("Export failed: {}", exporter.GetErrorString());
+        MV_LOG_WARNING(result.errorMessage);
         return result;
     }
 
@@ -470,15 +519,13 @@ ExportResult MeshExporter::ExportWithAssimp(const Mesh& mesh, const QString& fil
     result.vertexCount = static_cast<int>(vertices.size());
     result.faceCount = static_cast<int>(faces.size());
 
-    qDebug() << "Exported mesh to:" << filepath;
-    qDebug() << "  Format:" << QString::fromStdString(formatId);
-    qDebug() << "  Vertices:" << result.vertexCount;
-    qDebug() << "  Faces:" << result.faceCount;
+    MV_LOG_DEBUG(std::format("Exported mesh to: {} (format={})", filepath, formatId));
+    MV_LOG_DEBUG(std::format("  Vertices: {}  Faces: {}", result.vertexCount, result.faceCount));
 
     return result;
 }
 
-ExportResult MeshExporter::ExportFBXMetaHuman(const Mesh& mesh, const QString& filepath,
+ExportResult MeshExporter::ExportFBXMetaHuman(const Mesh& mesh, const std::string& filepath,
                                                 const ExportOptions& options,
                                                 const Transform* transform) {
     ExportResult result;
@@ -518,11 +565,11 @@ ExportResult MeshExporter::ExportFBXMetaHuman(const Mesh& mesh, const QString& f
     aiMesh* outMesh = scene.mMeshes[0];
 
     // Set mesh name
-    QString meshName = mesh.GetName();
-    if (!options.ueNamingPrefix.isEmpty()) {
+    std::string meshName = mesh.GetName();
+    if (!options.ueNamingPrefix.empty()) {
         meshName = options.ueNamingPrefix + meshName;
     }
-    outMesh->mName = aiString(meshName.toStdString());
+    outMesh->mName = aiString(meshName);
 
     ReportProgress(0.2f, "Reconstructing original vertex layout...");
 
@@ -675,11 +722,11 @@ ExportResult MeshExporter::ExportFBXMetaHuman(const Mesh& mesh, const QString& f
         postProcessFlags |= aiProcess_Triangulate;
     }
 
-    aiReturn exportResult = exporter.Export(&scene, "fbx", filepath.toStdString(), postProcessFlags);
+    aiReturn exportResult = exporter.Export(&scene, "fbx", filepath, postProcessFlags);
 
     if (exportResult != aiReturn_SUCCESS) {
-        result.errorMessage = QString("MetaHuman export failed: %1").arg(exporter.GetErrorString());
-        qWarning() << result.errorMessage;
+        result.errorMessage = std::format("MetaHuman export failed: {}", exporter.GetErrorString());
+        MV_LOG_WARNING(result.errorMessage);
         return result;
     }
 
@@ -690,10 +737,9 @@ ExportResult MeshExporter::ExportFBXMetaHuman(const Mesh& mesh, const QString& f
     result.vertexCount = static_cast<int>(originalVertCount);
     result.faceCount = static_cast<int>(faces.size());
 
-    qDebug() << "Exported MetaHuman-compatible FBX to:" << filepath;
-    qDebug() << "  Original Assimp vertices:" << result.vertexCount;
-    qDebug() << "  Merged deformed vertices:" << deformedVerts.size();
-    qDebug() << "  Faces:" << result.faceCount;
+    MV_LOG_DEBUG(std::format("Exported MetaHuman-compatible FBX to: {}", filepath));
+    MV_LOG_DEBUG(std::format("  Original Assimp vertices: {}  Merged deformed vertices: {}  Faces: {}",
+                              result.vertexCount, deformedVerts.size(), result.faceCount));
 
     return result;
 }
@@ -702,48 +748,49 @@ ExportResult MeshExporter::ExportFBXMetaHuman(const Mesh& mesh, const QString& f
 
 ExportResult MeshExporter::ExportOBJMetaHuman(const Mesh& deformedMesh,
                                                const Mesh& originalMesh,
-                                               const QString& filepath,
+                                               const std::string& filepath,
                                                const ExportOptions& options,
                                                const Transform* transform) {
     ExportResult result;
     ReportProgress(0.1f, "Preparing MetaHuman OBJ export...");
 
-    QString originalPath = originalMesh.GetFilePath();
-    QFile origFile(originalPath);
-    if (!origFile.open(QIODevice::ReadOnly | QIODevice::Text)) {
-        result.errorMessage = QString("Cannot open original morph mesh file: %1").arg(originalPath);
+    const std::string& originalPath = originalMesh.GetFilePath();
+    std::ifstream origFile(originalPath);
+    if (!origFile.is_open()) {
+        result.errorMessage = std::format("Cannot open original morph mesh file: {}", originalPath);
         return result;
     }
 
     // --- Pass 1: Parse original OBJ to extract positions and normal count ---
     ReportProgress(0.15f, "Parsing original OBJ file...");
 
-    QTextStream in(&origFile);
     std::vector<Vector3> objPositions;
     int objNormalCount = 0;
-    QStringList allLines;
+    std::vector<std::string> allLines;
 
-    while (!in.atEnd()) {
-        QString line = in.readLine();
-        allLines.append(line);
-        QString trimmed = line.trimmed();
+    std::string rawLine;
+    while (std::getline(origFile, rawLine)) {
+        // Strip a trailing CR (Windows-encoded files round-tripped through git on \n hosts).
+        if (!rawLine.empty() && rawLine.back() == '\r') rawLine.pop_back();
+        allLines.push_back(rawLine);
+        const std::string trimmed = Trim(rawLine);
 
-        if (trimmed.startsWith("v ")) {
-            QStringList parts = trimmed.split(' ', Qt::SkipEmptyParts);
+        if (StartsWith(trimmed, "v ")) {
+            std::vector<std::string> parts = SplitWhitespace(trimmed);
             if (parts.size() >= 4) {
-                float x = parts[1].toFloat();
-                float y = parts[2].toFloat();
-                float z = parts[3].toFloat();
+                float x = std::stof(parts[1]);
+                float y = std::stof(parts[2]);
+                float z = std::stof(parts[3]);
                 objPositions.push_back(Vector3(x, y, z));
             }
-        } else if (trimmed.startsWith("vn ")) {
+        } else if (StartsWith(trimmed, "vn ")) {
             objNormalCount++;
         }
     }
     origFile.close();
 
     int objPosCount = static_cast<int>(objPositions.size());
-    qDebug() << "Original OBJ:" << objPosCount << "positions," << objNormalCount << "normals";
+    MV_LOG_DEBUG(std::format("Original OBJ: {} positions, {} normals", objPosCount, objNormalCount));
 
     // --- Build mapping: OBJ position index → merged vertex index ---
     ReportProgress(0.25f, "Building position mapping...");
@@ -810,18 +857,17 @@ ExportResult MeshExporter::ExportOBJMetaHuman(const Mesh& deformedMesh,
         if (idx < 0) unmatched++;
     }
     if (unmatched > 0) {
-        qWarning() << "MetaHuman OBJ export:" << unmatched << "of" << objPosCount
-                    << "positions could not be matched to merged vertices";
+        MV_LOG_WARNING(std::format("MetaHuman OBJ export: {} of {} positions could not be matched to merged vertices",
+                                    unmatched, objPosCount));
         if (unmatched > objPosCount / 10) {
-            result.errorMessage = QString("Too many unmatched positions (%1 of %2). "
-                                          "Original mesh may have changed.").arg(unmatched).arg(objPosCount);
+            result.errorMessage = std::format("Too many unmatched positions ({} of {}). "
+                                              "Original mesh may have changed.", unmatched, objPosCount);
             return result;
         }
     }
 
-    qDebug() << "Position mapping: OBJ positions:" << objPosCount
-             << "-> merged vertices:" << originalMergedVerts.size()
-             << "matched:" << (objPosCount - unmatched);
+    MV_LOG_DEBUG(std::format("Position mapping: OBJ positions: {} -> merged vertices: {} matched: {}",
+                              objPosCount, originalMergedVerts.size(), objPosCount - unmatched));
 
     // --- Prepare transform ---
     Matrix4x4 transformMatrix;
@@ -831,31 +877,31 @@ ExportResult MeshExporter::ExportOBJMetaHuman(const Mesh& deformedMesh,
     }
 
     // --- Precompute normals for the original OBJ position layout ---
-    // Parse faces from original OBJ to accumulate normals per vn index
     ReportProgress(0.4f, "Recomputing normals...");
 
-    // Determine if normals are per-position (vn count == v count) or separate
-    // For simplicity, accumulate face normals per position index
     std::vector<Vector3> recomputedNormals(objPosCount, Vector3(0.0f, 0.0f, 0.0f));
 
-    // Parse faces from original OBJ to get face → position connectivity
     for (const auto& line : allLines) {
-        QString trimmed = line.trimmed();
-        if (!trimmed.startsWith("f ")) continue;
+        const std::string trimmed = Trim(line);
+        if (!StartsWith(trimmed, "f ")) continue;
 
-        QStringList parts = trimmed.split(' ', Qt::SkipEmptyParts);
+        std::vector<std::string> parts = SplitWhitespace(trimmed);
         if (parts.size() < 4) continue;  // Need at least 3 vertices
 
         // Parse position indices from face (OBJ format: v/vt/vn or v/vt or v//vn or v)
         std::vector<int> posIndices;
-        for (int pi = 1; pi < parts.size(); ++pi) {
-            QString vertex = parts[pi];
-            int slashPos = vertex.indexOf('/');
-            int vIdx;
-            if (slashPos >= 0) {
-                vIdx = vertex.left(slashPos).toInt();
-            } else {
-                vIdx = vertex.toInt();
+        for (size_t pi = 1; pi < parts.size(); ++pi) {
+            const std::string& vertex = parts[pi];
+            size_t slashPos = vertex.find('/');
+            int vIdx = 0;
+            try {
+                if (slashPos != std::string::npos) {
+                    vIdx = std::stoi(vertex.substr(0, slashPos));
+                } else {
+                    vIdx = std::stoi(vertex);
+                }
+            } catch (...) {
+                continue;
             }
             // OBJ indices are 1-based, convert to 0-based
             if (vIdx > 0) {
@@ -899,28 +945,26 @@ ExportResult MeshExporter::ExportOBJMetaHuman(const Mesh& deformedMesh,
     ReportProgress(0.6f, "Writing MetaHuman-compatible OBJ...");
 
     // Ensure output path has .obj extension
-    QString outputPath = filepath;
-    if (!outputPath.endsWith(".obj", Qt::CaseInsensitive)) {
+    std::string outputPath = filepath;
+    if (!EndsWithICase(outputPath, ".obj")) {
         outputPath += ".obj";
     }
 
-    QFile outFile(outputPath);
-    if (!outFile.open(QIODevice::WriteOnly | QIODevice::Text)) {
-        result.errorMessage = QString("Cannot open output file: %1").arg(outputPath);
+    std::ofstream out(outputPath);
+    if (!out.is_open()) {
+        result.errorMessage = std::format("Cannot open output file: {}", outputPath);
         return result;
     }
-
-    QTextStream out(&outFile);
-    out.setRealNumberPrecision(8);
+    out.precision(8);
 
     int vIndex = 0;   // Current position index (0-based)
     int vnIndex = 0;  // Current normal index (0-based)
     int faceCount = 0;
 
     for (const auto& line : allLines) {
-        QString trimmed = line.trimmed();
+        const std::string trimmed = Trim(line);
 
-        if (trimmed.startsWith("v ") && vIndex < objPosCount) {
+        if (StartsWith(trimmed, "v ") && vIndex < objPosCount) {
             // Replace position with deformed position
             int mergedIdx = objToMerged[vIndex];
             Vector3 v;
@@ -946,10 +990,8 @@ ExportResult MeshExporter::ExportOBJMetaHuman(const Mesh& deformedMesh,
 
             out << "v " << v.x << " " << v.y << " " << v.z << "\n";
             vIndex++;
-        } else if (trimmed.startsWith("vn ") && vnIndex < objPosCount) {
+        } else if (StartsWith(trimmed, "vn ") && vnIndex < objPosCount) {
             // Replace normal with recomputed normal
-            // Note: this assumes vn count == v count (common for MetaHuman meshes)
-            // If vn count differs, we still recompute based on position index mapping
             Vector3 n = recomputedNormals[vnIndex];
 
             if (hasTransform) {
@@ -966,13 +1008,13 @@ ExportResult MeshExporter::ExportOBJMetaHuman(const Mesh& deformedMesh,
             // Copy everything else verbatim (vt, f, mtllib, usemtl, comments, etc.)
             out << line << "\n";
 
-            if (trimmed.startsWith("f ")) {
+            if (StartsWith(trimmed, "f ")) {
                 faceCount++;
             }
         }
     }
 
-    outFile.close();
+    out.close();
 
     ReportProgress(1.0f, "MetaHuman-compatible OBJ export complete!");
 
@@ -981,11 +1023,9 @@ ExportResult MeshExporter::ExportOBJMetaHuman(const Mesh& deformedMesh,
     result.vertexCount = objPosCount;
     result.faceCount = faceCount;
 
-    qDebug() << "Exported MetaHuman-compatible OBJ to:" << outputPath;
-    qDebug() << "  Positions:" << objPosCount << "(matches original)";
-    qDebug() << "  Normals recomputed:" << vnIndex;
-    qDebug() << "  Faces:" << faceCount;
-    qDebug() << "  Unmatched positions:" << unmatched;
+    MV_LOG_DEBUG(std::format("Exported MetaHuman-compatible OBJ to: {}", outputPath));
+    MV_LOG_DEBUG(std::format("  Positions: {} (matches original)  Normals recomputed: {}  Faces: {}  Unmatched: {}",
+                              objPosCount, vnIndex, faceCount, unmatched));
 
     return result;
 }

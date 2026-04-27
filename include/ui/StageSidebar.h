@@ -1,7 +1,9 @@
 #ifndef METAVISAGE_UI_STAGESIDEBAR_H
 #define METAVISAGE_UI_STAGESIDEBAR_H
 
-#include <QString>
+#include "core/Transform.h"
+
+#include <string>
 
 namespace MetaVisage {
 
@@ -31,7 +33,7 @@ public:
         bool useDefaultMorphMeshRequested = false;
         // When non-empty, AppWindow opens an NFD picker, loads the texture,
         // and adds it to Project::GetTargetTextures() under this slot name.
-        QString importTextureSlot;
+        std::string importTextureSlot;
 
         // Stage 3 mask-painting push state — the sidebar is the source of
         // truth for these UI-only toggles; AppWindow mirrors them onto the
@@ -41,6 +43,13 @@ public:
         bool maskShow           = false;
         bool maskEraseMode      = false;
         float maskBrushRadius   = 10.0f;
+
+        // Stage 1 transform-spinbox edit-end signal. Set when the user finishes
+        // a Position/Rotation/Scale drag (one undo action per gesture, not per
+        // frame). AppWindow pushes a TransformUndoAction with these values.
+        bool transformEditCompleted = false;
+        Transform transformEditBefore;
+        Transform transformEditAfter;
     };
 
     // Render docked panel titled "Stage". Returns the actions requested this
@@ -57,10 +66,21 @@ private:
     // Stage 3 mask painting — state persists across frames. When painting is
     // active, LMB in the morph viewport paints mask bits instead of doing
     // camera work. Radius/erase are brush settings.
+    //
+    // Show Mask defaults OFF so the Stage 3 preview-mode dropdown (Deformed /
+    // Original / Overlay / Heat Map) drives what the user sees. Toggling
+    // Paint Mask flips the renderer to mask colors automatically while
+    // painting (see StageSidebar::RenderMorph: out.maskShow ORs in
+    // maskPaintingActive_), so the user only ticks Show Mask when they want
+    // the painted mask visible while *not* actively painting.
     bool maskPaintingActive_ = false;
-    bool maskShowMask_       = true;
+    bool maskShowMask_       = false;
     bool maskEraseMode_      = false;
     float maskBrushRadius_   = 10.0f;
+
+    // Captured target-mesh transform on the frame a Stage 1 spinbox is first
+    // activated, so we can emit a (before, after) pair on edit-end.
+    Transform transformEditCapture_;
 };
 
 } // namespace MetaVisage

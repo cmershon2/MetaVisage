@@ -3,7 +3,6 @@
 
 #include "io/MeshExporter.h"
 
-#include <QString>
 #include <functional>
 #include <optional>
 #include <string>
@@ -22,25 +21,33 @@ namespace MetaVisage {
 
 struct ConfirmModalState {
     bool pendingOpen = false;
-    QString title;
-    QString message;
-    QString confirmLabel = "OK";
-    QString cancelLabel = "Cancel";
+    std::string title;
+    std::string message;
+    std::string confirmLabel = "OK";
+    std::string cancelLabel = "Cancel";
     std::function<void()> onConfirm;
 
-    void Open(const QString& t, const QString& msg,
+    void Open(const std::string& t, const std::string& msg,
               std::function<void()> confirm,
-              const QString& confirmLbl = "OK",
-              const QString& cancelLbl = "Cancel");
+              const std::string& confirmLbl = "OK",
+              const std::string& cancelLbl = "Cancel");
 };
 void RenderConfirmModal(ConfirmModalState& state);
 
+// Single message-with-OK modal used both for errors and for one-shot
+// confirmations (e.g. "Export Complete"). The `isError` flag drives the
+// title color; everything else is shared so we don't ship two near-identical
+// modal renderers.
 struct ErrorModalState {
     bool pendingOpen = false;
-    QString title = "Error";
-    QString message;
+    bool isError = true;
+    std::string title = "Error";
+    std::string message;
 
-    void Open(const QString& msg, const QString& t = "Error");
+    void Open(const std::string& msg, const std::string& t = "Error");
+    // Convenience for success / info notifications. Renders with a green
+    // title color instead of the red error color.
+    void OpenInfo(const std::string& msg, const std::string& t);
 };
 void RenderErrorModal(ErrorModalState& state);
 
@@ -55,7 +62,7 @@ struct WelcomeModalState {
     bool pendingOpen = false;
     bool isOpen = false;
     WelcomeAction action = WelcomeAction::None;
-    QString selectedRecent;
+    std::string selectedRecent;
 
     void Open();
 };
@@ -91,7 +98,7 @@ struct ExportModalState {
     bool exportBakedTextures = false;
     int bakeResolutionIndex = 1;      // 0=1024, 1=2048, 2=4096
     int textureFormatIndex = 0;       // 0=png, 1=tga
-    QString filepath;
+    std::string filepath;
 
     // Outputs, valid iff action == Export
     ExportOptions options;

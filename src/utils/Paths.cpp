@@ -1,6 +1,8 @@
 #include "utils/Paths.h"
 
-#include <QDir>
+#include <algorithm>
+#include <filesystem>
+#include <system_error>
 
 #define WIN32_LEAN_AND_MEAN
 #include <windows.h>
@@ -10,57 +12,68 @@ namespace MetaVisage::Paths {
 
 namespace {
 
-QString RoamingAppDataRoot() {
+// Convert a Windows wide string to a UTF-8 std::string.
+std::string WideToUtf8(const wchar_t* wide, int wideLen = -1) {
+    if (!wide) return {};
+    const int bytes = WideCharToMultiByte(CP_UTF8, 0, wide, wideLen, nullptr, 0, nullptr, nullptr);
+    if (bytes <= 0) return {};
+    // If wideLen < 0 the count includes the trailing null; trim it.
+    std::string out(static_cast<size_t>(wideLen < 0 ? bytes - 1 : bytes), '\0');
+    WideCharToMultiByte(CP_UTF8, 0, wide, wideLen, out.data(), bytes, nullptr, nullptr);
+    return out;
+}
+
+std::string RoamingAppDataRoot() {
     PWSTR path = nullptr;
     HRESULT hr = SHGetKnownFolderPath(FOLDERID_RoamingAppData, 0, nullptr, &path);
     if (FAILED(hr) || !path) {
         if (path) CoTaskMemFree(path);
         return {};
     }
-    QString result = QString::fromWCharArray(path);
+    std::string result = WideToUtf8(path);
     CoTaskMemFree(path);
     return result;
 }
 
-QString EnsureDir(const QString& absolute) {
-    if (absolute.isEmpty()) return {};
-    QDir dir(absolute);
-    if (!dir.exists() && !dir.mkpath(".")) {
-        return {};
-    }
+std::string EnsureDir(const std::string& absolute) {
+    if (absolute.empty()) return {};
+    std::error_code ec;
+    std::filesystem::create_directories(absolute, ec);
+    if (ec && !std::filesystem::exists(absolute)) return {};
     return absolute;
 }
 
 } // namespace
 
-QString AppDataDir() {
-    const QString root = RoamingAppDataRoot();
-    if (root.isEmpty()) return {};
+std::string AppDataDir() {
+    const std::string root = RoamingAppDataRoot();
+    if (root.empty()) return {};
     return EnsureDir(root + "/MetaVisage");
 }
 
-QString LogDir() {
-    const QString base = AppDataDir();
-    if (base.isEmpty()) return {};
+std::string LogDir() {
+    const std::string base = AppDataDir();
+    if (base.empty()) return {};
     return EnsureDir(base + "/logs");
 }
 
-QString ConfigFile() {
-    const QString base = AppDataDir();
-    if (base.isEmpty()) return {};
+std::string ConfigFile() {
+    const std::string base = AppDataDir();
+    if (base.empty()) return {};
     return base + "/config.json";
 }
 
-QString ExecutableDir() {
+std::string ExecutableDir() {
     wchar_t buf[MAX_PATH] = {0};
     DWORD len = GetModuleFileNameW(nullptr, buf, MAX_PATH);
     if (len == 0 || len == MAX_PATH) return {};
-    QString full = QString::fromWCharArray(buf, static_cast<int>(len));
-    // Strip to directory — use QDir to normalize separators.
-    int slash = full.lastIndexOf('\\');
-    if (slash < 0) slash = full.lastIndexOf('/');
-    if (slash < 0) return {};
-    return full.left(slash).replace('\\', '/');
+    std::string full = WideToUtf8(buf, static_cast<int>(len));
+    // Strip the executable filename, leaving the directory.
+    size_t slash = full.find_last_of("\\/");
+    if (slash == std::string::npos) return {};
+    std::string dir = full.substr(0, slash);
+    std::replace(dir.begin(), dir.end(), '\\', '/');
+    return dir;
 }
 
 } // namespace MetaVisage::Paths

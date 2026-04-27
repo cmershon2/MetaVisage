@@ -1,9 +1,10 @@
 #ifndef METAVISAGE_VIEWPORT_H
 #define METAVISAGE_VIEWPORT_H
 
-#include <QString>
 #include <functional>
 #include <memory>
+#include <string>
+#include <vector>
 
 #include "core/Camera.h"
 #include "core/Types.h"
@@ -65,7 +66,7 @@ public:
     void SetActive(bool active) { isActive_ = active; }
     bool IsActive() const { return isActive_; }
 
-    void SetViewportLabel(const QString& label) { viewportLabel_ = label; }
+    void SetViewportLabel(const std::string& label) { viewportLabel_ = label; }
 
     // --- Transform mode (Alignment stage) ---
     TransformMode GetTransformMode() const { return transformMode_; }
@@ -130,7 +131,11 @@ public:
     std::function<void(float)> OnBrushRadiusChanged;
     std::function<void(Transform, Transform)> OnTransformApplied;
     std::function<void(BrushStroke)> OnSculptStrokeCompleted;
-    std::function<void()> OnMaskStrokeCompleted;
+    // Fires once at the end of a Stage 3 mask paint stroke, with the mask
+    // vector as it was *before* the first paint of this stroke. AppWindow
+    // pushes a MaskStrokeUndoAction with that snapshot vs the post-stroke
+    // mask so Ctrl+Z reverts a whole gesture, not one paint frame.
+    std::function<void(std::vector<bool>)> OnMaskStrokeCompleted;
 
 private:
     // Overlay drawing (ImGui draw list)
@@ -188,7 +193,7 @@ private:
     // Render filter + active/label
     RenderFilter renderFilter_ = RenderFilter::All;
     bool isActive_ = false;
-    QString viewportLabel_;
+    std::string viewportLabel_;
 
     // Point reference
     int selectedPointIndex_ = -1;
@@ -210,6 +215,10 @@ private:
     std::unique_ptr<MaskBrush> maskBrush_;
     bool isMaskPainting_ = false;
     bool isMaskStroking_ = false;
+    // Snapshot of MorphData::vertexMask at the start of an active stroke,
+    // used by OnMaskStrokeCompleted to push a single MaskStrokeUndoAction
+    // covering the whole drag (not one per paint frame).
+    std::vector<bool> maskBeforeStroke_;
 
     // Target overlay in Touch Up
     bool showTargetOverlay_ = false;

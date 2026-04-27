@@ -1,13 +1,14 @@
 #include "deformation/NRICPDeformer.h"
 #include "utils/BVH.h"
 #include "utils/Logger.h"
-#include <cmath>
 #include <algorithm>
-#include <numeric>
+#include <cmath>
+#include <format>
 #include <limits>
-#include <set>
 #include <map>
+#include <numeric>
 #include <queue>
+#include <set>
 #include <tuple>
 #include <unordered_map>
 
@@ -132,8 +133,8 @@ void NRICPDeformer::BuildWeldMap() {
         totalWeldedVerts += static_cast<int>(g.size());
     }
 
-    MV_LOG_INFO(QString("NRICP: Found %1 weld groups (%2 vertices at UV seams)")
-        .arg(weldGroups_.size()).arg(totalWeldedVerts));
+    MV_LOG_INFO(std::format("NRICP: Found {} weld groups ({} vertices at UV seams)",
+        weldGroups_.size(), totalWeldedVerts));
 }
 
 void NRICPDeformer::EnforceWeldConstraints(std::vector<Vector3>& positions) {
@@ -190,8 +191,8 @@ void NRICPDeformer::BuildEdges() {
         edges_.push_back({v0, v1});
     }
 
-    MV_LOG_INFO(QString("NRICP: Built %1 unique edges from %2 faces (%3 weld edges added)")
-        .arg(edges_.size()).arg(sourceFaces_.size()).arg(weldEdgeCount));
+    MV_LOG_INFO(std::format("NRICP: Built {} unique edges from {} faces ({} weld edges added)",
+        edges_.size(), sourceFaces_.size(), weldEdgeCount));
 }
 
 void NRICPDeformer::DetectAndExcludeBoundaryVertices() {
@@ -233,8 +234,8 @@ void NRICPDeformer::DetectAndExcludeBoundaryVertices() {
         if (isBoundaryVertex[i]) boundaryVertexCount++;
     }
 
-    MV_LOG_INFO(QString("NRICP: Found %1 boundary edges, %2 boundary vertices")
-        .arg(boundaryEdgeCount).arg(boundaryVertexCount));
+    MV_LOG_INFO(std::format("NRICP: Found {} boundary edges, {} boundary vertices",
+        boundaryEdgeCount, boundaryVertexCount));
 
     if (boundaryVertexCount == 0) {
         MV_LOG_INFO("NRICP: No boundary vertices found - mesh is closed");
@@ -279,10 +280,10 @@ void NRICPDeformer::DetectAndExcludeBoundaryVertices() {
         if (excludedVertices_[i]) excludedCount++;
     }
 
-    MV_LOG_INFO(QString("NRICP: Excluded %1 vertices (%2% of mesh) from ICP correspondence (boundary + %3 hops)")
-        .arg(excludedCount)
-        .arg(static_cast<float>(excludedCount) / vertexCount_ * 100.0f, 0, 'f', 1)
-        .arg(hops));
+    MV_LOG_INFO(std::format("NRICP: Excluded {} vertices ({:.1f}% of mesh) from ICP correspondence (boundary + {} hops)",
+        excludedCount,
+        static_cast<float>(excludedCount) / vertexCount_ * 100.0f,
+        hops));
 
     // Merge user-painted mask into exclusion set
     if (!userExcludedVertices_.empty() &&
@@ -295,7 +296,7 @@ void NRICPDeformer::DetectAndExcludeBoundaryVertices() {
             }
         }
         if (userMaskCount > 0) {
-            MV_LOG_INFO(QString("NRICP: User mask added %1 additional excluded vertices").arg(userMaskCount));
+            MV_LOG_INFO(std::format("NRICP: User mask added {} additional excluded vertices", userMaskCount));
         }
     }
 }
@@ -473,8 +474,8 @@ ControlNodeData NRICPDeformer::ComputeControlNodes(float voxelSize) {
     std::sort(data.controlNodeIndices.begin(), data.controlNodeIndices.end());
     data.controlNodeCount = static_cast<int>(data.controlNodeIndices.size());
 
-    MV_LOG_INFO(QString("NRICP: Selected %1 control nodes from %2 vertices (voxel size=%3)")
-        .arg(data.controlNodeCount).arg(vertexCount_).arg(voxelSize, 0, 'f', 4));
+    MV_LOG_INFO(std::format("NRICP: Selected {} control nodes from {} vertices (voxel size={:.4f})",
+        data.controlNodeCount, vertexCount_, voxelSize));
 
     return data;
 }
@@ -573,8 +574,8 @@ void NRICPDeformer::BuildControlNodeEdges(ControlNodeData& data, int kNeighbors)
         data.controlEdges.push_back({v0, v1});
     }
 
-    MV_LOG_INFO(QString("NRICP: Built %1 control node edges (k=%2)")
-        .arg(data.controlEdges.size()).arg(kNeighbors));
+    MV_LOG_INFO(std::format("NRICP: Built {} control node edges (k={})",
+        data.controlEdges.size(), kNeighbors));
 }
 
 void NRICPDeformer::ComputeInterpolationWeights(ControlNodeData& data, int kNearest) {
@@ -1078,8 +1079,8 @@ std::vector<Vector3> NRICPDeformer::Solve() {
     // Compute max correspondence distance
     if (params_.maxCorrespondenceDistance < 0.0f) {
         resolvedMaxCorrespondenceDistance_ = bboxDiagonal_ * 0.15f;
-        MV_LOG_INFO(QString("NRICP: Auto-computed max correspondence distance: %1 (15%% of bbox diagonal %2)")
-            .arg(resolvedMaxCorrespondenceDistance_, 0, 'f', 3).arg(bboxDiagonal_, 0, 'f', 3));
+        MV_LOG_INFO(std::format("NRICP: Auto-computed max correspondence distance: {:.3f} (15% of bbox diagonal {:.3f})",
+            resolvedMaxCorrespondenceDistance_, bboxDiagonal_));
     } else {
         resolvedMaxCorrespondenceDistance_ = params_.maxCorrespondenceDistance;
     }
@@ -1181,12 +1182,12 @@ std::vector<Vector3> NRICPDeformer::Solve() {
     int iterationCount = 0;
 
     int excludedCount = static_cast<int>(std::count(excludedVertices_.begin(), excludedVertices_.end(), true));
-    MV_LOG_INFO(QString("NRICP: Starting solve with %1 vertices (%2 excluded), %3 edges, %4 landmarks, "
-                        "%5 stiffness steps, %6 opt iters, rigidity=%7, subsampling=%8")
-        .arg(N).arg(excludedCount).arg(edges_.size()).arg(landmarks_.size())
-        .arg(steps).arg(optIters)
-        .arg(rigidityEnabled ? "on" : "off")
-        .arg(subsamplingEnabled ? "on" : "off"));
+    MV_LOG_INFO(std::format("NRICP: Starting solve with {} vertices ({} excluded), {} edges, {} landmarks, "
+                             "{} stiffness steps, {} opt iters, rigidity={}, subsampling={}",
+        N, excludedCount, edges_.size(), landmarks_.size(),
+        steps, optIters,
+        rigidityEnabled ? "on" : "off",
+        subsamplingEnabled ? "on" : "off"));
 
     for (int s = 0; s < steps; ++s) {
         float alpha = alphaSchedule[s];
@@ -1232,8 +1233,8 @@ std::vector<Vector3> NRICPDeformer::Solve() {
                               corrIndices, corrPoints);
 
             if (corrIndices.empty() && landmarks_.empty()) {
-                MV_LOG_WARNING(QString("NRICP: No correspondences found at level %1, iter %2")
-                    .arg(s + 1).arg(iter + 1));
+                MV_LOG_WARNING(std::format("NRICP: No correspondences found at level {}, iter {}",
+                    s + 1, iter + 1));
                 break;
             }
 
@@ -1322,8 +1323,8 @@ std::vector<Vector3> NRICPDeformer::Solve() {
                 iterationCount++;
 
                 if (rmsd < params_.epsilon) {
-                    MV_LOG_INFO(QString("NRICP: Converged at level %1, ICP %2, opt %3 (RMSD=%4)")
-                        .arg(s + 1).arg(iter + 1).arg(optIter + 1).arg(rmsd));
+                    MV_LOG_INFO(std::format("NRICP: Converged at level {}, ICP {}, opt {} (RMSD={})",
+                        s + 1, iter + 1, optIter + 1, rmsd));
                     break;
                 }
             }
@@ -1349,7 +1350,7 @@ std::vector<Vector3> NRICPDeformer::Solve() {
         }
     }
 
-    MV_LOG_INFO(QString("NRICP: Solve complete, %1 vertices deformed").arg(currentPositions.size()));
+    MV_LOG_INFO(std::format("NRICP: Solve complete, {} vertices deformed", currentPositions.size()));
 
     if (progressCallback_) {
         progressCallback_(1.0f, "NRICP: Complete!");

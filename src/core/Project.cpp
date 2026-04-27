@@ -6,25 +6,25 @@ namespace MetaVisage {
 Project::Project()
     : projectName_("Untitled Project"),
       projectPath_(""),
-      created_(QDateTime::currentDateTime()),
-      lastModified_(QDateTime::currentDateTime()),
+      created_(std::chrono::system_clock::now()),
+      lastModified_(std::chrono::system_clock::now()),
       currentStage_(WorkflowStage::Alignment) {
 }
 
 Project::~Project() {
 }
 
-bool Project::Save(const QString& filepath) {
+bool Project::Save(const std::string& filepath) {
     ProjectSerializer serializer;
     SerializationResult result = serializer.Save(*this, filepath);
     if (result.success) {
         projectPath_ = filepath;
-        lastModified_ = QDateTime::currentDateTime();
+        lastModified_ = std::chrono::system_clock::now();
     }
     return result.success;
 }
 
-bool Project::Load(const QString& filepath) {
+bool Project::Load(const std::string& filepath) {
     ProjectSerializer serializer;
     SerializationResult result = serializer.Load(*this, filepath);
     if (result.success) {

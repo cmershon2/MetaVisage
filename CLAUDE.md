@@ -2,20 +2,20 @@
 
 Windows desktop application for automated MetaHuman mesh morphing. Wraps MetaHuman head meshes to custom head models for Unreal Engine 5.x, providing a commercial alternative to enterprise mesh-wrapping tools.
 
-**Platform**: Windows 10/11 (64-bit) · **Language**: C++17 · **Status**: v2.0 in development (proprietary)
+**Platform**: Windows 10/11 (64-bit) · **Language**: C++20 · **Status**: v2.0 in development (proprietary)
 
 See @.claude/context/product-vision.md for strategic goals and current state.
 
 ## Technical Stack
 
-- **UI Framework**: Dear ImGui + GLFW + GLEW. Sprint 3.5 cut Qt Gui/Widgets/OpenGL/OpenGLWidgets; Sprint 3.6 rebuilt the menus, sidebars, modals, viewport host, and system services on the new stack. `Qt6::Core` retained transitionally for QString/QFile/QJson; full removal tracked in the product backlog.
+- **UI Framework**: Dear ImGui + GLFW + GLEW. Sprint 3.5 cut Qt Gui/Widgets/OpenGL/OpenGLWidgets; Sprint 3.6 rebuilt the menus, sidebars, modals, viewport host, and system services on the new stack; **Sprint 3.7 removed `Qt6::Core` entirely** (QString/QFile/QJson/QDateTime → `std::string` / `std::filesystem` / `std::fstream` / `nlohmann::ordered_json` / `std::chrono`). The codebase is fully self-hosted on `std::format` (C++20), `nlohmann::json`, and Win32 APIs. A configure-time CMake guard fails the build if any Qt target is reintroduced.
 - **Graphics API**: OpenGL 4.3+
 - **Mesh I/O**: Assimp (FBX, OBJ, GLTF)
 - **Mesh Processing**: libigl / OpenMesh / CGAL
 - **Deformation**: NRICP (replaces v1.0 RBF/TPS) · custom implementation using Eigen
 - **Math**: Eigen / GLM
 - **Serialization**: nlohmann/json for `.mmproj` project files
-- **System services** (added in Sprint 3.6): `utils/Config` (JSON config at `%APPDATA%\MetaVisage\config.json`), `utils/HttpClient` (libcurl POST), `utils/SingleInstance` (Win32 named pipe at `\\.\pipe\MetaVisageSingleInstance`), `utils/OpenUrl` (`ShellExecuteEx`), `utils/Paths` (exe-relative asset resolution), NFD for native file dialogs.
+- **System services**: `utils/Config` (JSON config at `%APPDATA%\MetaVisage\config.json`), `utils/HttpClient` (libcurl POST), `utils/SingleInstance` (Win32 named pipe at `\\.\pipe\MetaVisageSingleInstance`), `utils/OpenUrl` (`ShellExecuteEx`), `utils/Paths` (exe-relative asset resolution), `utils/SecureStorage` (Win32 DPAPI for cached license/auth tokens), NFD for native file dialogs.
 - **Installer**: Inno Setup · **Auto-update**: WinSparkle
 
 > **Algorithm secrecy**: Do not reference NRICP by name in user-facing UI text, logs, documentation, or error messages. Internal code comments and sprint docs are fine.
@@ -50,11 +50,12 @@ MetaVisage/
 │   ├── rendering/      # Renderer, MeshRenderer, GizmoRenderer, PointRenderer, ShaderManager
 │   ├── sculpting/      # Brush base + Smooth/Grab/PushPull/Inflate/Mask brushes
 │   ├── thirdparty/     # stb_image, stb_image_write
-│   ├── ui/             # AppWindow, StageSidebar, Modals, Viewport, ViewportHost
+│   ├── ui/             # AppWindow, StageSidebar, Modals, Viewport, ViewportHost, FileDialogs
 │   └── utils/          # Config, HttpClient, SingleInstance, OpenUrl, Paths,
-│                       # BVH, Logger, RayCaster, SpatialHash, ErrorHelper
+│                       # SecureStorage, BVH, Logger, RayCaster, SpatialHash
 ├── src/                # Implementation, mirroring include/ structure
 │   └── main.cpp        # GLFW window + ImGui init + main loop entry
+├── tests/              # Smoke test (load → serialize → reload → export)
 ├── .claude/            # Slash skills, agents, hooks, rules, sprint context
 ├── CMakeLists.txt      # Build config (vcpkg toolchain expected)
 ├── build-msvc.ps1      # MSVC build helper with optional DLL staging
@@ -62,7 +63,7 @@ MetaVisage/
 └── vcpkg.json          # Pinned dependency manifest
 ```
 
-UI files retain transitional names (`MainWindow.{h,cpp}`, `ViewportWidget`, `SidebarWidget`, `ExportDialog`, etc.) from the Qt era — they are being progressively folded into the ImGui hosts (`AppWindow`, `Viewport`, `StageSidebar`, `Modals`) as Sprint 3.6 work shakes out remaining call sites.
+All UI lives under the ImGui hosts (`AppWindow`, `Viewport`, `ViewportHost`, `StageSidebar`, `Modals`, `FileDialogs`). The Qt-era UI files were deleted at the end of Sprint 3.7 once the migration was verified — earlier sprint plans, retros, and commits still reference `MainWindow.cpp` / `SidebarWidget.cpp` / `ViewportWidget.cpp` / `ExportDialog.cpp` / etc. as the historical equivalents.
 
 ## Four-Stage Workflow
 
@@ -107,7 +108,7 @@ Build via the helper scripts — they handle vcpkg toolchain wiring and (with `-
 
 Output: `build\bin\Release\MetaVisage.exe`. **Kill any running instance before relinking** — Windows MSVC fails with `LNK1104` if `MetaVisage.exe` is held open by a previous run.
 
-A successful CMake configure step requires `VCPKG_ROOT` (or `-DCMAKE_TOOLCHAIN_FILE=...`) and a Qt 6.10+ install for the transitional `Qt6::Core` link. See `BUILD.md` for the full prerequisite list.
+A successful CMake configure step requires `VCPKG_ROOT` (or `-DCMAKE_TOOLCHAIN_FILE=...`) so vcpkg can resolve GLFW, GLEW, ImGui, NFD, libcurl, Eigen, Assimp, and nlohmann_json. **Qt is no longer required** as of Sprint 3.7. The smoke test runs via `ctest -C Release` in the build directory after a successful build.
 
 ## Web Team Integration (v2.0)
 

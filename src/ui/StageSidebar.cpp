@@ -4,8 +4,8 @@
 
 #include <imgui.h>
 
-#include <QFileInfo>
 #include <array>
+#include <filesystem>
 
 namespace MetaVisage {
 
@@ -35,9 +35,9 @@ const char* StageHint(WorkflowStage s) {
     return "";
 }
 
-QString FileNameOrEmpty(const QString& path) {
-    if (path.isEmpty()) return {};
-    return QFileInfo(path).fileName();
+std::string FileNameOrEmpty(const std::string& path) {
+    if (path.empty()) return {};
+    return std::filesystem::path(path).filename().string();
 }
 
 int AxisToIndex(Axis a) {
@@ -114,10 +114,10 @@ void StageSidebar::RenderAlignment(Project& project, Actions& out) {
     auto& target = project.GetTargetMesh();
 
     ImGui::TextUnformatted("Morph Mesh");
-    if (morph.filepath.isEmpty()) {
+    if (morph.filepath.empty()) {
         ImGui::TextDisabled("(not set)");
     } else {
-        ImGui::TextWrapped("%s", FileNameOrEmpty(morph.filepath).toUtf8().constData());
+        ImGui::TextWrapped("%s", FileNameOrEmpty(morph.filepath).c_str());
     }
     if (ImGui::Button("Import Morph Mesh...")) out.importMorphMeshRequested = true;
     ImGui::SameLine();
@@ -125,10 +125,10 @@ void StageSidebar::RenderAlignment(Project& project, Actions& out) {
 
     ImGui::Spacing();
     ImGui::TextUnformatted("Target Mesh");
-    if (target.filepath.isEmpty()) {
+    if (target.filepath.empty()) {
         ImGui::TextDisabled("(not set)");
     } else {
-        ImGui::TextWrapped("%s", FileNameOrEmpty(target.filepath).toUtf8().constData());
+        ImGui::TextWrapped("%s", FileNameOrEmpty(target.filepath).c_str());
     }
     if (ImGui::Button("Import Target Mesh...")) out.importTargetMeshRequested = true;
 
@@ -140,7 +140,7 @@ void StageSidebar::RenderAlignment(Project& project, Actions& out) {
         ImGui::TextDisabled("(no textures)");
     } else {
         for (const auto& t : textures.textures) {
-            ImGui::BulletText("%s", t.name.toUtf8().constData());
+            ImGui::BulletText("%s", t.name.c_str());
         }
     }
     static const char* kSlotNames[] = {
@@ -152,7 +152,7 @@ void StageSidebar::RenderAlignment(Project& project, Actions& out) {
     ImGui::PopItemWidth();
     ImGui::SameLine();
     if (ImGui::Button("+ Add Texture")) {
-        out.importTextureSlot = QString::fromUtf8(kSlotNames[sSelectedSlot]);
+        out.importTextureSlot = kSlotNames[sSelectedSlot];
     }
 
     ImGui::Spacing();
@@ -164,19 +164,43 @@ void StageSidebar::RenderAlignment(Project& project, Actions& out) {
     // copy that's only used by the serializer round-trip; writing there alone
     // would leave the on-screen mesh unchanged.
     Transform& xform = project.GetTargetMesh().transform;
+    // Helper: capture-on-activate / emit-on-deactivate so each spinbox drag
+    // produces one undo action per gesture, not one per frame. Only the most
+    // recent activation's pre-state is held — fine because ImGui only allows a
+    // single active widget at a time.
+    auto captureBefore = [&]() {
+        if (ImGui::IsItemActivated()) transformEditCapture_ = xform;
+    };
+    auto emitOnEditEnd = [&]() {
+        if (ImGui::IsItemDeactivatedAfterEdit()) {
+            out.transformEditCompleted = true;
+            out.transformEditBefore = transformEditCapture_;
+            out.transformEditAfter  = xform;
+        }
+    };
+
     float pos[3] = { xform.GetPosition().x, xform.GetPosition().y, xform.GetPosition().z };
     if (ImGui::DragFloat3("Position", pos, 0.01f)) {
         xform.SetPosition(Vector3(pos[0], pos[1], pos[2]));
     }
+    captureBefore();
+    emitOnEditEnd();
+
     Vector3 euler = xform.GetEulerAngles();
     float rot[3] = { euler.x, euler.y, euler.z };
     if (ImGui::DragFloat3("Rotation", rot, 0.5f, -360.0f, 360.0f)) {
         xform.SetRotationFromEuler(rot[0], rot[1], rot[2]);
     }
+    captureBefore();
+    emitOnEditEnd();
+
     float scl[3] = { xform.GetScale().x, xform.GetScale().y, xform.GetScale().z };
     if (ImGui::DragFloat3("Scale", scl, 0.01f, 0.001f, 1000.0f)) {
         xform.SetScale(Vector3(scl[0], scl[1], scl[2]));
     }
+    captureBefore();
+    emitOnEditEnd();
+
     if (ImGui::Button("Reset Transform")) out.resetTransformRequested = true;
 
 }

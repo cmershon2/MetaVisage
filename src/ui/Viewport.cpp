@@ -82,7 +82,10 @@ void Viewport::CancelTransform() {
     isTransforming_ = false;
     activeGizmoAxis_ = GizmoAxis::None;
     axisConstraint_ = AxisConstraint::None;
-    // 3.5.4 restores transformBeforeState_ on the target mesh.
+    if (project_ && project_->GetTargetMesh().isLoaded) {
+        project_->GetTargetMesh().transform = transformBeforeState_;
+        if (OnTargetTransformChanged) OnTargetTransformChanged();
+    }
 }
 
 void Viewport::SetSelectedPointIndex(int index) {
@@ -689,10 +692,10 @@ static inline ImU32 PackColor(int r, int g, int b, int a = 255) {
 }
 
 void Viewport::DrawViewportLabelOverlay(float x, float y, float w, float h) {
-    if (viewportLabel_.isEmpty()) return;
+    if (viewportLabel_.empty()) return;
     (void)w;
     ImDrawList* dl = ImGui::GetForegroundDrawList(ImGui::GetMainViewport());
-    std::string label = viewportLabel_.toStdString();
+    const std::string& label = viewportLabel_;
     ImFont* font = ImGui::GetFont();
     float fontSize = ImGui::GetFontSize();
     ImVec2 textSize = font->CalcTextSizeA(fontSize, FLT_MAX, 0.0f, label.c_str());
@@ -978,13 +981,7 @@ void Viewport::HandleMaskPress(float screenX, float screenY) {
     if (!mesh) return;
 
     MorphData& morphData = project_->GetMorphData();
-    // The mask buffer must match the mesh we're painting. Re-sizing is cheap
-    // and idempotent — first-paint bootstraps the vector, later paints no-op.
     const size_t vertCount = mesh->GetVertices().size();
-    if (morphData.vertexMask.size() != vertCount) {
-        morphData.vertexMask.assign(vertCount, false);
-    }
-    maskBrush_->SetMaskData(&morphData.vertexMask);
 
     int vpW = static_cast<int>(std::ceil(lastW_));
     int vpH = static_cast<int>(std::ceil(lastH_));
@@ -997,7 +994,21 @@ void Viewport::HandleMaskPress(float screenX, float screenY) {
         ? RayCaster::RayIntersectMeshBVH(ray, *mesh, transform, *bvh)
         : RayCaster::RayIntersectMesh(ray, *mesh, transform);
 
+    // Bail before allocating the mask buffer if the click missed — avoids
+    // leaving a non-empty all-false mask that the renderer's Show-Mask
+    // short-circuit would then treat as "user has a mask, draw mask colors".
     if (!hit.hit) return;
+
+    // Snapshot for undo BEFORE we resize the buffer or apply paint, so a
+    // first-ever stroke restores correctly to "no mask" on Ctrl+Z.
+    maskBeforeStroke_ = morphData.vertexMask;
+
+    // The mask buffer must match the mesh we're painting. Re-sizing is cheap
+    // and idempotent — first-paint bootstraps the vector, later paints no-op.
+    if (morphData.vertexMask.size() != vertCount) {
+        morphData.vertexMask.assign(vertCount, false);
+    }
+    maskBrush_->SetMaskData(&morphData.vertexMask);
 
     isMaskStroking_ = true;
     maskBrush_->BeginStroke(*mesh, transform, hit.position);
@@ -1043,9 +1054,12 @@ void Viewport::HandleMaskMove(float screenX, float screenY) {
 
 void Viewport::HandleMaskRelease() {
     if (!isMaskStroking_) return;
+    // Hand the pre-stroke snapshot to AppWindow so it can push one
+    // MaskStrokeUndoAction per gesture. Move-out clears maskBeforeStroke_.
+    std::vector<bool> before = std::move(maskBeforeStroke_);
     if (maskBrush_) maskBrush_->EndStroke();
     isMaskStroking_ = false;
-    if (OnMaskStrokeCompleted) OnMaskStrokeCompleted();
+    if (OnMaskStrokeCompleted) OnMaskStrokeCompleted(std::move(before));
 }
 
 // --- Stage 4 sculpting (ported from Qt HandleSculpt*) ---

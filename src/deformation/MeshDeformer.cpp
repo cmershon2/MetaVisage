@@ -1,7 +1,8 @@
 #include "deformation/MeshDeformer.h"
 #include "utils/Logger.h"
-#include <cmath>
 #include <algorithm>
+#include <cmath>
+#include <format>
 #include <numeric>
 
 namespace MetaVisage {
@@ -155,7 +156,7 @@ void MeshDeformer::ExtractControlPoints(std::vector<Vector3>& sourcePoints,
         }
     }
 
-    MV_LOG_INFO(QString("ExtractControlPoints: Extracted %1 control point pairs").arg(sourcePoints.size()));
+    MV_LOG_INFO(std::format("ExtractControlPoints: Extracted {} control point pairs", sourcePoints.size()));
 }
 
 std::shared_ptr<Mesh> MeshDeformer::CopyMesh(const std::shared_ptr<Mesh>& source) const {
@@ -210,8 +211,8 @@ DeformationResult MeshDeformer::Deform() {
         return result;
     }
 
-    MV_LOG_INFO(QString("Starting deformation with %1 control points and %2 vertices")
-        .arg(sourcePoints.size()).arg(sourceMesh_->GetVertexCount()));
+    MV_LOG_INFO(std::format("Starting deformation with {} control points and {} vertices",
+        sourcePoints.size(), sourceMesh_->GetVertexCount()));
 
     // Check for cancellation
     if (cancelled_.load()) {
@@ -322,8 +323,8 @@ DeformationResult MeshDeformer::Deform() {
     result.maxDisplacement = maxDisp;
     result.avgDisplacement = (vertexCount > 0) ? static_cast<float>(totalDisp / vertexCount) : 0.0f;
 
-    MV_LOG_INFO(QString("Deformation complete: max displacement=%1, avg=%2, vertices=%3")
-        .arg(result.maxDisplacement).arg(result.avgDisplacement).arg(vertexCount));
+    MV_LOG_INFO(std::format("Deformation complete: max displacement={}, avg={}, vertices={}",
+        result.maxDisplacement, result.avgDisplacement, vertexCount));
 
     return result;
 }
@@ -443,8 +444,8 @@ DeformationResult MeshDeformer::DeformNRICP() {
     result.maxDisplacement = maxDisp;
     result.avgDisplacement = origVerts.empty() ? 0.0f : static_cast<float>(totalDisp / origVerts.size());
 
-    MV_LOG_INFO(QString("NRICP deformation complete: max displacement=%1, avg=%2, vertices=%3")
-        .arg(result.maxDisplacement).arg(result.avgDisplacement).arg(origVerts.size()));
+    MV_LOG_INFO(std::format("NRICP deformation complete: max displacement={}, avg={}, vertices={}",
+        result.maxDisplacement, result.avgDisplacement, origVerts.size()));
 
     return result;
 }

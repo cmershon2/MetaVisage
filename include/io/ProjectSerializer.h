@@ -2,59 +2,61 @@
 #define PROJECTSERIALIZER_H
 
 #include "core/Project.h"
-#include <QString>
-#include <QJsonObject>
-#include <QJsonArray>
+#include <nlohmann/json.hpp>
+#include <string>
+#include <vector>
 
 namespace MetaVisage {
 
 struct SerializationResult {
     bool success;
-    QString errorMessage;
-    QStringList warnings;
+    std::string errorMessage;
+    std::vector<std::string> warnings;
 
     SerializationResult() : success(false) {}
 };
 
 class ProjectSerializer {
 public:
+    using Json = nlohmann::ordered_json;
+
     ProjectSerializer();
     ~ProjectSerializer();
 
     // Save project to .mmproj file (JSON format)
-    SerializationResult Save(const Project& project, const QString& filepath);
+    SerializationResult Save(const Project& project, const std::string& filepath);
 
     // Load project from .mmproj file
-    SerializationResult Load(Project& project, const QString& filepath);
+    SerializationResult Load(Project& project, const std::string& filepath);
 
 private:
     // Serialization helpers
-    QJsonObject SerializeVector3(const Vector3& v) const;
-    QJsonObject SerializeQuaternion(const Quaternion& q) const;
-    QJsonObject SerializeTransform(const Transform& t) const;
-    QJsonObject SerializeMeshReference(const MeshReference& ref, const QString& projectDir) const;
-    QJsonObject SerializeAlignmentData(const AlignmentData& data) const;
-    QJsonObject SerializePointCorrespondence(const PointCorrespondence& corr) const;
-    QJsonObject SerializePointReferenceData(const PointReferenceData& data) const;
-    QJsonObject SerializeMorphData(const MorphData& data) const;
-    QJsonObject SerializeTextureSet(const TextureSet& textures, const QString& projectDir) const;
+    Json SerializeVector3(const Vector3& v) const;
+    Json SerializeQuaternion(const Quaternion& q) const;
+    Json SerializeTransform(const Transform& t) const;
+    Json SerializeMeshReference(const MeshReference& ref, const std::string& projectDir) const;
+    Json SerializeAlignmentData(const AlignmentData& data) const;
+    Json SerializePointCorrespondence(const PointCorrespondence& corr) const;
+    Json SerializePointReferenceData(const PointReferenceData& data) const;
+    Json SerializeMorphData(const MorphData& data) const;
+    Json SerializeTextureSet(const TextureSet& textures, const std::string& projectDir) const;
 
     // Deserialization helpers
-    Vector3 DeserializeVector3(const QJsonObject& obj) const;
-    Quaternion DeserializeQuaternion(const QJsonObject& obj) const;
-    Transform DeserializeTransform(const QJsonObject& obj) const;
-    MeshReference DeserializeMeshReference(const QJsonObject& obj, const QString& projectDir,
-                                            QStringList& warnings) const;
-    AlignmentData DeserializeAlignmentData(const QJsonObject& obj) const;
-    PointCorrespondence DeserializePointCorrespondence(const QJsonObject& obj) const;
-    PointReferenceData DeserializePointReferenceData(const QJsonObject& obj) const;
-    MorphData DeserializeMorphData(const QJsonObject& obj) const;
-    TextureSet DeserializeTextureSet(const QJsonObject& obj, const QString& projectDir,
-                                      QStringList& warnings) const;
+    Vector3 DeserializeVector3(const Json& obj) const;
+    Quaternion DeserializeQuaternion(const Json& obj) const;
+    Transform DeserializeTransform(const Json& obj) const;
+    MeshReference DeserializeMeshReference(const Json& obj, const std::string& projectDir,
+                                            std::vector<std::string>& warnings) const;
+    AlignmentData DeserializeAlignmentData(const Json& obj) const;
+    PointCorrespondence DeserializePointCorrespondence(const Json& obj) const;
+    PointReferenceData DeserializePointReferenceData(const Json& obj) const;
+    MorphData DeserializeMorphData(const Json& obj) const;
+    TextureSet DeserializeTextureSet(const Json& obj, const std::string& projectDir,
+                                      std::vector<std::string>& warnings) const;
 
     // Path utilities
-    QString MakeRelativePath(const QString& filepath, const QString& projectDir) const;
-    QString ResolveRelativePath(const QString& relativePath, const QString& projectDir) const;
+    std::string MakeRelativePath(const std::string& filepath, const std::string& projectDir) const;
+    std::string ResolveRelativePath(const std::string& relativePath, const std::string& projectDir) const;
 
     static const int FORMAT_VERSION = 2;
 };

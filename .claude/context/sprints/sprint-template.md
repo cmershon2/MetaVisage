@@ -31,10 +31,18 @@
 
 ## Definition of Done
 
-- [ ] Code reviewed
-- [ ] Tests passing
-- [ ] Deployed to staging
-- [ ] PO approval
+- [ ] All committed stories implemented and merged to the sprint branch
+- [ ] Build clean: `cmake --build . --config Release` succeeds with no new warnings
+- [ ] CTest green: `ctest -C Release` passes (smoke test + any new test targets)
+- [ ] PR opened against `development` and `/review-pr` agent run; **all blocking findings resolved**
+- [ ] Phase D manual UI smoke completed on Windows — at minimum: Stage 1 → 2 → 3 → 4 → Export end-to-end with the bundled MetaHuman head, plus Undo/Redo verification on point placement, gizmo drag, mask paint, and sculpt brush
+- [ ] Sprint outcome notes updated with actual velocity, carryover (or "None"), and a retrospective link
+
+> **Process note (Sprint 3.7 retro action item #2):** Do NOT mark the Sprint Outcome
+> as "Complete" or "Implementation Complete" until **both** the `/review-pr`
+> blockers are closed **and** the manual UI smoke has run. The Sprint 3.6 and
+> 3.7 retros both flagged this anti-pattern; the DoD checkbox above is the
+> guard.
 
 ---
 

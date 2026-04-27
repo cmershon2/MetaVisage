@@ -3,8 +3,8 @@
 
 #include <imgui.h>
 
-#include <QFileInfo>
 #include <array>
+#include <filesystem>
 
 namespace MetaVisage {
 
@@ -33,10 +33,10 @@ void RenderKeyValueRow(const char* key, const char* value) {
 // Confirm
 // ---------------------------------------------------------------------------
 
-void ConfirmModalState::Open(const QString& t, const QString& msg,
+void ConfirmModalState::Open(const std::string& t, const std::string& msg,
                              std::function<void()> confirm,
-                             const QString& confirmLbl,
-                             const QString& cancelLbl) {
+                             const std::string& confirmLbl,
+                             const std::string& cancelLbl) {
     title = t;
     message = msg;
     onConfirm = std::move(confirm);
@@ -48,17 +48,17 @@ void ConfirmModalState::Open(const QString& t, const QString& msg,
 void RenderConfirmModal(ConfirmModalState& state) {
     HandlePendingOpen("##ConfirmModal", state.pendingOpen);
     if (ImGui::BeginPopupModal("##ConfirmModal", nullptr, ImGuiWindowFlags_AlwaysAutoResize)) {
-        ImGui::TextUnformatted(state.title.toUtf8().constData());
+        ImGui::TextUnformatted(state.title.c_str());
         ImGui::Separator();
-        ImGui::TextWrapped("%s", state.message.toUtf8().constData());
+        ImGui::TextWrapped("%s", state.message.c_str());
         ImGui::Spacing();
-        if (ImGui::Button(state.confirmLabel.toUtf8().constData(), ImVec2(120, 0))) {
+        if (ImGui::Button(state.confirmLabel.c_str(), ImVec2(120, 0))) {
             if (state.onConfirm) state.onConfirm();
             state.onConfirm = nullptr;
             ImGui::CloseCurrentPopup();
         }
         ImGui::SameLine();
-        if (ImGui::Button(state.cancelLabel.toUtf8().constData(), ImVec2(120, 0))) {
+        if (ImGui::Button(state.cancelLabel.c_str(), ImVec2(120, 0))) {
             state.onConfirm = nullptr;
             ImGui::CloseCurrentPopup();
         }
@@ -70,20 +70,30 @@ void RenderConfirmModal(ConfirmModalState& state) {
 // Error
 // ---------------------------------------------------------------------------
 
-void ErrorModalState::Open(const QString& msg, const QString& t) {
+void ErrorModalState::Open(const std::string& msg, const std::string& t) {
     title = t;
     message = msg;
+    isError = true;
+    pendingOpen = true;
+}
+
+void ErrorModalState::OpenInfo(const std::string& msg, const std::string& t) {
+    title = t;
+    message = msg;
+    isError = false;
     pendingOpen = true;
 }
 
 void RenderErrorModal(ErrorModalState& state) {
     HandlePendingOpen("##ErrorModal", state.pendingOpen);
     if (ImGui::BeginPopupModal("##ErrorModal", nullptr, ImGuiWindowFlags_AlwaysAutoResize)) {
-        ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(0.95f, 0.45f, 0.45f, 1.0f));
-        ImGui::TextUnformatted(state.title.toUtf8().constData());
+        const ImVec4 errorColor(0.95f, 0.45f, 0.45f, 1.0f);
+        const ImVec4 infoColor (0.40f, 0.85f, 0.50f, 1.0f);
+        ImGui::PushStyleColor(ImGuiCol_Text, state.isError ? errorColor : infoColor);
+        ImGui::TextUnformatted(state.title.c_str());
         ImGui::PopStyleColor();
         ImGui::Separator();
-        ImGui::TextWrapped("%s", state.message.toUtf8().constData());
+        ImGui::TextWrapped("%s", state.message.c_str());
         ImGui::Spacing();
         if (ImGui::Button("OK", ImVec2(120, 0))) ImGui::CloseCurrentPopup();
         ImGui::EndPopup();
@@ -133,16 +143,15 @@ void RenderWelcomeModal(WelcomeModalState& state) {
         } else {
             if (ImGui::BeginChild("##recent_projects", ImVec2(0, 180), true)) {
                 for (const auto& path : recent) {
-                    QFileInfo info(path);
-                    const std::string label = info.fileName().toUtf8().toStdString();
-                    ImGui::PushID(path.toUtf8().constData());
+                    const std::string label = std::filesystem::path(path).filename().string();
+                    ImGui::PushID(path.c_str());
                     if (ImGui::Selectable(label.c_str())) {
                         state.action = WelcomeAction::OpenRecent;
                         state.selectedRecent = path;
                         ImGui::CloseCurrentPopup();
                     }
                     if (ImGui::IsItemHovered()) {
-                        ImGui::SetTooltip("%s", path.toUtf8().constData());
+                        ImGui::SetTooltip("%s", path.c_str());
                     }
                     ImGui::PopID();
                 }
@@ -190,11 +199,10 @@ void RenderExportModal(ExportModalState& state) {
         ImGui::TextUnformatted("Output File");
         ImGui::Separator();
         char pathBuf[1024];
-        const std::string pathStr = state.filepath.toUtf8().toStdString();
-        std::snprintf(pathBuf, sizeof(pathBuf), "%s", pathStr.c_str());
+        std::snprintf(pathBuf, sizeof(pathBuf), "%s", state.filepath.c_str());
         ImGui::PushItemWidth(-100);
         if (ImGui::InputText("##filepath", pathBuf, sizeof(pathBuf))) {
-            state.filepath = QString::fromUtf8(pathBuf);
+            state.filepath = pathBuf;
         }
         ImGui::PopItemWidth();
         ImGui::SameLine();
@@ -239,7 +247,7 @@ void RenderExportModal(ExportModalState& state) {
         ImGui::EndDisabled();
 
         ImGui::Dummy(ImVec2(0, 10));
-        const bool canExport = !state.filepath.isEmpty();
+        const bool canExport = !state.filepath.empty();
         if (!canExport) ImGui::BeginDisabled();
         if (ImGui::Button("Export", ImVec2(120, 0))) {
             ExportOptions& o = state.options;
@@ -251,7 +259,7 @@ void RenderExportModal(ExportModalState& state) {
             o.metaHumanCompatible = state.metaHumanCompatible;
             o.undoUVFlip = state.metaHumanCompatible;
             o.scaleFactor = state.scaleFactor;
-            o.ueNamingPrefix = QString::fromUtf8(state.ueNamingPrefix.c_str());
+            o.ueNamingPrefix = state.ueNamingPrefix;
             o.exportBakedTextures = state.exportBakedTextures && state.texturesAvailable;
             static const int kResValues[] = {1024, 2048, 4096};
             o.bakeResolution = kResValues[state.bakeResolutionIndex];

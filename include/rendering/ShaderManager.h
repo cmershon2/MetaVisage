@@ -2,8 +2,8 @@
 #define SHADERMANAGER_H
 
 #include <GL/glew.h>
-#include <QString>
 #include <map>
+#include <string>
 
 namespace MetaVisage {
 
@@ -12,15 +12,15 @@ public:
     ShaderManager();
     ~ShaderManager();
 
-    bool LoadShader(const QString& name, const QString& vertexPath, const QString& fragmentPath);
-    unsigned int GetShader(const QString& name) const;
-    void UseShader(const QString& name);
+    bool LoadShader(const std::string& name, const std::string& vertexPath, const std::string& fragmentPath);
+    unsigned int GetShader(const std::string& name) const;
+    void UseShader(const std::string& name);
 
 private:
-    unsigned int CompileShader(unsigned int type, const QString& source);
-    unsigned int CreateProgram(const QString& vertexSource, const QString& fragmentSource);
+    unsigned int CompileShader(unsigned int type, const std::string& source);
+    unsigned int CreateProgram(const std::string& vertexSource, const std::string& fragmentSource);
 
-    std::map<QString, unsigned int> shaders_;
+    std::map<std::string, unsigned int> shaders_;
 };
 
 } // namespace MetaVisage

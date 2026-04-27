@@ -1,28 +1,29 @@
 cmake_minimum_required(VERSION 3.16)
 project(MetaVisage VERSION 2.0.0 LANGUAGES CXX)
 
-set(CMAKE_CXX_STANDARD 17)
+set(CMAKE_CXX_STANDARD 20)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 
-# Sprint 3.5 in progress — Qt Gui/Widgets/OpenGL/OpenGLWidgets are being removed
-# and replaced with GLFW + Dear ImGui. Qt6::Core remains transitionally (see
-# product_backlog.md → "Qt6Core removal"). AUTOMOC/AUTORCC/AUTOUIC were only
-# needed by the Qt Widgets-based UI layer and are no longer required.
+# Sprint 3.7 — Qt6 fully removed. The application is now self-hosted on
+# GLFW + Dear ImGui + standard C++ libraries (std::format, std::filesystem,
+# std::chrono, nlohmann::json). No Qt link or build dependency remains.
 
-# Find Qt6 (Core only) - check common installation paths for pre-installed Qt
-# Build scripts (build-msvc.ps1 / build-mingw.ps1) pass CMAKE_PREFIX_PATH
-# explicitly. This fallback is only consulted when invoking cmake directly.
-if(NOT DEFINED CMAKE_PREFIX_PATH)
-    if(EXISTS "C:/Qt/6.10.3/msvc2022_64")
-        list(APPEND CMAKE_PREFIX_PATH "C:/Qt/6.10.3/msvc2022_64")
-    elseif(EXISTS "C:/Qt/6.10.3/mingw_64")
-        list(APPEND CMAKE_PREFIX_PATH "C:/Qt/6.10.3/mingw_64")
-    elseif(EXISTS "C:/Qt/6.10.1/msvc2022_64")
-        list(APPEND CMAKE_PREFIX_PATH "C:/Qt/6.10.1/msvc2022_64")
-    elseif(EXISTS "C:/Qt/6.10.1/mingw_64")
-        list(APPEND CMAKE_PREFIX_PATH "C:/Qt/6.10.1/mingw_64")
+# Configure-time Qt-purity guard. If a future change accidentally re-introduces
+# any Qt6::Gui / Qt6::Widgets / Qt6::OpenGL / Qt6::OpenGLWidgets target —
+# either via a transitive vcpkg dep or a stray find_package call — fail the
+# configure with a clear message instead of letting the build pull Qt back in.
+# Qt6::Core is included even though it's already gone; the guard exists to keep
+# it gone.
+foreach(_forbidden_qt_target IN ITEMS
+        Qt6::Core Qt6::Gui Qt6::Widgets Qt6::OpenGL Qt6::OpenGLWidgets)
+    if(TARGET ${_forbidden_qt_target})
+        message(FATAL_ERROR
+            "Sprint 3.7 removed Qt entirely from MetaVisage, but the target "
+            "${_forbidden_qt_target} is defined in this configure. Track down the "
+            "find_package(Qt6 …) or transitive dependency that re-introduced it "
+            "before continuing the build.")
     endif()
-endif()
+endforeach()
 
 # Output directories
 set(CMAKE_RUNTIME_OUTPUT_DIRECTORY ${CMAKE_BINARY_DIR}/bin)
@@ -32,10 +33,6 @@ set(CMAKE_ARCHIVE_OUTPUT_DIRECTORY ${CMAKE_BINARY_DIR}/lib)
 # ---------------------------------------------------------------------------
 # Dependencies
 # ---------------------------------------------------------------------------
-
-# Transitional: Qt6::Core remains for QString/QFile/QJson/QDateTime in
-# core/io/deformation/baking layers. Full removal tracked in product_backlog.md.
-find_package(Qt6 REQUIRED COMPONENTS Core)
 
 # OpenGL (system)
 find_package(OpenGL REQUIRED)
@@ -121,6 +118,7 @@ set(CORE_SOURCES
     src/utils/OpenUrl.cpp
     src/utils/SingleInstance.cpp
     src/utils/HttpClient.cpp
+    src/utils/SecureStorage.cpp
     src/deformation/RBFInterpolator.cpp
     src/deformation/MeshDeformer.cpp
     src/deformation/NRICPDeformer.cpp
@@ -143,10 +141,6 @@ set(CORE_HEADERS
     include/ui/FileDialogs.h
     include/ui/Modals.h
     include/ui/StageSidebar.h
-    include/ui/MainWindow.h
-    include/ui/ViewportWidget.h
-    include/ui/ViewportContainer.h
-    include/ui/SidebarWidget.h
     include/core/Mesh.h
     include/core/Transform.h
     include/core/Project.h
@@ -170,6 +164,7 @@ set(CORE_HEADERS
     include/utils/OpenUrl.h
     include/utils/SingleInstance.h
     include/utils/HttpClient.h
+    include/utils/SecureStorage.h
     include/deformation/RBFInterpolator.h
     include/deformation/MeshDeformer.h
     include/deformation/NRICPDeformer.h
@@ -186,10 +181,10 @@ set(CORE_HEADERS
     include/baking/TextureWriter.h
 )
 
-# NOTE: Remaining UI-layer headers (MainWindow, ViewportWidget,
-# ViewportContainer, SidebarWidget) are listed above for IDE visibility but
-# their .cpp files are intentionally absent from CORE_SOURCES — they compile
-# again in Story 3.5.3 (Viewport) and Sprint 3.6 (sidebars + dialogs).
+# NOTE: Sprint 3.6 retired the Qt-era UI files (MainWindow / ViewportWidget /
+# ViewportContainer / SidebarWidget / ExportDialog / ShortcutsDialog /
+# TexturePreviewDialog / WelcomeDialog / ErrorHelper); Sprint 3.7 deleted them
+# outright once the ImGui replacements were verified.
 
 # Static library of engine + rendering translation units, consumed by the
 # executable target below.
@@ -214,7 +209,6 @@ target_link_libraries(${PROJECT_NAME}
 # ---------------------------------------------------------------------------
 target_link_libraries(${PROJECT_NAME}Core
     PUBLIC
-        Qt6::Core
         OpenGL::GL
         GLEW::GLEW
         glfw
@@ -257,3 +251,30 @@ endif()
 
 # Installation rules remain deferred until Sprint 3.6 reintroduces the full
 # UI surface (menus, dialogs, sidebars) needed for distribution packaging.
+
+# ---------------------------------------------------------------------------
+# Smoke test (Story 3.7.6)
+# ---------------------------------------------------------------------------
+# Headless test that exercises the load → serialize → reload → export pipeline
+# against the bundled MetaHuman head. Catches regressions in the engine layers
+# (Mesh, Project, ProjectSerializer, MeshExporter) without needing a GL
+# context. Build it as part of the default target so a green build implies the
+# core engine round-trip still works end-to-end.
+enable_testing()
+
+add_executable(metavisage_smoke
+    tests/smoke/launch_to_export.cpp
+)
+target_link_libraries(metavisage_smoke
+    PRIVATE
+        ${PROJECT_NAME}Core
+)
+if(MSVC)
+    target_compile_options(metavisage_smoke PRIVATE /W4)
+else()
+    target_compile_options(metavisage_smoke PRIVATE -Wall -Wextra)
+endif()
+
+add_test(NAME smoke_load_serialize_export
+         COMMAND metavisage_smoke
+         WORKING_DIRECTORY ${CMAKE_RUNTIME_OUTPUT_DIRECTORY})

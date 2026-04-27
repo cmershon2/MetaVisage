@@ -1,7 +1,6 @@
 #ifndef METAVISAGE_UTILS_HTTPCLIENT_H
 #define METAVISAGE_UTILS_HTTPCLIENT_H
 
-#include <QString>
 #include <map>
 #include <string>
 
@@ -24,16 +23,16 @@ public:
     HttpClient();
     ~HttpClient();
 
-    HttpResponse PostJson(const QString& url,
+    HttpResponse PostJson(const std::string& url,
                           const std::string& jsonBody,
                           const std::map<std::string, std::string>& headers) const;
 
-    HttpResponse PostJsonBearer(const QString& url,
+    HttpResponse PostJsonBearer(const std::string& url,
                                 const std::string& jsonBody,
-                                const QString& bearerToken) const;
+                                const std::string& bearerToken) const;
 
-    HttpResponse GetJsonBearer(const QString& url,
-                               const QString& bearerToken) const;
+    HttpResponse GetJsonBearer(const std::string& url,
+                               const std::string& bearerToken) const;
 };
 
 } // namespace MetaVisage

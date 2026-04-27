@@ -6,7 +6,6 @@
 
 #include <imgui.h>
 
-#include <QString>
 #include <atomic>
 #include <memory>
 #include <mutex>
@@ -73,12 +72,12 @@ private:
     void OnEditRedo();
 
     // Story 3.6.3 handlers
-    void OpenProjectFromDisk(const QString& path);
-    void SaveProjectToDisk(const QString& path);
-    void ImportMorphMeshFromDisk(const QString& path);
-    void ImportTargetMeshFromDisk(const QString& path);
+    void OpenProjectFromDisk(const std::string& path);
+    void SaveProjectToDisk(const std::string& path);
+    void ImportMorphMeshFromDisk(const std::string& path);
+    void ImportTargetMeshFromDisk(const std::string& path);
     void UseDefaultMorphMesh();
-    void ImportTextureForSlot(const QString& slot);
+    void ImportTextureForSlot(const std::string& slot);
     void DoExport();
 
     // Keep ViewportHost dual-mode flag in sync with the current stage — dual
@@ -103,7 +102,7 @@ private:
 
     std::unique_ptr<Project> project_;
     std::unique_ptr<UndoStack> undoStack_;
-    QString projectPath_;
+    std::string projectPath_;
 
     PendingAction pendingAction_ = PendingAction::None;
     std::string statusMessage_;

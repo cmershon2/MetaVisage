@@ -9,12 +9,12 @@
 
 ## 🔥 High Priority
 
-- [ ] **Re-wire Undo/Redo on the ImGui port**
+- [x] **Re-wire Undo/Redo on the ImGui port** *(Sprint 3.7, complete)*
   - Sprint 3.5/3.6 stood up `UndoStack` and the Edit menu but the ImGui port does not push any actions onto it. Point placement (`AppWindow::onPointPlaced`), point deletion (`AppWindow::onPointDelete`), gizmo drag (`Viewport::OnMouseButton` release path — `OnTransformApplied` callback is not wired in AppWindow), and transform spinboxes (`StageSidebar::RenderAlignment`) all mutate state directly. The Qt era pushed `PointPlacementUndoAction` / transform undos at each of these sites (see `MainWindow::OnPointPlaced` line 1274 and `ApplyTransform`).
   - **Effort**: ~1–2 days
   - **Value**: Restores a v1.0 feature users rely on for iterative point placement; required before NRICP work in Sprint 4
 
-- [ ] **Qt6Core removal (QString / QFile / QJson / QDateTime → std)**
+- [x] **Qt6Core removal (QString / QFile / QJson / QDateTime → std)** *(Sprint 3.7, complete)*
   - Sprint 3.5 removed Qt Gui/Widgets/OpenGL/OpenGLWidgets but kept `Qt6::Core` linked as a transitional dependency. `QString` is embedded in the public API of `core/Mesh`, `core/Project`, `core/TextureData`, `core/UndoStack`, `core/UndoableAction`, `io/MeshExporter`, `io/ProjectSerializer`, and pervasively in `MV_LOG_*(QString(...).arg(...))` call sites across `deformation/*`, `baking/*`, and `utils/*`. Port to `std::string` / `std::filesystem` / `std::chrono` / `nlohmann::json` / `std::fstream`. `Qt6::Core` is LGPL so not a licensing blocker, but keeping it means ~25 MB of runtime DLLs shipped with the installer and a transitive build-system footprint on Qt tooling.
   - **Effort**: ~15–20 points (~1.5 weeks solo)
   - **Value**: Completes the Qt exit begun in Sprint 3.5; shrinks installer; removes final Qt build-tool dependency
