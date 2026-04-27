@@ -63,7 +63,7 @@ MetaVisage/
 └── vcpkg.json          # Pinned dependency manifest
 ```
 
-Dead Qt-era UI files (`MainWindow.{h,cpp}`, `ViewportWidget`, `SidebarWidget`, `ExportDialog`, `ShortcutsDialog`, `TexturePreviewDialog`, `WelcomeDialog`, `ViewportContainer`, `ErrorHelper`) remain on disk for reference but are excluded from `CORE_SOURCES` / `CORE_HEADERS` and no longer compile after the Sprint 3.7 Qt6::Core removal. A follow-up purge will delete them outright.
+All UI lives under the ImGui hosts (`AppWindow`, `Viewport`, `ViewportHost`, `StageSidebar`, `Modals`, `FileDialogs`). The Qt-era UI files were deleted at the end of Sprint 3.7 once the migration was verified — earlier sprint plans, retros, and commits still reference `MainWindow.cpp` / `SidebarWidget.cpp` / `ViewportWidget.cpp` / `ExportDialog.cpp` / etc. as the historical equivalents.
 
 ## Four-Stage Workflow
 

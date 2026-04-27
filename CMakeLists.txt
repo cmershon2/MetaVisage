@@ -181,12 +181,10 @@ set(CORE_HEADERS
     include/baking/TextureWriter.h
 )
 
-# NOTE: Sprint 3.6 retired the dead Qt-era UI files (MainWindow.cpp,
-# ViewportWidget.cpp, ViewportContainer.cpp, SidebarWidget.cpp, ExportDialog.cpp,
-# ShortcutsDialog.cpp, TexturePreviewDialog.cpp, WelcomeDialog.cpp,
-# ErrorHelper.cpp) and Sprint 3.7 dropped their headers from CORE_HEADERS too,
-# since they no longer compile after the Qt6::Core removal. They remain on disk
-# as historical reference until a follow-up purge.
+# NOTE: Sprint 3.6 retired the Qt-era UI files (MainWindow / ViewportWidget /
+# ViewportContainer / SidebarWidget / ExportDialog / ShortcutsDialog /
+# TexturePreviewDialog / WelcomeDialog / ErrorHelper); Sprint 3.7 deleted them
+# outright once the ImGui replacements were verified.
 
 # Static library of engine + rendering translation units, consumed by the
 # executable target below.
