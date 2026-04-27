@@ -66,8 +66,15 @@ private:
     // Stage 3 mask painting — state persists across frames. When painting is
     // active, LMB in the morph viewport paints mask bits instead of doing
     // camera work. Radius/erase are brush settings.
+    //
+    // Show Mask defaults OFF so the Stage 3 preview-mode dropdown (Deformed /
+    // Original / Overlay / Heat Map) drives what the user sees. Toggling
+    // Paint Mask flips the renderer to mask colors automatically while
+    // painting (see StageSidebar::RenderMorph: out.maskShow ORs in
+    // maskPaintingActive_), so the user only ticks Show Mask when they want
+    // the painted mask visible while *not* actively painting.
     bool maskPaintingActive_ = false;
-    bool maskShowMask_       = true;
+    bool maskShowMask_       = false;
     bool maskEraseMode_      = false;
     float maskBrushRadius_   = 10.0f;
 

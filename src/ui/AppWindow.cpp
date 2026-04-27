@@ -30,6 +30,7 @@
 
 #include <algorithm>
 #include <cctype>
+#include <map>
 #include <cstdio>
 #include <filesystem>
 #include <format>
@@ -354,15 +355,56 @@ bool AppWindow::Initialize(int width, int height, const char* title) {
         }
     };
 
+    // Stage 3 mask paint stroke: Viewport hands us the pre-stroke vertexMask
+    // snapshot via OnMaskStrokeCompleted. Push one undo action per gesture.
+    auto onMaskStrokeCompleted = [this](std::vector<bool> before) {
+        if (!undoStack_ || !project_) return;
+        std::vector<bool> after = project_->GetMorphData().vertexMask;
+        if (after == before) return; // No-op stroke (e.g. brush radius 0).
+        undoStack_->Push(std::make_unique<MaskStrokeUndoAction>(
+            project_.get(), std::move(before), std::move(after)));
+    };
+
+    // Stage 4 sculpt stroke: Viewport fires OnSculptStrokeCompleted with the
+    // BrushStroke (which carries pre-stroke positions for Undo). We capture
+    // the post-stroke positions for Redo by diffing against stroke.Undo on a
+    // copy of the deformed-mesh vertex buffer.
+    auto onSculptStrokeCompleted = [this](BrushStroke stroke) {
+        if (!undoStack_ || !project_ || stroke.IsEmpty()) return;
+        Mesh* mesh = nullptr;
+        if (project_->GetMorphData().deformedMorphMesh) {
+            mesh = project_->GetMorphData().deformedMorphMesh.get();
+        }
+        if (!mesh) return;
+        const auto& vertices = mesh->GetVertices();
+        auto undone = vertices;
+        stroke.Undo(undone);
+        std::map<int, Vector3> afterPositions;
+        const size_t n = std::min(vertices.size(), undone.size());
+        for (size_t i = 0; i < n; ++i) {
+            const Vector3& cur = vertices[i];
+            const Vector3& bef = undone[i];
+            if (cur.x != bef.x || cur.y != bef.y || cur.z != bef.z) {
+                afterPositions[static_cast<int>(i)] = cur;
+            }
+        }
+        undoStack_->Push(std::make_unique<SculptStrokeUndoAction>(
+            project_.get(), mesh, stroke, afterPositions));
+    };
+
     if (auto* left = viewportHost_->GetPrimaryViewport()) {
-        left->OnPointPlaced          = onPointPlaced;
-        left->OnPointDeleteRequested = onPointDelete;
-        left->OnTransformApplied     = onTransformApplied;
+        left->OnPointPlaced            = onPointPlaced;
+        left->OnPointDeleteRequested   = onPointDelete;
+        left->OnTransformApplied       = onTransformApplied;
+        left->OnMaskStrokeCompleted    = onMaskStrokeCompleted;
+        left->OnSculptStrokeCompleted  = onSculptStrokeCompleted;
     }
     if (auto* right = viewportHost_->GetSecondaryViewport()) {
-        right->OnPointPlaced          = onPointPlaced;
-        right->OnPointDeleteRequested = onPointDelete;
-        right->OnTransformApplied     = onTransformApplied;
+        right->OnPointPlaced            = onPointPlaced;
+        right->OnPointDeleteRequested   = onPointDelete;
+        right->OnTransformApplied       = onTransformApplied;
+        right->OnMaskStrokeCompleted    = onMaskStrokeCompleted;
+        right->OnSculptStrokeCompleted  = onSculptStrokeCompleted;
     }
 
     glfwSetWindowUserPointer(window_, this);
@@ -1293,6 +1335,11 @@ void AppWindow::DoExport() {
     }
     statusMessage_ = std::format("Exported to {}", FileName(exportModal_.filepath));
     MV_LOG_INFO(std::format("Exported mesh to {}", exportModal_.filepath));
+    // Visible confirmation matching v1.0 behaviour — the QMessageBox::information
+    // toast in the Qt era turned into nothing on the ImGui port until now.
+    errorModal_.OpenInfo(
+        std::format("Mesh saved to:\n{}", exportModal_.filepath),
+        "Export Complete");
 }
 
 void AppWindow::OnFileExit() {
@@ -1302,12 +1349,18 @@ void AppWindow::OnFileExit() {
 void AppWindow::OnEditUndo() {
     if (!undoStack_ || !undoStack_->CanUndo()) return;
     undoStack_->Undo();
+    // The action may have restored the workflow stage (e.g. undoing a
+    // point placement done in Stage 2 while the user is now in Stage 3
+    // takes them back to Stage 2). Sync the viewport host's dual-pane
+    // state to match the new current stage.
+    ApplyStageViewportMode();
     statusMessage_ = "Undo";
 }
 
 void AppWindow::OnEditRedo() {
     if (!undoStack_ || !undoStack_->CanRedo()) return;
     undoStack_->Redo();
+    ApplyStageViewportMode();
     statusMessage_ = "Redo";
 }
 

@@ -34,12 +34,20 @@ struct ConfirmModalState {
 };
 void RenderConfirmModal(ConfirmModalState& state);
 
+// Single message-with-OK modal used both for errors and for one-shot
+// confirmations (e.g. "Export Complete"). The `isError` flag drives the
+// title color; everything else is shared so we don't ship two near-identical
+// modal renderers.
 struct ErrorModalState {
     bool pendingOpen = false;
+    bool isError = true;
     std::string title = "Error";
     std::string message;
 
     void Open(const std::string& msg, const std::string& t = "Error");
+    // Convenience for success / info notifications. Renders with a green
+    // title color instead of the red error color.
+    void OpenInfo(const std::string& msg, const std::string& t);
 };
 void RenderErrorModal(ErrorModalState& state);
 

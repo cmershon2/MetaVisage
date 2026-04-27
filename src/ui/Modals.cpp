@@ -73,13 +73,23 @@ void RenderConfirmModal(ConfirmModalState& state) {
 void ErrorModalState::Open(const std::string& msg, const std::string& t) {
     title = t;
     message = msg;
+    isError = true;
+    pendingOpen = true;
+}
+
+void ErrorModalState::OpenInfo(const std::string& msg, const std::string& t) {
+    title = t;
+    message = msg;
+    isError = false;
     pendingOpen = true;
 }
 
 void RenderErrorModal(ErrorModalState& state) {
     HandlePendingOpen("##ErrorModal", state.pendingOpen);
     if (ImGui::BeginPopupModal("##ErrorModal", nullptr, ImGuiWindowFlags_AlwaysAutoResize)) {
-        ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(0.95f, 0.45f, 0.45f, 1.0f));
+        const ImVec4 errorColor(0.95f, 0.45f, 0.45f, 1.0f);
+        const ImVec4 infoColor (0.40f, 0.85f, 0.50f, 1.0f);
+        ImGui::PushStyleColor(ImGuiCol_Text, state.isError ? errorColor : infoColor);
         ImGui::TextUnformatted(state.title.c_str());
         ImGui::PopStyleColor();
         ImGui::Separator();
