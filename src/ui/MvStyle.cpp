@@ -188,6 +188,41 @@ void LoadFonts() {
     Font.Mono   = TryLoadFont(atlas, fontDir / "JetBrainsMono-Regular.ttf", TypeSize::Mono);
     Font.MonoSm = TryLoadFont(atlas, fontDir / "JetBrainsMono-Medium.ttf",  TypeSize::MonoSm);
 
+    // Story 3.8.5+ — Lucide icon font. Glyphs live in the Unicode Private
+    // Use Area (U+E000–U+F8FF). We pass an explicit static glyph range
+    // covering that block so ImGui rasterizes only what we'll actually use,
+    // keeping the atlas footprint reasonable. The exact icon→codepoint
+    // mapping depends on which Lucide font build is bundled (lucide-static
+    // ships an info.json; a Fontello build ships config.json) — see
+    // include/ui/MvIcons.h for the project's resolved constants.
+    static const ImWchar kIconRanges[] = {
+        0xE000, 0xF8FF, // PUA — covers all Lucide glyph codepoints
+        0,
+    };
+    {
+        const std::filesystem::path lucidePath = fontDir / "lucide.ttf";
+        std::error_code ec;
+        if (std::filesystem::exists(lucidePath, ec)) {
+            ImFontConfig cfg;
+            cfg.GlyphRanges = kIconRanges;
+            cfg.PixelSnapH = true;
+            // The icon glyphs are designed on a 24×24 viewBox — render
+            // slightly larger than body text so they read as proper
+            // toolbar icons rather than tiny inline glyphs.
+            Font.Icon   = atlas.AddFontFromFileTTF(lucidePath.string().c_str(), 16.0f, &cfg);
+            Font.IconSm = atlas.AddFontFromFileTTF(lucidePath.string().c_str(), 13.0f, &cfg);
+            if (!Font.Icon) {
+                MV_LOG_WARNING(std::format("MvStyle: AddFontFromFileTTF failed for {}",
+                                           lucidePath.string()));
+            }
+        } else {
+            MV_LOG_WARNING(std::format(
+                "MvStyle: lucide.ttf not found at {} — icons will fall back to "
+                "ImDrawList primitives where available, missing-glyph rects elsewhere",
+                lucidePath.string()));
+        }
+    }
+
     // Promote Inter Regular @ body size to ImGui's default font. Any UI we
     // haven't migrated to a named handle still picks up Inter rather than
     // ProggyClean while the per-stage stories land.

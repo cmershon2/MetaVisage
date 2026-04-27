@@ -96,6 +96,8 @@ struct FontHandles {
     ImFont* BodySm    = nullptr;  // Inter_18pt Regular            13 px
     ImFont* Mono      = nullptr;  // JetBrainsMono Regular         11 px
     ImFont* MonoSm    = nullptr;  // JetBrainsMono Medium          10 px
+    ImFont* Icon      = nullptr;  // lucide.ttf                    16 px  (Story 3.8.5)
+    ImFont* IconSm    = nullptr;  // lucide.ttf                    13 px
 };
 extern FontHandles Font;
 

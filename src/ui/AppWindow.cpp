@@ -1111,6 +1111,11 @@ void AppWindow::RenderMainMenuBar() {
         ImGui::Separator();
         if (ImGui::MenuItem("Keyboard Shortcuts")) pendingAction_ = PendingAction::ShowKeyboardShortcuts;
         if (ImGui::MenuItem("About MetaVisage")) pendingAction_ = PendingAction::ShowAbout;
+        ImGui::Separator();
+        // Sprint 3.8.5 dev aid — browse the Lucide icon font's loaded glyphs
+        // and copy codepoints into MvIcons.h. Will move behind a debug build
+        // flag once the icon constants are stable.
+        ImGui::MenuItem("Icon Glyph Explorer (Dev)", nullptr, &showIconExplorer_);
         ImGui::EndMenu();
     }
 
@@ -1366,6 +1371,136 @@ void AppWindow::DispatchPendingAction() {
     }
 }
 
+// Sprint 3.8.5 dev tool — Lucide icon glyph explorer. Lists every PUA glyph
+// the Lucide font actually rasterized, lets the user click any glyph to copy
+// its codepoint to the clipboard. Used to populate MvIcons.h once the
+// project's Lucide build is identified. Toggle via Help > Icon Glyph
+// Explorer (Dev).
+//
+// Design notes:
+// - We walk U+E000..U+F8FF and use ImFont::FindGlyphNoFallback so we don't
+//   accidentally enumerate every codepoint in the range (which would then
+//   fall back to the missing-glyph rect).
+// - Glyph buttons are 40 px square in the icon font; codepoint label below
+//   uses MonoSm so the hex is readable without dwarfing the glyph.
+// - A text filter narrows by hex prefix (e.g. "EA" jumps to that block).
+void AppWindow::RenderIconExplorer() {
+    if (!showIconExplorer_) return;
+
+    if (!ImGui::Begin("Lucide Icon Glyph Explorer", &showIconExplorer_,
+                      ImGuiWindowFlags_NoDocking)) {
+        ImGui::End();
+        return;
+    }
+
+    if (!MvStyle::Font.Icon) {
+        ImGui::TextWrapped(
+            "Lucide font not loaded. Drop assets/fonts/lucide.ttf and rebuild.");
+        ImGui::End();
+        return;
+    }
+
+    static char filter[16] = "";
+    ImGui::TextUnformatted("Filter (hex prefix, e.g. \"EA\"):");
+    ImGui::SameLine();
+    ImGui::SetNextItemWidth(120.0f);
+    ImGui::InputText("##filter", filter, sizeof(filter));
+    ImGui::SameLine();
+    if (ImGui::Button("Clear")) filter[0] = '\0';
+    ImGui::SameLine();
+    ImGui::TextDisabled("(click any glyph to copy codepoint)");
+    ImGui::Separator();
+
+    ImGui::BeginChild("##iconscroll", ImVec2(0, 0), false);
+
+    ImFont* font = MvStyle::Font.Icon;
+    constexpr int Cols = 12;
+    int col = 0;
+
+    auto encodeUtf8 = [](unsigned int cp, char* out) -> int {
+        if (cp < 0x80) {
+            out[0] = static_cast<char>(cp);
+            out[1] = '\0';
+            return 1;
+        }
+        if (cp < 0x800) {
+            out[0] = static_cast<char>(0xC0 | (cp >> 6));
+            out[1] = static_cast<char>(0x80 | (cp & 0x3F));
+            out[2] = '\0';
+            return 2;
+        }
+        out[0] = static_cast<char>(0xE0 | (cp >> 12));
+        out[1] = static_cast<char>(0x80 | ((cp >> 6) & 0x3F));
+        out[2] = static_cast<char>(0x80 | (cp & 0x3F));
+        out[3] = '\0';
+        return 3;
+    };
+
+    // ImGui 1.92+ uses dynamic font baking — ImFont no longer exposes a
+    // Glyphs vector. IsGlyphInFont() is the canonical "does this codepoint
+    // exist in this font" check; we walk the full PUA range (6.4k codepoints,
+    // O(1) per check) and skip everything that's missing. Acceptable for a
+    // dev-only inspector.
+    for (unsigned int cp = 0xE000; cp <= 0xF8FF; ++cp) {
+        if (!font->IsGlyphInFont(static_cast<ImWchar>(cp))) continue;
+
+        char hex[8];
+        std::snprintf(hex, sizeof(hex), "%04X", cp);
+        if (filter[0]) {
+            // Case-insensitive prefix match
+            bool match = true;
+            for (int i = 0; filter[i] && match; ++i) {
+                const char a = static_cast<char>(std::toupper(static_cast<unsigned char>(filter[i])));
+                const char b = static_cast<char>(std::toupper(static_cast<unsigned char>(hex[i])));
+                if (a != b) match = false;
+            }
+            if (!match) continue;
+        }
+
+        if (col > 0 && (col % Cols) != 0) ImGui::SameLine();
+        ++col;
+
+        ImGui::BeginGroup();
+        ImGui::PushID(static_cast<int>(cp));
+
+        char utf8[5];
+        encodeUtf8(cp, utf8);
+
+        ImGui::PushFont(font);
+        if (ImGui::Button(utf8, ImVec2(40.0f, 40.0f))) {
+            char clip[16];
+            std::snprintf(clip, sizeof(clip), "0x%04X", cp);
+            ImGui::SetClipboardText(clip);
+        }
+        ImGui::PopFont();
+
+        if (ImGui::IsItemHovered()) {
+            ImGui::SetTooltip("U+%04X — click to copy 0x%04X", cp, cp);
+        }
+
+        {
+            MvStyle::ScopedFont f(MvStyle::Font.MonoSm);
+            ImGui::PushStyleColor(ImGuiCol_Text, MvStyle::MvFg3);
+            const ImVec2 ts = ImGui::CalcTextSize(hex);
+            const float pad = (40.0f - ts.x) * 0.5f;
+            ImGui::Dummy(ImVec2(pad, 0.0f));
+            ImGui::SameLine(0.0f, 0.0f);
+            ImGui::TextUnformatted(hex);
+            ImGui::PopStyleColor();
+        }
+
+        ImGui::PopID();
+        ImGui::EndGroup();
+    }
+
+    if (col == 0) {
+        ImGui::TextDisabled("No glyphs match the filter.");
+    }
+
+    ImGui::EndChild();
+    ImGui::End();
+}
+
 void AppWindow::RenderAboutModal() {
     if (showAbout_) {
         ImGui::OpenPopup("About MetaVisage");
@@ -1384,6 +1519,7 @@ void AppWindow::RenderAboutModal() {
 
 void AppWindow::RenderModals() {
     RenderAboutModal();
+    RenderIconExplorer();
     RenderConfirmModal(confirmModal_);
     RenderErrorModal(errorModal_);
     RenderShortcutsModal(shortcutsModal_);

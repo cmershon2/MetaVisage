@@ -63,6 +63,7 @@ private:
     void RenderTitleBar();              // Story 3.8.2 — 36px chrome above the menu bar
     void RenderMainMenuBar();
     void RenderStatusBar();
+    void RenderIconExplorer();          // Dev tool — identifies Lucide glyph codepoints
     void SyncOSWindowTitle();           // Mirror filename + stage breadcrumb to glfwSetWindowTitle
     void RenderAboutModal();
     void RenderModals();
@@ -122,6 +123,7 @@ private:
 
     // Modal state — every struct is inert until its Open() is called.
     bool showAbout_ = false;
+    bool showIconExplorer_ = false;        // Dev tool, gated by Help menu
     ConfirmModalState confirmModal_;
     ErrorModalState errorModal_;
     WelcomeModalState welcomeModal_;
