@@ -25,13 +25,13 @@ An open-source desktop application for automated MetaHuman mesh morphing. Wrap M
 
 ### Build
 - CMake 3.16+
-- C++17 compiler — MSVC 2019+ or MinGW
+- **C++20** compiler — MSVC 2019+ (19.30+) or MinGW with C++20 support
 - OpenGL 4.3+
 - vcpkg for dependencies (manifest pinned in [vcpkg.json](vcpkg.json)):
   - GLFW3, Dear ImGui (with `glfw-binding` + `opengl3-binding`), GLEW
   - nlohmann/json, native-file-dialog-extended (NFD), libcurl
   - Assimp, Eigen3
-- Qt 6.10+ — `Qt6::Core` only, linked transitionally for QString/QFile/QJson (full removal tracked in the backlog)
+- **No Qt dependency.** Earlier versions linked `Qt6::Core` transitionally; Sprint 3.7 removed it entirely. The CMake configure-time guard fails the build if any Qt target is reintroduced.
 
 ## Quick Start
 
@@ -43,23 +43,26 @@ cd MetaVisage
 mkdir build && cd build
 
 # MSVC
-cmake .. -DCMAKE_PREFIX_PATH="C:/Qt/6.10.3/msvc2022_64" -DCMAKE_TOOLCHAIN_FILE="%VCPKG_ROOT%/scripts/buildsystems/vcpkg.cmake" -G "Visual Studio 17 2022" -A x64
+cmake .. -DCMAKE_TOOLCHAIN_FILE="%VCPKG_ROOT%/scripts/buildsystems/vcpkg.cmake" -G "Visual Studio 17 2022" -A x64
 cmake --build . --config Release
 
-# Run
+# Run the smoke test (load → serialize → reload → export round-trip)
+ctest -C Release
+
+# Launch
 ./bin/Release/MetaVisage.exe
 ```
 
-See [BUILD.md](BUILD.md) for detailed instructions (MinGW, Qt Creator, vcpkg setup, troubleshooting).
+See [BUILD.md](BUILD.md) for detailed instructions (MinGW, vcpkg setup, troubleshooting).
 
 ### Using the Build Scripts
 
 ```powershell
-# MSVC build with runtime DLL staging (Qt6::Core + GLFW/ImGui/GLEW/etc.)
-.\build-msvc.ps1 -Deploy
+# MSVC build (vcpkg's applocal post-build step stages all runtime DLLs)
+.\build-msvc.ps1 -Deploy -VcpkgToolchain "C:/vcpkg/scripts/buildsystems/vcpkg.cmake"
 
 # MinGW build
-.\build-mingw.ps1
+.\build-mingw.ps1 -VcpkgToolchain "C:/vcpkg/scripts/buildsystems/vcpkg.cmake"
 ```
 
 ## Workflow
@@ -83,6 +86,7 @@ MetaVisage/
 ├── include/          # Public headers — baking/, core/, deformation/, io/,
 │                     # rendering/, sculpting/, thirdparty/, ui/, utils/
 ├── src/              # Implementation (mirrors include/ structure) + main.cpp
+├── tests/            # Headless smoke test (load → serialize → export pipeline)
 ├── .claude/          # Sprint plans, retros, agents, hooks, skills (dev tooling)
 ├── CMakeLists.txt    # Build configuration
 ├── vcpkg.json        # Pinned dependency manifest

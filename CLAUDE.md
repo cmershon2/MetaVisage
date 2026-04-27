@@ -50,7 +50,7 @@ MetaVisage/
 │   ├── rendering/      # Renderer, MeshRenderer, GizmoRenderer, PointRenderer, ShaderManager
 │   ├── sculpting/      # Brush base + Smooth/Grab/PushPull/Inflate/Mask brushes
 │   ├── thirdparty/     # stb_image, stb_image_write
-│   ├── ui/             # AppWindow, StageSidebar, Modals, Viewport, ViewportHost
+│   ├── ui/             # AppWindow, StageSidebar, Modals, Viewport, ViewportHost, FileDialogs
 │   └── utils/          # Config, HttpClient, SingleInstance, OpenUrl, Paths,
 │                       # SecureStorage, BVH, Logger, RayCaster, SpatialHash
 ├── src/                # Implementation, mirroring include/ structure
