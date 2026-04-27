@@ -88,14 +88,14 @@ namespace TypeSize {
 // app must still launch when the TTFs are missing from assets/fonts/.
 // =============================================================================
 struct FontHandles {
-    ImFont* DisplayLg = nullptr;  // Saira ExtraBoldItalic 32
-    ImFont* Display   = nullptr;  // Saira ExtraBoldItalic 28
-    ImFont* Heading   = nullptr;  // Inter SemiBold        20
-    ImFont* Body      = nullptr;  // Inter Regular         14   (also io.FontDefault)
-    ImFont* BodyMd    = nullptr;  // Inter Medium          14
-    ImFont* BodySm    = nullptr;  // Inter Regular         13
-    ImFont* Mono      = nullptr;  // JetBrainsMono Regular 11
-    ImFont* MonoSm    = nullptr;  // JetBrainsMono Medium  10
+    ImFont* DisplayLg = nullptr;  // Saira ExtraBoldItalic        32 px
+    ImFont* Display   = nullptr;  // Saira ExtraBoldItalic        28 px
+    ImFont* Heading   = nullptr;  // Inter_24pt SemiBold           20 px
+    ImFont* Body      = nullptr;  // Inter_18pt Regular            14 px  (also io.FontDefault)
+    ImFont* BodyMd    = nullptr;  // Inter_18pt Medium             14 px
+    ImFont* BodySm    = nullptr;  // Inter_18pt Regular            13 px
+    ImFont* Mono      = nullptr;  // JetBrainsMono Regular         11 px
+    ImFont* MonoSm    = nullptr;  // JetBrainsMono Medium          10 px
 };
 extern FontHandles Font;
 

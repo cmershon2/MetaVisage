@@ -165,14 +165,18 @@ void LoadFonts() {
     const std::filesystem::path fontDir =
         std::filesystem::path(Paths::ExecutableDir()) / "assets" / "fonts";
 
-    // Inter — body / labels / buttons. Body is loaded first so it becomes the
-    // de-facto first-loaded font; we then explicitly assign io.FontDefault
-    // below for clarity. Loaded twice (Regular at body + small) because ImGui
-    // stores one rasterized size per ImFont*.
-    Font.Body    = TryLoadFont(atlas, fontDir / "Inter-Regular.ttf",        TypeSize::Body);
-    Font.BodySm  = TryLoadFont(atlas, fontDir / "Inter-Regular.ttf",        TypeSize::BodySm);
-    Font.BodyMd  = TryLoadFont(atlas, fontDir / "Inter-Medium.ttf",         TypeSize::Body);
-    Font.Heading = TryLoadFont(atlas, fontDir / "Inter-SemiBold.ttf",       TypeSize::Heading);
+    // Inter — body / labels / buttons. Google Fonts ships Inter v4 as a
+    // variable font with static optical-size cuts at 18pt, 24pt, and 28pt.
+    // The 18pt cut is hinted for body-size rendering (~13–18 px) which
+    // covers BodySm/Body, while the 24pt cut is tighter and designed for
+    // the 20–24 px heading range. We use both to keep the typography on-spec.
+    // The "_18pt" / "_24pt" suffix is the canonical filename produced by the
+    // Google Fonts download flow as of 2026; older Inter v3 downloads
+    // (Inter-Regular.ttf, etc.) are not used.
+    Font.Body    = TryLoadFont(atlas, fontDir / "Inter_18pt-Regular.ttf",  TypeSize::Body);
+    Font.BodySm  = TryLoadFont(atlas, fontDir / "Inter_18pt-Regular.ttf",  TypeSize::BodySm);
+    Font.BodyMd  = TryLoadFont(atlas, fontDir / "Inter_18pt-Medium.ttf",   TypeSize::Body);
+    Font.Heading = TryLoadFont(atlas, fontDir / "Inter_24pt-SemiBold.ttf", TypeSize::Heading);
 
     // Saira ExtraBold Italic — bold display headings only. The wordmark is
     // italic; non-italic Saira is not used.
