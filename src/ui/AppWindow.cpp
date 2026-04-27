@@ -2,6 +2,7 @@
 #include "ui/FileDialogs.h"
 #include "ui/MvStyle.h"
 #include "ui/StageStepper.h"
+#include "ui/ToolRail.h"
 #include "ui/Viewport.h"
 #include "ui/ViewportHost.h"
 #include "core/Camera.h"
@@ -732,7 +733,31 @@ void AppWindow::RenderAppShell() {
     // changes between frames during font-atlas reloads.
     constexpr float statusH = 28.0f;
     ImVec2 avail = ImGui::GetContentRegionAvail();
-    ImVec2 dockSize(avail.x, avail.y - statusH);
+    const float bodyH = avail.y - statusH;
+
+    // Story 3.8.4 — left tool rail for Stage 1 (transforms) and Stage 4
+    // (sculpt brushes). Rendered as a 56 px-wide BeginChild to the left of
+    // the dockspace; SameLine then docks the dockspace flush against it.
+    // Stages 2 (Point Reference) and 3 (Morph) hide the rail entirely so
+    // the dockspace claims the full body width.
+    const WorkflowStage curStage =
+        project_ ? project_->GetCurrentStage() : WorkflowStage::Alignment;
+    const bool railVisible = (curStage == WorkflowStage::Alignment ||
+                              curStage == WorkflowStage::TouchUp);
+    float railW = 0.0f;
+    if (railVisible) {
+        Viewport* primaryViewport =
+            viewportHost_ ? viewportHost_->GetPrimaryViewport() : nullptr;
+        ToolRail::Result railResult =
+            ToolRail::Render(curStage, project_.get(), primaryViewport, bodyH);
+        if (railResult.helpRequested) {
+            pendingAction_ = PendingAction::ShowKeyboardShortcuts;
+        }
+        railW = ToolRail::WidthPx;
+        ImGui::SameLine(0.0f, 0.0f);
+    }
+
+    ImVec2 dockSize(avail.x - railW, bodyH);
 
     ImGuiID dockId = ImGui::GetID("AppDockSpace");
     ImGui::DockSpace(dockId, dockSize, ImGuiDockNodeFlags_PassthruCentralNode);
