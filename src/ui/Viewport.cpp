@@ -950,8 +950,14 @@ void Viewport::DrawTopCenterToolbar(float x, float y, float w, float h) {
     constexpr ImGuiWindowFlags flags =
         ImGuiWindowFlags_NoTitleBar | ImGuiWindowFlags_NoResize |
         ImGuiWindowFlags_NoMove     | ImGuiWindowFlags_NoSavedSettings |
+        // NoFocusOnAppearing keeps the toolbar from grabbing keyboard focus
+        // on its first frame; we deliberately omit NoBringToFrontOnFocus so
+        // a click on a toolbar button raises the window above the host
+        // window's central dockspace node — otherwise the click passes
+        // through to the (transparent) viewport, never reaches the button,
+        // and the toggle appears to do nothing. The pre-3.8.5
+        // DrawShadingModeOverlay worked because it didn't set this flag.
         ImGuiWindowFlags_NoFocusOnAppearing |
-        ImGuiWindowFlags_NoBringToFrontOnFocus |
         ImGuiWindowFlags_NoScrollbar | ImGuiWindowFlags_NoCollapse |
         ImGuiWindowFlags_NoDocking | ImGuiWindowFlags_AlwaysAutoResize;
 
@@ -1107,8 +1113,14 @@ void Viewport::DrawTopRightPills(float x, float y, float w, float h) {
     constexpr ImGuiWindowFlags flags =
         ImGuiWindowFlags_NoTitleBar | ImGuiWindowFlags_NoResize |
         ImGuiWindowFlags_NoMove     | ImGuiWindowFlags_NoSavedSettings |
+        // NoFocusOnAppearing keeps the toolbar from grabbing keyboard focus
+        // on its first frame; we deliberately omit NoBringToFrontOnFocus so
+        // a click on a toolbar button raises the window above the host
+        // window's central dockspace node — otherwise the click passes
+        // through to the (transparent) viewport, never reaches the button,
+        // and the toggle appears to do nothing. The pre-3.8.5
+        // DrawShadingModeOverlay worked because it didn't set this flag.
         ImGuiWindowFlags_NoFocusOnAppearing |
-        ImGuiWindowFlags_NoBringToFrontOnFocus |
         ImGuiWindowFlags_NoScrollbar | ImGuiWindowFlags_NoCollapse |
         ImGuiWindowFlags_NoDocking | ImGuiWindowFlags_AlwaysAutoResize |
         ImGuiWindowFlags_NoBackground;
@@ -1218,8 +1230,14 @@ void Viewport::DrawBottomLeftHud(float x, float y, float w, float h) {
     constexpr ImGuiWindowFlags flags =
         ImGuiWindowFlags_NoTitleBar | ImGuiWindowFlags_NoResize |
         ImGuiWindowFlags_NoMove     | ImGuiWindowFlags_NoSavedSettings |
+        // NoFocusOnAppearing keeps the toolbar from grabbing keyboard focus
+        // on its first frame; we deliberately omit NoBringToFrontOnFocus so
+        // a click on a toolbar button raises the window above the host
+        // window's central dockspace node — otherwise the click passes
+        // through to the (transparent) viewport, never reaches the button,
+        // and the toggle appears to do nothing. The pre-3.8.5
+        // DrawShadingModeOverlay worked because it didn't set this flag.
         ImGuiWindowFlags_NoFocusOnAppearing |
-        ImGuiWindowFlags_NoBringToFrontOnFocus |
         ImGuiWindowFlags_NoScrollbar | ImGuiWindowFlags_NoCollapse |
         ImGuiWindowFlags_NoDocking | ImGuiWindowFlags_AlwaysAutoResize;
 
