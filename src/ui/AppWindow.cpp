@@ -1,5 +1,6 @@
 #include "ui/AppWindow.h"
 #include "ui/FileDialogs.h"
+#include "ui/MvStyle.h"
 #include "ui/Viewport.h"
 #include "ui/ViewportHost.h"
 #include "core/Camera.h"
@@ -147,7 +148,13 @@ bool AppWindow::Initialize(int width, int height, const char* title) {
     io.ConfigFlags |= ImGuiConfigFlags_DockingEnable;
     io.IniFilename = nullptr; // don't persist imgui.ini in cwd
 
-    ApplyDarkTheme();
+    // Sprint 3.8.1 — load TTF fonts (Inter / Saira / JetBrains Mono) into the
+    // atlas before the GL backend uploads it during ImGui_ImplOpenGL3_Init,
+    // then apply the design-token color palette. Missing TTFs are non-fatal:
+    // MvStyle::LoadFonts falls back to ProggyClean and logs a warning so a
+    // dev who pulls the repo without assets/fonts/ still gets a usable build.
+    MvStyle::LoadFonts();
+    MvStyle::Apply();
 
     // install_callbacks=false — we install our own GLFW callbacks below and
     // forward to ImGui_ImplGlfw_* inside them so we can gate viewport input on
@@ -165,6 +172,10 @@ bool AppWindow::Initialize(int width, int height, const char* title) {
         return false;
     }
     imguiOpenGLInitialized_ = true;
+
+    // PNG / GL-texture assets — must run after ImGui_ImplOpenGL3_Init so the
+    // GL context is current and the logo upload succeeds.
+    MvStyle::LoadAssets();
 
     MV_LOG_INFO(std::format("AppWindow initialized: {}x{}, GL {}, GLSL {}",
         width, height,
@@ -466,42 +477,6 @@ bool AppWindow::Initialize(int width, int height, const char* title) {
     });
 
     return true;
-}
-
-void AppWindow::ApplyDarkTheme() {
-    // Mirror the v1.0 Qt Fusion dark palette so ImGui doesn't flash a lighter
-    // theme. Exact colors match src/main.cpp's pre-migration palette.
-    ImGui::StyleColorsDark();
-
-    ImGuiStyle& s = ImGui::GetStyle();
-    s.WindowRounding = 4.0f;
-    s.FrameRounding = 3.0f;
-    s.GrabRounding = 3.0f;
-
-    auto rgb = [](int r, int g, int b, float a = 1.0f) {
-        return ImVec4(r / 255.0f, g / 255.0f, b / 255.0f, a);
-    };
-
-    s.Colors[ImGuiCol_WindowBg]       = rgb(30, 30, 30);
-    s.Colors[ImGuiCol_ChildBg]        = rgb(30, 30, 30);
-    s.Colors[ImGuiCol_PopupBg]        = rgb(44, 62, 80);
-    s.Colors[ImGuiCol_FrameBg]        = rgb(44, 62, 80);
-    s.Colors[ImGuiCol_FrameBgHovered] = rgb(52, 73, 94);
-    s.Colors[ImGuiCol_FrameBgActive]  = rgb(52, 152, 219);
-    s.Colors[ImGuiCol_TitleBg]        = rgb(30, 30, 30);
-    s.Colors[ImGuiCol_TitleBgActive]  = rgb(44, 62, 80);
-    s.Colors[ImGuiCol_MenuBarBg]      = rgb(35, 40, 45);
-    s.Colors[ImGuiCol_Button]         = rgb(44, 62, 80);
-    s.Colors[ImGuiCol_ButtonHovered]  = rgb(52, 73, 94);
-    s.Colors[ImGuiCol_ButtonActive]   = rgb(52, 152, 219);
-    s.Colors[ImGuiCol_Header]         = rgb(44, 62, 80);
-    s.Colors[ImGuiCol_HeaderHovered]  = rgb(52, 73, 94);
-    s.Colors[ImGuiCol_HeaderActive]   = rgb(52, 152, 219);
-    s.Colors[ImGuiCol_CheckMark]      = rgb(52, 152, 219);
-    s.Colors[ImGuiCol_SliderGrab]     = rgb(52, 152, 219);
-    s.Colors[ImGuiCol_SliderGrabActive] = rgb(41, 128, 185);
-    s.Colors[ImGuiCol_Text]           = rgb(255, 255, 255);
-    s.Colors[ImGuiCol_TextDisabled]   = rgb(127, 140, 141);
 }
 
 void AppWindow::Run() {
@@ -1393,6 +1368,9 @@ void AppWindow::Shutdown() {
     project_.reset();
     viewportHost_.reset();
     if (imguiOpenGLInitialized_) {
+        // Free GL textures owned by MvStyle (logo) before tearing down the
+        // OpenGL backend — the GL context is still current here.
+        MvStyle::Shutdown();
         ImGui_ImplOpenGL3_Shutdown();
         imguiOpenGLInitialized_ = false;
     }

@@ -108,6 +108,7 @@ set(CORE_SOURCES
     src/ui/ViewportHost.cpp
     src/ui/FileDialogs.cpp
     src/ui/Modals.cpp
+    src/ui/MvStyle.cpp
     src/ui/StageSidebar.cpp
     src/utils/RayCaster.cpp
     src/utils/Logger.cpp
@@ -140,6 +141,7 @@ set(CORE_HEADERS
     include/ui/ViewportHost.h
     include/ui/FileDialogs.h
     include/ui/Modals.h
+    include/ui/MvStyle.h
     include/ui/StageSidebar.h
     include/core/Mesh.h
     include/core/Transform.h

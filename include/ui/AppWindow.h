@@ -55,7 +55,6 @@ public:
     UndoStack* GetUndoStack() { return undoStack_.get(); }
 
 private:
-    void ApplyDarkTheme();
     void RenderFrame(int fbWidth, int fbHeight);
 
     void RenderAppShell();
