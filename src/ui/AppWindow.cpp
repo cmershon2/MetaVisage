@@ -177,10 +177,15 @@ bool AppWindow::Initialize(int width, int height, const char* title) {
     // GL context is current and the logo upload succeeds.
     MvStyle::LoadAssets();
 
-    MV_LOG_INFO(std::format("AppWindow initialized: {}x{}, GL {}, GLSL {}",
+    {
+        const char* renderer = reinterpret_cast<const char*>(glGetString(GL_RENDERER));
+        gpuRenderer_ = renderer ? renderer : "GPU";
+    }
+    MV_LOG_INFO(std::format("AppWindow initialized: {}x{}, GL {}, GLSL {}, GPU {}",
         width, height,
         reinterpret_cast<const char*>(glGetString(GL_VERSION)),
-        reinterpret_cast<const char*>(glGetString(GL_SHADING_LANGUAGE_VERSION))));
+        reinterpret_cast<const char*>(glGetString(GL_SHADING_LANGUAGE_VERSION)),
+        gpuRenderer_));
 
     viewportHost_ = std::make_unique<ViewportHost>();
     if (!viewportHost_->Initialize()) {
@@ -652,13 +657,28 @@ void AppWindow::Run() {
 }
 
 void AppWindow::RenderAppShell() {
-    // Master host-window pattern: a single borderless window spans the main
-    // viewport, contains the menu bar, reserves a status-bar strip at the
-    // bottom, and hosts an ImGui DockSpace in between. Sidebar/viewport/etc.
-    // dock into that space by matching the dock ID on Begin().
+    // Story 3.8.2 — chrome layout:
+    //   ┌─────────────────────────────────────────┐  ← OS native title bar
+    //   │ ◇ MetaVisage · file.mmproj > STAGE 01 … │ 36 px ##MvTitleBar window
+    //   ├─────────────────────────────────────────┤
+    //   │ File Edit View Mesh Help …  Saved · LL │ ~26 px BeginMenuBar
+    //   ├─────────────────────────────────────────┤
+    //   │  DockSpace (sidebar + viewport)         │
+    //   ├─────────────────────────────────────────┤
+    //   │ ● Ready · Stage 01 ALIGN · …            │ 28 px status bar
+    //   └─────────────────────────────────────────┘
+    //
+    // The title bar lives in its own borderless window pinned to the top of
+    // the main viewport; the host window starts 36 px below it. Keeping the
+    // title bar separate avoids fighting ImGui's BeginMenuBar layout (which
+    // owns the top of any window with WindowFlags_MenuBar).
+    constexpr float TitleBarH = 36.0f;
+    SyncOSWindowTitle();
+    RenderTitleBar();
+
     ImGuiViewport* vp = ImGui::GetMainViewport();
-    ImGui::SetNextWindowPos(vp->Pos);
-    ImGui::SetNextWindowSize(vp->Size);
+    ImGui::SetNextWindowPos(ImVec2(vp->Pos.x, vp->Pos.y + TitleBarH));
+    ImGui::SetNextWindowSize(ImVec2(vp->Size.x, vp->Size.y - TitleBarH));
     ImGui::SetNextWindowViewport(vp->ID);
 
     ImGuiWindowFlags hostFlags =
@@ -684,8 +704,11 @@ void AppWindow::RenderAppShell() {
 
     RenderMainMenuBar();
 
-    // Reserve a row for the status bar at the bottom of the host window.
-    const float statusH = ImGui::GetFrameHeight();
+    // Reserve a 28 px row for the status bar at the bottom of the host window.
+    // Spec value (Sprint 3.8 design); the previous GetFrameHeight() reservation
+    // was font-size-dependent, which would flicker the dockspace size on font
+    // changes between frames during font-atlas reloads.
+    constexpr float statusH = 28.0f;
     ImVec2 avail = ImGui::GetContentRegionAvail();
     ImVec2 dockSize(avail.x, avail.y - statusH);
 
@@ -745,11 +768,242 @@ void AppWindow::RenderAppShell() {
     ImGui::End();
 }
 
+// =============================================================================
+// Story 3.8.2 — chrome rendering
+// =============================================================================
+
+namespace {
+
+// Compose breadcrumb text used in both the title bar and the OS taskbar.
+// Returns "Stage N / 4 · STAGENAME" — caller decides upper/lower casing.
+std::string StageBreadcrumb(WorkflowStage s) {
+    return std::format("Stage {} / 4 · {}",
+                       static_cast<int>(s) + 1,
+                       StageDisplayName(s));
+}
+
+std::string ProjectFileLabel(const std::string& projectPath) {
+    if (projectPath.empty()) return "Untitled Project";
+    return std::filesystem::path(projectPath).filename().string();
+}
+
+// "Saved 12s ago" / "Saved 3m ago" / "Saved <1h ago" / "Unsaved".
+std::string SavedAgoLabel(const std::optional<std::chrono::steady_clock::time_point>& at) {
+    if (!at) return "Unsaved";
+    using namespace std::chrono;
+    const auto delta = duration_cast<seconds>(steady_clock::now() - *at).count();
+    if (delta < 5)    return "Saved just now";
+    if (delta < 60)   return std::format("Saved {}s ago",  delta);
+    if (delta < 3600) return std::format("Saved {}m ago",  delta / 60);
+    return std::format("Saved {}h ago", delta / 3600);
+}
+
+// Convert an ImVec4 to ImGui packed RGBA32 — used heavily by the title bar
+// drawlist commands.
+ImU32 Col(const ImVec4& v) { return ImGui::ColorConvertFloat4ToU32(v); }
+
+// Caption-button hit area on the right of the title bar. Renders the icon
+// glyph (min/max/close) via ImDrawList primitives and dispatches the GLFW
+// action on click. Hover background is MvBg2 except for close which uses
+// the Windows red.
+void CaptionButton(GLFWwindow* win, ImDrawList* dl, ImVec2 pmin, ImVec2 pmax,
+                   int kind /*0=min, 1=max, 2=close*/) {
+    ImGui::SetCursorScreenPos(pmin);
+    ImGui::PushID(kind);
+    const bool clicked = ImGui::InvisibleButton(
+        "##cap", ImVec2(pmax.x - pmin.x, pmax.y - pmin.y));
+    const bool hovered = ImGui::IsItemHovered();
+    ImGui::PopID();
+
+    if (hovered) {
+        const ImU32 bg = (kind == 2)
+            ? IM_COL32(0xE8, 0x11, 0x23, 0xFF)            // Windows close-red
+            : Col(MetaVisage::MvStyle::MvBg2);
+        dl->AddRectFilled(pmin, pmax, bg);
+    }
+
+    const ImU32 iconCol = (kind == 2 && hovered)
+        ? IM_COL32_WHITE
+        : Col(MetaVisage::MvStyle::MvFg2);
+    const float cx = (pmin.x + pmax.x) * 0.5f;
+    const float cy = (pmin.y + pmax.y) * 0.5f;
+    const float halfIcon = 5.0f;
+
+    if (kind == 0) {
+        dl->AddLine(ImVec2(cx - halfIcon, cy + halfIcon * 0.5f),
+                    ImVec2(cx + halfIcon, cy + halfIcon * 0.5f),
+                    iconCol, 1.6f);
+    } else if (kind == 1) {
+        const bool isMaxed = win && glfwGetWindowAttrib(win, GLFW_MAXIMIZED);
+        if (isMaxed) {
+            // Two stacked rects suggesting "restore"
+            dl->AddRect(ImVec2(cx - halfIcon + 1, cy - halfIcon),
+                        ImVec2(cx + halfIcon,     cy + halfIcon - 1),
+                        iconCol, 0.0f, 0, 1.4f);
+            dl->AddRect(ImVec2(cx - halfIcon,     cy - halfIcon + 1),
+                        ImVec2(cx + halfIcon - 1, cy + halfIcon),
+                        iconCol, 0.0f, 0, 1.4f);
+        } else {
+            dl->AddRect(ImVec2(cx - halfIcon, cy - halfIcon),
+                        ImVec2(cx + halfIcon, cy + halfIcon),
+                        iconCol, 0.0f, 0, 1.4f);
+        }
+    } else { // close
+        const float h = halfIcon - 0.5f;
+        dl->AddLine(ImVec2(cx - h, cy - h), ImVec2(cx + h, cy + h), iconCol, 1.6f);
+        dl->AddLine(ImVec2(cx + h, cy - h), ImVec2(cx - h, cy + h), iconCol, 1.6f);
+    }
+
+    if (clicked && win) {
+        if (kind == 0) {
+            glfwIconifyWindow(win);
+        } else if (kind == 1) {
+            if (glfwGetWindowAttrib(win, GLFW_MAXIMIZED)) glfwRestoreWindow(win);
+            else                                          glfwMaximizeWindow(win);
+        } else {
+            glfwSetWindowShouldClose(win, GLFW_TRUE);
+        }
+    }
+}
+
+} // namespace
+
+void AppWindow::SyncOSWindowTitle() {
+    if (!window_) return;
+    const WorkflowStage stage = project_ ? project_->GetCurrentStage() : WorkflowStage::Alignment;
+    std::string title = std::format("MetaVisage — {} — Stage {} / 4 · {}",
+                                    ProjectFileLabel(projectPath_),
+                                    static_cast<int>(stage) + 1,
+                                    StageDisplayName(stage));
+    if (title != lastOSTitle_) {
+        glfwSetWindowTitle(window_, title.c_str());
+        lastOSTitle_ = std::move(title);
+    }
+}
+
+void AppWindow::RenderTitleBar() {
+    constexpr float TitleBarH = 36.0f;
+    constexpr float CaptionW  = 46.0f;
+
+    ImGuiViewport* vp = ImGui::GetMainViewport();
+    ImGui::SetNextWindowPos(vp->Pos);
+    ImGui::SetNextWindowSize(ImVec2(vp->Size.x, TitleBarH));
+    ImGui::SetNextWindowViewport(vp->ID);
+
+    constexpr ImGuiWindowFlags flags =
+        ImGuiWindowFlags_NoTitleBar | ImGuiWindowFlags_NoResize |
+        ImGuiWindowFlags_NoMove     | ImGuiWindowFlags_NoScrollbar |
+        ImGuiWindowFlags_NoCollapse | ImGuiWindowFlags_NoSavedSettings |
+        ImGuiWindowFlags_NoBringToFrontOnFocus | ImGuiWindowFlags_NoNavFocus |
+        ImGuiWindowFlags_NoDocking;
+
+    ImGui::PushStyleVar(ImGuiStyleVar_WindowRounding, 0.0f);
+    ImGui::PushStyleVar(ImGuiStyleVar_WindowBorderSize, 0.0f);
+    ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding, ImVec2(0.0f, 0.0f));
+    ImGui::PushStyleColor(ImGuiCol_WindowBg, MvStyle::MvBg0);
+
+    ImGui::Begin("##MvTitleBar", nullptr, flags);
+    ImGui::PopStyleColor();
+    ImGui::PopStyleVar(3);
+
+    ImDrawList* dl = ImGui::GetWindowDrawList();
+    const ImVec2 wp = ImGui::GetWindowPos();
+    const ImVec2 ws = ImGui::GetWindowSize();
+
+    // 1 px hairline divider between the title bar and whatever sits below
+    // (currently the menu bar in the host window).
+    dl->AddLine(ImVec2(wp.x,         wp.y + ws.y - 1.0f),
+                ImVec2(wp.x + ws.x,  wp.y + ws.y - 1.0f),
+                Col(MvStyle::MvLine2));
+
+    // ---- Caption buttons (right edge) -----------------------------------
+    // Drawn first so we know how much horizontal room remains for the
+    // breadcrumb. Buttons stack right-to-left: close, max, min.
+    const float captionRight = ws.x;
+    for (int i = 0; i < 3; ++i) {
+        const float x1 = captionRight - i * CaptionW;
+        const float x0 = x1 - CaptionW;
+        // i=0 → close (rightmost), i=1 → max, i=2 → min
+        const int kind = (i == 0) ? 2 : (i == 1) ? 1 : 0;
+        CaptionButton(window_, dl,
+                      ImVec2(wp.x + x0, wp.y),
+                      ImVec2(wp.x + x1, wp.y + ws.y),
+                      kind);
+    }
+    const float breadcrumbMaxX = ws.x - 3.0f * CaptionW - 8.0f;
+
+    // ---- Logo -----------------------------------------------------------
+    constexpr float LeftPad = 12.0f;
+    constexpr float LogoSize = 18.0f;
+    const float logoY = (TitleBarH - LogoSize) * 0.5f;
+    if (MvStyle::Asset.LogoTextureId) {
+        ImGui::SetCursorPos(ImVec2(LeftPad, logoY));
+        // Standard ImGui-OpenGL-backend pattern: pass the GL texture name
+        // through ImTextureID via an intptr_t round-trip. Modern ImGui
+        // defines ImTextureID as ImU64; reinterpret_cast across the int↔ptr
+        // boundary is rejected by MSVC, so a C-style cast is canonical here.
+        ImGui::Image((ImTextureID)(intptr_t)MvStyle::Asset.LogoTextureId,
+                     ImVec2(LogoSize, LogoSize));
+    }
+
+    // ---- Breadcrumb text ------------------------------------------------
+    // Vertically center against the body font's height; if the design fonts
+    // aren't loaded the fallback is ProggyClean which is shorter, so we use
+    // the live font size rather than a hardcoded 14 px.
+    const float textH = ImGui::GetFontSize();
+    const float textY = (TitleBarH - textH) * 0.5f;
+    float cx = LeftPad + LogoSize + 10.0f;
+
+    auto drawSegment = [&](const std::string& s, ImFont* font, const ImVec4& color) {
+        if (cx > breadcrumbMaxX) return;
+        ImGui::SetCursorPos(ImVec2(cx, textY));
+        MvStyle::ScopedFont f(font);
+        ImGui::PushStyleColor(ImGuiCol_Text, color);
+        // Manually clip if the segment would overflow into the caption-button
+        // region. Easier than dynamic ellipsing for a chrome row that rarely
+        // overflows on real-world filenames.
+        const float available = breadcrumbMaxX - cx;
+        const float width = ImGui::CalcTextSize(s.c_str()).x;
+        if (width > available) {
+            ImGui::PushClipRect(ImVec2(ImGui::GetCursorScreenPos().x,
+                                       ImGui::GetCursorScreenPos().y - 4),
+                                ImVec2(ImGui::GetCursorScreenPos().x + available,
+                                       ImGui::GetCursorScreenPos().y + textH + 4),
+                                true);
+            ImGui::TextUnformatted(s.c_str());
+            ImGui::PopClipRect();
+            cx = breadcrumbMaxX + 1.0f;
+        } else {
+            ImGui::TextUnformatted(s.c_str());
+            cx += width;
+        }
+        ImGui::PopStyleColor();
+    };
+
+    const WorkflowStage stage = project_ ? project_->GetCurrentStage() : WorkflowStage::Alignment;
+
+    drawSegment("MetaVisage", MvStyle::Font.BodyMd, MvStyle::MvFg1);
+    cx += 10.0f;
+    drawSegment("\xC2\xB7", MvStyle::Font.Body, MvStyle::MvLine3);   // U+00B7 middot
+    cx += 10.0f;
+    drawSegment(ProjectFileLabel(projectPath_), MvStyle::Font.Body, MvStyle::MvFg2);
+    cx += 10.0f;
+    drawSegment(">", MvStyle::Font.Body, MvStyle::MvLine3);
+    cx += 10.0f;
+
+    // STAGE NN / 4 · STAGENAME — uppercased mono in MvBlue400
+    std::string stageLabel = std::format("STAGE {:02d} / 4 \xC2\xB7 ",
+                                         static_cast<int>(stage) + 1);
+    const std::string stageName = StageDisplayName(stage);
+    for (char c : stageName) stageLabel.push_back(static_cast<char>(std::toupper(static_cast<unsigned char>(c))));
+    drawSegment(stageLabel, MvStyle::Font.Mono, MvStyle::MvBlue400);
+
+    ImGui::End();
+}
+
 void AppWindow::RenderMainMenuBar() {
     if (!ImGui::BeginMenuBar()) return;
 
-    const WorkflowStage stage = project_ ? project_->GetCurrentStage() : WorkflowStage::Alignment;
-    const bool inTouchUp = (stage == WorkflowStage::TouchUp);
     const bool canUndo = undoStack_ && undoStack_->CanUndo();
     const bool canRedo = undoStack_ && undoStack_->CanRedo();
 
@@ -757,15 +1011,12 @@ void AppWindow::RenderMainMenuBar() {
         if (ImGui::MenuItem("New Project", "Ctrl+N")) OnFileNewProject();
         if (ImGui::MenuItem("Open Project...", "Ctrl+O")) pendingAction_ = PendingAction::OpenProject;
         ImGui::Separator();
-        // Save becomes Save As until we persist a project path (Sprint 3.6.4).
         if (ImGui::MenuItem("Save Project", "Ctrl+S")) pendingAction_ = PendingAction::SaveProject;
         if (ImGui::MenuItem("Save Project As...", "Ctrl+Shift+S")) pendingAction_ = PendingAction::SaveProjectAs;
         ImGui::Separator();
-        // Import Morph Mesh / Import Target Mesh / Export Mesh are stage-gated
-        // workflows — the sidebar surfaces them in the stages where they make
-        // sense (Stage 1 for imports, Stage 4 for export). Mirroring them in
-        // the File menu duplicated entry points and confused users about when
-        // they apply, so the menu entries were removed.
+        // Import Morph Mesh / Import Target Mesh / Export Mesh remain
+        // stage-gated in the sidebar — duplicating them here confused users
+        // about when they apply. Decision kept in Sprint 3.6.
         if (ImGui::MenuItem("Exit", "Alt+F4")) OnFileExit();
         ImGui::EndMenu();
     }
@@ -781,16 +1032,28 @@ void AppWindow::RenderMainMenuBar() {
     }
 
     if (ImGui::BeginMenu("View")) {
-        // Shading mode lives on the viewport overlay (top-right combo) where
-        // it's adjusted directly while looking at the model — duplicating it
-        // in the menu just gave users two places to set the same thing.
-        // Grid toggle and camera-view presets remain stubbed for 3.6.5.
+        // Shading mode lives on the viewport overlay (Stage-3 Story 3.8.5
+        // moves it into the new top-centre toolbar). The grid and camera
+        // presets remain stubbed for a future story.
         ImGui::MenuItem("Show Grid", nullptr, false, false);
         ImGui::Separator();
         ImGui::MenuItem("Front View (Numpad 1)", nullptr, false, false);
         ImGui::MenuItem("Right View (Numpad 3)", nullptr, false, false);
         ImGui::MenuItem("Top View (Numpad 7)", nullptr, false, false);
         ImGui::MenuItem("Perspective (Home)", nullptr, false, false);
+        ImGui::EndMenu();
+    }
+
+    // Story 3.8.2 — new "Mesh" menu, scaffolded with the entries the design
+    // file shows. All items are stubbed disabled until the corresponding
+    // backend lands; surfacing them now matches the design and lets keyboard
+    // users discover the planned commands.
+    if (ImGui::BeginMenu("Mesh")) {
+        ImGui::MenuItem("Recompute Normals",   nullptr, false, false);
+        ImGui::MenuItem("Validate Topology",   nullptr, false, false);
+        ImGui::Separator();
+        ImGui::MenuItem("Center on Origin",    nullptr, false, false);
+        ImGui::MenuItem("Snap to Floor",       nullptr, false, false);
         ImGui::EndMenu();
     }
 
@@ -804,33 +1067,170 @@ void AppWindow::RenderMainMenuBar() {
         ImGui::EndMenu();
     }
 
-    // Right-side stage indicator — mirrors the sidebar's `N / 4` element but
-    // is always visible even before the sidebar is docked. Removed once the
-    // sidebar panel lands in 3.6.2.
-    const char* stageName = StageDisplayName(stage);
-    char buf[64];
-    std::snprintf(buf, sizeof(buf), "Stage %d / 4 — %s",
-                  static_cast<int>(stage) + 1, stageName);
-    float textW = ImGui::CalcTextSize(buf).x;
-    float available = ImGui::GetContentRegionAvail().x;
-    if (available > textW + 16.0f) {
-        ImGui::SameLine(ImGui::GetCursorPosX() + available - textW - 8.0f);
-        ImGui::TextUnformatted(buf);
+    // ---- Right-side cluster ---------------------------------------------
+    // Save indicator (mono, MvFg3) + Live Link pill (mono MvSuccess).
+    // The previous stage-indicator that lived here moved into the title bar.
+    ImDrawList* dl = ImGui::GetWindowDrawList();
+
+    const std::string savedLabel = SavedAgoLabel(lastSavedAt_);
+    const char* livePillText = "UE 5.4 \xC2\xB7 LIVE LINK";
+
+    float savedW = 0.0f;
+    {
+        MvStyle::ScopedFont f(MvStyle::Font.Mono);
+        savedW = ImGui::CalcTextSize(savedLabel.c_str()).x;
     }
+    float pillTextW = 0.0f;
+    {
+        MvStyle::ScopedFont f(MvStyle::Font.Mono);
+        pillTextW = ImGui::CalcTextSize(livePillText).x;
+    }
+    const float pillW = pillTextW + 18.0f /* dot + paddings */;
+    const float gap   = 14.0f;
+    const float wantW = savedW + gap + pillW + 10.0f;
+    const float available = ImGui::GetContentRegionAvail().x;
+    if (available < wantW) {
+        ImGui::EndMenuBar();
+        return;
+    }
+
+    // Saved indicator
+    ImGui::SameLine(ImGui::GetCursorPosX() + (available - wantW));
+    {
+        MvStyle::ScopedFont f(MvStyle::Font.Mono);
+        ImGui::PushStyleColor(ImGuiCol_Text, MvStyle::MvFg3);
+        ImGui::TextUnformatted(savedLabel.c_str());
+        ImGui::PopStyleColor();
+    }
+
+    // Live Link pill — drawn manually so the rounded background + green
+    // border match the design.
+    ImGui::SameLine(0, gap);
+    const ImVec2 pillMin = ImGui::GetCursorScreenPos();
+    const float pillH = 20.0f;
+    const ImVec2 pillMax(pillMin.x + pillW, pillMin.y + pillH);
+    dl->AddRectFilled(pillMin, pillMax,
+                      Col(ImVec4(MvStyle::MvSuccess.x, MvStyle::MvSuccess.y,
+                                 MvStyle::MvSuccess.z, 0.06f)),
+                      4.0f);
+    dl->AddRect(pillMin, pillMax,
+                Col(ImVec4(MvStyle::MvSuccess.x, MvStyle::MvSuccess.y,
+                           MvStyle::MvSuccess.z, 0.40f)),
+                4.0f, 0, 1.0f);
+    // Green dot
+    dl->AddCircleFilled(ImVec2(pillMin.x + 9.0f, pillMin.y + pillH * 0.5f),
+                        3.0f, Col(MvStyle::MvSuccess));
+    // Pill text
+    {
+        MvStyle::ScopedFont f(MvStyle::Font.Mono);
+        const ImVec2 textPos(pillMin.x + 18.0f,
+                             pillMin.y + (pillH - ImGui::GetFontSize()) * 0.5f);
+        dl->AddText(textPos, Col(MvStyle::MvSuccess), livePillText);
+    }
+    ImGui::Dummy(ImVec2(pillW, pillH));
 
     ImGui::EndMenuBar();
 }
 
 void AppWindow::RenderStatusBar() {
-    // Status bar is the final row of the host window. Keep it single-line and
-    // subdued — detailed tool / hint / tier-badge rendering lands as the
-    // sidebar and licensing subsystems come online.
-    ImGui::Separator();
+    constexpr float StatusH = 28.0f;
+    const ImVec2 startCursor = ImGui::GetCursorPos();
+    const ImVec2 origin = ImGui::GetCursorScreenPos();
+
+    // Background fill: MvBg0 with a hairline top border in MvLine2. Drawn
+    // via the host window's drawlist rather than a child window so the
+    // status bar inherits the host's clipping and doesn't introduce a
+    // separate scroll region.
+    ImDrawList* dl = ImGui::GetWindowDrawList();
+    const float fullW = ImGui::GetContentRegionAvail().x;
+    dl->AddRectFilled(origin,
+                      ImVec2(origin.x + fullW, origin.y + StatusH),
+                      Col(MvStyle::MvBg0));
+    dl->AddLine(origin,
+                ImVec2(origin.x + fullW, origin.y),
+                Col(MvStyle::MvLine2));
+
     const WorkflowStage stage = project_ ? project_->GetCurrentStage() : WorkflowStage::Alignment;
-    ImGui::Text("Stage %d / 4 — %s  |  %s",
-                static_cast<int>(stage) + 1,
-                StageDisplayName(stage),
-                statusMessage_.c_str());
+
+    // Pad in horizontally and centre vertically.
+    constexpr float SidePad = 14.0f;
+    MvStyle::ScopedFont monoFont(MvStyle::Font.Mono);
+    const float textH = ImGui::GetFontSize();
+    const float textY = startCursor.y + (StatusH - textH) * 0.5f;
+
+    // Helper: draw "label value" with custom colors and advance cursor.
+    float cx = startCursor.x + SidePad;
+    auto drawSection = [&](const std::string& text, const ImVec4& color) {
+        ImGui::SetCursorPos(ImVec2(cx, textY));
+        ImGui::PushStyleColor(ImGuiCol_Text, color);
+        ImGui::TextUnformatted(text.c_str());
+        ImGui::PopStyleColor();
+        cx += ImGui::CalcTextSize(text.c_str()).x;
+    };
+    auto drawSep = [&]() {
+        ImGui::SetCursorPos(ImVec2(cx + 8.0f, textY));
+        ImGui::PushStyleColor(ImGuiCol_Text, MvStyle::MvLine3);
+        ImGui::TextUnformatted("\xC2\xB7"); // U+00B7 middot
+        ImGui::PopStyleColor();
+        cx += 8.0f + ImGui::CalcTextSize("\xC2\xB7").x + 8.0f;
+    };
+
+    // ● Ready (or current statusMessage_)
+    drawSection("\xE2\x97\x8F ", MvStyle::MvFg1);
+    drawSection(statusMessage_.empty() ? "Ready" : statusMessage_, MvStyle::MvFg2);
+    drawSep();
+
+    // Stage 0N STAGENAME
+    drawSection("Stage ", MvStyle::MvFg3);
+    {
+        std::string s = std::format("{:02d} ", static_cast<int>(stage) + 1);
+        for (char c : std::string(StageDisplayName(stage)))
+            s.push_back(static_cast<char>(std::toupper(static_cast<unsigned char>(c))));
+        drawSection(s, MvStyle::MvBlue400);
+    }
+    drawSep();
+
+    // Source filename (or em dash placeholder)
+    drawSection("Source ", MvStyle::MvFg3);
+    {
+        const std::string src = (project_ && !project_->GetMorphMesh().filepath.empty())
+            ? std::filesystem::path(project_->GetMorphMesh().filepath).filename().string()
+            : "\xE2\x80\x94"; // em dash
+        drawSection(src, MvStyle::MvFg1);
+    }
+    drawSep();
+
+    // Target filename (or em dash placeholder)
+    drawSection("Target ", MvStyle::MvFg3);
+    {
+        const std::string tgt = (project_ && !project_->GetTargetMesh().filepath.empty())
+            ? std::filesystem::path(project_->GetTargetMesh().filepath).filename().string()
+            : "\xE2\x80\x94";
+        drawSection(tgt, MvStyle::MvFg1);
+    }
+
+    // ---- Right-aligned cluster: GPU + Live link --------------------------
+    // No FPS counter — Sprint 1.4 decision retained per Sprint 3.8 plan.
+    const std::string rightGpuLabel  = std::format("GPU {}", gpuRenderer_);
+    const std::string rightLiveLabel = "Live link UE 5.4";
+    const float gpuW   = ImGui::CalcTextSize(rightGpuLabel.c_str()).x;
+    const float liveW  = ImGui::CalcTextSize(rightLiveLabel.c_str()).x;
+    const float dotW   = ImGui::CalcTextSize("\xE2\x97\x8F").x;
+    const float midW   = ImGui::CalcTextSize("\xC2\xB7").x;
+    const float rightCluster = gpuW + 8.0f + midW + 8.0f + liveW + 6.0f + dotW + SidePad;
+    const float rightStartX  = startCursor.x + fullW - rightCluster;
+    if (rightStartX > cx + 16.0f) {
+        cx = rightStartX;
+        drawSection(rightGpuLabel, MvStyle::MvFg2);
+        drawSep();
+        drawSection(rightLiveLabel + " ", MvStyle::MvFg2);
+        drawSection("\xE2\x97\x8F", MvStyle::MvSuccess);
+    }
+
+    // Reserve the bar's height so the host's content cursor advances past
+    // the manually-positioned text (otherwise End() leaves stale layout).
+    ImGui::SetCursorPos(startCursor);
+    ImGui::Dummy(ImVec2(fullW, StatusH));
 }
 
 void AppWindow::DispatchPendingAction() {
@@ -1111,6 +1511,10 @@ void AppWindow::SaveProjectToDisk(const std::string& path) {
     project_->SetPath(path);
     Config::Instance().AddRecentProject(path);
     statusMessage_ = std::format("Saved to {}", FileName(path));
+    // Story 3.8.2 — drives the menu bar's "Saved Ns ago" indicator. Auto-save
+    // (backlog) will set this from the timer thread; manual save is the
+    // baseline source until then.
+    lastSavedAt_ = std::chrono::steady_clock::now();
     MV_LOG_INFO(std::format("Saved project {}", path));
 }
 

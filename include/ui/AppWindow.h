@@ -7,8 +7,10 @@
 #include <imgui.h>
 
 #include <atomic>
+#include <chrono>
 #include <memory>
 #include <mutex>
+#include <optional>
 #include <string>
 #include <thread>
 #include <vector>
@@ -58,8 +60,10 @@ private:
     void RenderFrame(int fbWidth, int fbHeight);
 
     void RenderAppShell();
+    void RenderTitleBar();              // Story 3.8.2 — 36px chrome above the menu bar
     void RenderMainMenuBar();
     void RenderStatusBar();
+    void SyncOSWindowTitle();           // Mirror filename + stage breadcrumb to glfwSetWindowTitle
     void RenderAboutModal();
     void RenderModals();
     void DispatchPendingAction();
@@ -105,6 +109,16 @@ private:
 
     PendingAction pendingAction_ = PendingAction::None;
     std::string statusMessage_;
+
+    // Story 3.8.2 — chrome state.
+    // lastSavedAt_ drives the menu bar's "Saved Ns ago" indicator. Set every
+    // time SaveProjectToDisk completes; nullopt means "no save this session".
+    std::optional<std::chrono::steady_clock::time_point> lastSavedAt_;
+    // GL_RENDERER captured once at startup for the status bar GPU readout.
+    std::string gpuRenderer_;
+    // Last value passed to glfwSetWindowTitle so SyncOSWindowTitle skips
+    // the syscall when nothing changed frame-to-frame.
+    std::string lastOSTitle_;
 
     // Modal state — every struct is inert until its Open() is called.
     bool showAbout_ = false;

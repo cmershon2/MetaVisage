@@ -129,6 +129,27 @@ void LoadFonts();     // After ImGui::CreateContext, before ImGui_ImplOpenGL3_In
 void LoadAssets();    // After ImGui_ImplOpenGL3_Init (needs GL context).
 void Shutdown();      // Free GL textures. Call before ImGui::DestroyContext.
 
+// =============================================================================
+// ScopedFont — RAII helper that PushFonts on construction and PopFonts on
+// destruction, but only if the supplied handle is non-null. Lets call sites
+// stay clean even when the design fonts haven't been bundled yet (LoadFonts
+// leaves missing handles null and falls back to ProggyClean).
+//
+//   { MvStyle::ScopedFont f(MvStyle::Font.Mono);
+//     ImGui::Text("11px JetBrainsMono Regular text"); }
+// =============================================================================
+class ScopedFont {
+public:
+    explicit ScopedFont(ImFont* f) : pushed_(f != nullptr) {
+        if (pushed_) ImGui::PushFont(f);
+    }
+    ~ScopedFont() { if (pushed_) ImGui::PopFont(); }
+    ScopedFont(const ScopedFont&) = delete;
+    ScopedFont& operator=(const ScopedFont&) = delete;
+private:
+    bool pushed_;
+};
+
 } // namespace MetaVisage::MvStyle
 
 #endif // METAVISAGE_UI_MVSTYLE_H
