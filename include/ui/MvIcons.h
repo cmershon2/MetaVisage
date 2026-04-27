@@ -42,9 +42,16 @@
 // =============================================================================
 // Stage 1 — Alignment (Story 3.8.4 rail + 3.8.7 inspector)
 // =============================================================================
+// 3D-axis variants are the canonical transform-tool glyphs — they read as
+// gizmo handles, not 2D arrows. Used by the tool rail in Stage 1.
+#define MV_ICON_MOVE_3D    "\xEE\x8B\xA5"  // U+E2E5  — move-3d
+#define MV_ICON_ROTATE_3D  "\xEE\x8B\xAA"  // U+E2EA  — rotate-3d
+#define MV_ICON_SCALE_3D   "\xEE\x8B\xAB"  // U+E2EB  — scale-3d
+// Legacy 2D variants kept for inline contexts where the 3D form would feel
+// too heavy (e.g. the Edit menu's "Move" entry, if we ever add one).
 #define MV_ICON_MOVE       "\xEE\x84\xA1"  // U+E121  — move (4-arrow)
 #define MV_ICON_ROTATE     "\xEE\x85\x89"  // U+E149  — rotate-cw
-#define MV_ICON_SCALE      "\xEE\x8B\xAB"  // U+E2EB  — scale-3d
+#define MV_ICON_SCALE      MV_ICON_SCALE_3D
 #define MV_ICON_RESET      "\xEE\x85\x88"  // U+E148  — rotate-ccw (reset)
 #define MV_ICON_REFRESH    "\xEE\x85\x85"  // U+E145  — refresh-cw
 #define MV_ICON_WAND       "\xEE\x8D\x97"  // U+E357  — wand-2 (auto-align)
@@ -61,9 +68,10 @@
 #define MV_ICON_CAMERA      "\xEE\x81\xA4"  // U+E064  — camera (perspective)
 #define MV_ICON_SQUARE      "\xEE\x85\xA7"  // U+E167  — square
 #define MV_ICON_EXPAND      "\xEE\x88\x9A"  // U+E21A  — expand
-#define MV_ICON_CROSSHAIR   "\xEE\x82\xAC"  // U+E0AC  — crosshair
+#define MV_ICON_CROSSHAIR   "\xEE\x82\xAC"  // U+E0AC  — crosshair (pivot snap)
 #define MV_ICON_TARGET      "\xEE\x86\x80"  // U+E180  — target
 #define MV_ICON_SLIDERS     "\xEE\x85\xA2"  // U+E162  — sliders
+#define MV_ICON_FLIP_HORIZ  "\xEE\x8D\x9D"  // U+E35D  — flip-horizontal (symmetry X)
 
 // =============================================================================
 // File / project (Stories 3.8.7, 3.8.11)
