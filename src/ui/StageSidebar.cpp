@@ -1,8 +1,14 @@
 #include "ui/StageSidebar.h"
+#include "core/Mesh.h"
 #include "core/Project.h"
 #include "core/TextureData.h"
+#include "ui/MvIcons.h"
+#include "ui/MvInspectorPrimitives.h"
+#include "ui/MvStyle.h"
 
 #include <imgui.h>
+
+#include <cstdio>
 
 #include <array>
 #include <filesystem>
@@ -73,12 +79,22 @@ StageSidebar::Actions StageSidebar::Render(Project* project,
     }
 
     const WorkflowStage stage = project->GetCurrentStage();
-    ImGui::Text("Stage %d / 4", static_cast<int>(stage) + 1);
-    ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(0.8f, 0.85f, 1.0f, 1.0f));
-    ImGui::TextUnformatted(StageName(stage));
-    ImGui::PopStyleColor();
-    ImGui::TextWrapped("%s", StageHint(stage));
-    ImGui::Separator();
+
+    // Story 3.8.7+: per-stage panels own their full chrome (header,
+    // sectioned body, footer). Stages migrated below skip the generic
+    // header/footer entirely. Remaining stages still use the legacy
+    // generic header + footer so the workflow stays usable until each
+    // story replaces them.
+    const bool ownsChrome = (stage == WorkflowStage::Alignment);
+
+    if (!ownsChrome) {
+        ImGui::Text("Stage %d / 4", static_cast<int>(stage) + 1);
+        ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(0.8f, 0.85f, 1.0f, 1.0f));
+        ImGui::TextUnformatted(StageName(stage));
+        ImGui::PopStyleColor();
+        ImGui::TextWrapped("%s", StageHint(stage));
+        ImGui::Separator();
+    }
 
     // Per-stage body
     switch (stage) {
@@ -88,18 +104,20 @@ StageSidebar::Actions StageSidebar::Render(Project* project,
         case WorkflowStage::TouchUp:        RenderTouchUp(*project, out); break;
     }
 
-    // Stage navigation footer
-    ImGui::Separator();
-    const bool canGoBack = (static_cast<int>(stage) > 0);
-    ImGui::BeginDisabled(!canGoBack);
-    if (ImGui::Button("< Previous")) out.previousStageRequested = true;
-    ImGui::EndDisabled();
-    ImGui::SameLine();
-    const bool canGoNext = (static_cast<int>(stage) < static_cast<int>(WorkflowStage::TouchUp))
-                         && project->CanProceedToNextStage();
-    ImGui::BeginDisabled(!canGoNext);
-    if (ImGui::Button("Next >")) out.nextStageRequested = true;
-    ImGui::EndDisabled();
+    if (!ownsChrome) {
+        // Legacy generic stage navigation footer.
+        ImGui::Separator();
+        const bool canGoBack = (static_cast<int>(stage) > 0);
+        ImGui::BeginDisabled(!canGoBack);
+        if (ImGui::Button("< Previous")) out.previousStageRequested = true;
+        ImGui::EndDisabled();
+        ImGui::SameLine();
+        const bool canGoNext = (static_cast<int>(stage) < static_cast<int>(WorkflowStage::TouchUp))
+                             && project->CanProceedToNextStage();
+        ImGui::BeginDisabled(!canGoNext);
+        if (ImGui::Button("Next >")) out.nextStageRequested = true;
+        ImGui::EndDisabled();
+    }
 
     ImGui::End();
     return out;
@@ -110,99 +128,218 @@ StageSidebar::Actions StageSidebar::Render(Project* project,
 // ---------------------------------------------------------------------------
 
 void StageSidebar::RenderAlignment(Project& project, Actions& out) {
-    auto& morph = project.GetMorphMesh();
+    namespace I = MvInspector;
+
+    auto& morph  = project.GetMorphMesh();
     auto& target = project.GetTargetMesh();
 
-    ImGui::TextUnformatted("Morph Mesh");
-    if (morph.filepath.empty()) {
-        ImGui::TextDisabled("(not set)");
-    } else {
-        ImGui::TextWrapped("%s", FileNameOrEmpty(morph.filepath).c_str());
-    }
-    if (ImGui::Button("Import Morph Mesh...")) out.importMorphMeshRequested = true;
-    ImGui::SameLine();
-    if (ImGui::Button("Use Default MetaHuman Head")) out.useDefaultMorphMeshRequested = true;
+    // ---- Header ---------------------------------------------------------
+    I::DrawStageHeader("STAGE 01 / 04",
+                       "Align", "ment",
+                       "Position the target mesh to roughly align with the "
+                       "morph mesh. Drag the X / Y / Z fields below or grab "
+                       "the gizmo handles in the viewport.");
 
-    ImGui::Spacing();
-    ImGui::TextUnformatted("Target Mesh");
-    if (target.filepath.empty()) {
-        ImGui::TextDisabled("(not set)");
-    } else {
-        ImGui::TextWrapped("%s", FileNameOrEmpty(target.filepath).c_str());
-    }
-    if (ImGui::Button("Import Target Mesh...")) out.importTargetMeshRequested = true;
+    // ---- Scrollable body ------------------------------------------------
+    // Reserve room for a 56 px footer (hairline + 30 px button row + pad)
+    // so the Continue button stays pinned to the bottom of the sidebar.
+    constexpr float FooterReserveH = 60.0f;
+    if (ImGui::BeginChild("##stage1body",
+                          ImVec2(0.0f, -FooterReserveH),
+                          false,
+                          ImGuiWindowFlags_NoBackground)) {
 
-    ImGui::Spacing();
-    ImGui::TextUnformatted("Target Textures");
-    ImGui::Separator();
-    auto& textures = project.GetTargetTextures();
-    if (textures.textures.empty()) {
-        ImGui::TextDisabled("(no textures)");
-    } else {
-        for (const auto& t : textures.textures) {
-            ImGui::BulletText("%s", t.name.c_str());
+        // ---- Source mesh ------------------------------------------------
+        I::DrawSectionLabel("SOURCE MESH");
+        {
+            MvStyle::ScopedFont f(MvStyle::Font.BodySm);
+            ImGui::PushStyleColor(ImGuiCol_Text, MvStyle::MvFg3);
+            ImGui::TextWrapped("The MetaHuman head being wrapped.");
+            ImGui::PopStyleColor();
         }
-    }
-    static const char* kSlotNames[] = {
-        "Albedo", "Normal Map", "Roughness", "AO", "Emissive", "Metallic"
-    };
-    static int sSelectedSlot = 0;
-    ImGui::PushItemWidth(140);
-    ImGui::Combo("##texSlot", &sSelectedSlot, kSlotNames, IM_ARRAYSIZE(kSlotNames));
-    ImGui::PopItemWidth();
-    ImGui::SameLine();
-    if (ImGui::Button("+ Add Texture")) {
-        out.importTextureSlot = kSlotNames[sSelectedSlot];
-    }
+        ImGui::Dummy(ImVec2(0.0f, 6.0f));
+        const std::string srcName = FileNameOrEmpty(morph.filepath);
+        const auto srcSlot = I::DrawFileSlot(
+            srcName.c_str(),
+            "No source mesh",
+            morph.isLoaded,
+            /*isPrimary=*/true,
+            morph.isLoaded ? "Source mesh loaded" : nullptr);
+        if (srcSlot.importClicked) out.importMorphMeshRequested = true;
 
-    ImGui::Spacing();
-    ImGui::TextUnformatted("Target Transform");
-    ImGui::Separator();
-
-    // Target mesh transform is owned by MeshReference::transform — that's what
-    // Renderer/Viewport read at draw + raycast time. AlignmentData has a shadow
-    // copy that's only used by the serializer round-trip; writing there alone
-    // would leave the on-screen mesh unchanged.
-    Transform& xform = project.GetTargetMesh().transform;
-    // Helper: capture-on-activate / emit-on-deactivate so each spinbox drag
-    // produces one undo action per gesture, not one per frame. Only the most
-    // recent activation's pre-state is held — fine because ImGui only allows a
-    // single active widget at a time.
-    auto captureBefore = [&]() {
-        if (ImGui::IsItemActivated()) transformEditCapture_ = xform;
-    };
-    auto emitOnEditEnd = [&]() {
-        if (ImGui::IsItemDeactivatedAfterEdit()) {
-            out.transformEditCompleted = true;
-            out.transformEditBefore = transformEditCapture_;
-            out.transformEditAfter  = xform;
+        ImGui::Dummy(ImVec2(0.0f, 4.0f));
+        if (ImGui::Button("Use Default MetaHuman Head", ImVec2(-FLT_MIN, 30.0f))) {
+            out.useDefaultMorphMeshRequested = true;
         }
-    };
 
-    float pos[3] = { xform.GetPosition().x, xform.GetPosition().y, xform.GetPosition().z };
-    if (ImGui::DragFloat3("Position", pos, 0.01f)) {
-        xform.SetPosition(Vector3(pos[0], pos[1], pos[2]));
+        // ---- Target mesh ------------------------------------------------
+        I::DrawSectionLabel("TARGET MESH");
+        {
+            MvStyle::ScopedFont f(MvStyle::Font.BodySm);
+            ImGui::PushStyleColor(ImGuiCol_Text, MvStyle::MvFg3);
+            ImGui::TextWrapped("The custom head model the source will be morphed to.");
+            ImGui::PopStyleColor();
+        }
+        ImGui::Dummy(ImVec2(0.0f, 6.0f));
+        const std::string tgtName = FileNameOrEmpty(target.filepath);
+        const auto tgtSlot = I::DrawFileSlot(
+            tgtName.c_str(),
+            "No target mesh",
+            target.isLoaded,
+            /*isPrimary=*/false,
+            target.isLoaded ? "Target mesh loaded" : nullptr);
+        if (tgtSlot.importClicked) out.importTargetMeshRequested = true;
+
+        // ---- Target textures --------------------------------------------
+        I::DrawSectionLabel("TARGET TEXTURES");
+        auto& textures = project.GetTargetTextures();
+        if (textures.textures.empty()) {
+            MvStyle::ScopedFont f(MvStyle::Font.BodySm);
+            ImGui::PushStyleColor(ImGuiCol_Text, MvStyle::MvFg4);
+            ImGui::TextUnformatted("No textures attached.");
+            ImGui::PopStyleColor();
+        } else {
+            // Plain mono list for now — Story 3.8.x will swap each row in
+            // for a thumbnail-bearing card when a preview-cache slot is
+            // added to the texture model. Listed one-per-row at body size
+            // so wrap is rare even with long filenames.
+            MvStyle::ScopedFont f(MvStyle::Font.Mono);
+            for (const auto& t : textures.textures) {
+                ImGui::PushStyleColor(ImGuiCol_Text, MvStyle::MvFg2);
+                ImGui::BulletText("%s", t.name.c_str());
+                ImGui::PopStyleColor();
+            }
+        }
+
+        ImGui::Dummy(ImVec2(0.0f, 6.0f));
+        static const char* kSlotNames[] = {
+            "Albedo", "Normal Map", "Roughness", "AO", "Emissive", "Metallic"
+        };
+        static int sSelectedSlot = 0;
+        ImGui::PushItemWidth(ImGui::GetContentRegionAvail().x * 0.55f);
+        ImGui::Combo("##texSlot", &sSelectedSlot, kSlotNames, IM_ARRAYSIZE(kSlotNames));
+        ImGui::PopItemWidth();
+        ImGui::SameLine();
+        if (ImGui::Button("+ Texture", ImVec2(-FLT_MIN, 0.0f))) {
+            out.importTextureSlot = kSlotNames[sSelectedSlot];
+        }
+
+        // ---- Target transform -------------------------------------------
+        I::DrawSectionLabel("TARGET TRANSFORM");
+
+        // Single source of truth for transform values is
+        // Project::GetTargetMesh().transform — what the renderer + raycaster
+        // read at draw / pick time. The shadow copy in AlignmentData is
+        // serializer-only.
+        Transform& xform = project.GetTargetMesh().transform;
+
+        // Capture-on-edit-start / emit-on-edit-end pattern: one undo action
+        // per drag gesture. The aggregate DragEditResult gives us the
+        // start/finish signal regardless of which axis was grabbed.
+        auto vec3Differs = [](const Vector3& a, const Vector3& b) {
+            return a.x != b.x || a.y != b.y || a.z != b.z;
+        };
+        auto handleEdit = [&](const I::DragEditResult& r) {
+            if (r.editStarted)  transformEditCapture_ = xform;
+            if (r.editFinished) {
+                // Skip pushing an undo if the gesture was a click without a
+                // drag (no value change) — comparing to the captured pre-
+                // state filters those out. Vector3 has no operator!= so
+                // component-wise compare via the lambda above.
+                if (vec3Differs(xform.GetPosition(),     transformEditCapture_.GetPosition())     ||
+                    vec3Differs(xform.GetEulerAngles(),  transformEditCapture_.GetEulerAngles())  ||
+                    vec3Differs(xform.GetScale(),        transformEditCapture_.GetScale())) {
+                    out.transformEditCompleted = true;
+                    out.transformEditBefore    = transformEditCapture_;
+                    out.transformEditAfter     = xform;
+                }
+            }
+        };
+
+        I::TransformValues3 pos{ xform.GetPosition().x,
+                                 xform.GetPosition().y,
+                                 xform.GetPosition().z };
+        const auto rPos = I::DrawTransformGroup(
+            "Position", "cm", pos, /*uniform=*/false, /*dragSpeed=*/0.01f);
+        if (rPos.changed) xform.SetPosition(Vector3(pos.x, pos.y, pos.z));
+        handleEdit(rPos);
+
+        ImGui::Dummy(ImVec2(0.0f, 4.0f));
+        const Vector3 eulerNow = xform.GetEulerAngles();
+        I::TransformValues3 rot{ eulerNow.x, eulerNow.y, eulerNow.z };
+        const auto rRot = I::DrawTransformGroup(
+            "Rotation", "\xC2\xB0", rot, /*uniform=*/false, /*dragSpeed=*/0.5f);
+        if (rRot.changed) xform.SetRotationFromEuler(rot.x, rot.y, rot.z);
+        handleEdit(rRot);
+
+        ImGui::Dummy(ImVec2(0.0f, 4.0f));
+        // Scale uses the X axis as the source of truth in uniform mode;
+        // DrawTransformGroup cascades X→Y/Z internally when uniform=true.
+        I::TransformValues3 scl{ xform.GetScale().x,
+                                 xform.GetScale().y,
+                                 xform.GetScale().z };
+        const auto rScl = I::DrawTransformGroup(
+            "Scale", "\xC3\x97", scl, /*uniform=*/true, /*dragSpeed=*/0.01f);
+        if (rScl.changed) xform.SetScale(Vector3(scl.x, scl.y, scl.z));
+        handleEdit(rScl);
+
+        ImGui::Dummy(ImVec2(0.0f, 8.0f));
+
+        // Reset / Auto-align button row — 2 equal-width ghost buttons.
+        if (ImGui::BeginTable("##xformActions", 2,
+                              ImGuiTableFlags_SizingStretchSame |
+                              ImGuiTableFlags_NoPadOuterX)) {
+            ImGui::TableNextRow();
+
+            ImGui::TableNextColumn();
+            if (ImGui::Button("Reset", ImVec2(-FLT_MIN, 30.0f))) {
+                out.resetTransformRequested = true;
+            }
+
+            ImGui::TableNextColumn();
+            // Auto-align is a stub for now — the real correspondence-aware
+            // alignment ships with the Wrap Engine in Sprint 4.
+            ImGui::BeginDisabled();
+            ImGui::Button("Auto-align", ImVec2(-FLT_MIN, 30.0f));
+            ImGui::EndDisabled();
+            if (ImGui::IsItemHovered(ImGuiHoveredFlags_AllowWhenDisabled)) {
+                ImGui::SetTooltip("Coming in a future update");
+            }
+            ImGui::EndTable();
+        }
+
+        // ---- Validation -------------------------------------------------
+        I::DrawSectionLabel("VALIDATION");
+        {
+            const std::string srcVal = morph.isLoaded && morph.mesh
+                ? std::to_string(static_cast<int>(morph.mesh->GetVertices().size())) + " verts"
+                : "—";
+            I::DrawValidationRow("Source loaded", srcVal.c_str(),
+                                 morph.isLoaded ? I::ValidationStatus::Ok
+                                                : I::ValidationStatus::Error);
+        }
+        {
+            const std::string tgtVal = target.isLoaded && target.mesh
+                ? std::to_string(static_cast<int>(target.mesh->GetVertices().size())) + " verts"
+                : "—";
+            I::DrawValidationRow("Target loaded", tgtVal.c_str(),
+                                 target.isLoaded ? I::ValidationStatus::Ok
+                                                 : I::ValidationStatus::Error);
+        }
+
+        ImGui::Dummy(ImVec2(0.0f, 12.0f));
     }
-    captureBefore();
-    emitOnEditEnd();
+    ImGui::EndChild();
 
-    Vector3 euler = xform.GetEulerAngles();
-    float rot[3] = { euler.x, euler.y, euler.z };
-    if (ImGui::DragFloat3("Rotation", rot, 0.5f, -360.0f, 360.0f)) {
-        xform.SetRotationFromEuler(rot[0], rot[1], rot[2]);
-    }
-    captureBefore();
-    emitOnEditEnd();
-
-    float scl[3] = { xform.GetScale().x, xform.GetScale().y, xform.GetScale().z };
-    if (ImGui::DragFloat3("Scale", scl, 0.01f, 0.001f, 1000.0f)) {
-        xform.SetScale(Vector3(scl[0], scl[1], scl[2]));
-    }
-    captureBefore();
-    emitOnEditEnd();
-
-    if (ImGui::Button("Reset Transform")) out.resetTransformRequested = true;
-
+    // ---- Footer ---------------------------------------------------------
+    // Stage 1 has no Previous (it's the first stage); Continue enabled when
+    // both meshes are loaded, matching Project::CanProceedToNextStage.
+    const bool canContinue = morph.isLoaded && target.isLoaded;
+    const auto footer = I::DrawInspectorFooter(
+        "STEP 01 OF 04", /*previousEnabled=*/false, /*continueEnabled=*/canContinue,
+        "Continue", /*finishStyle=*/false);
+    if (footer.continueClicked) out.nextStageRequested = true;
+    if (footer.previousClicked) out.previousStageRequested = true;
 }
 
 // ---------------------------------------------------------------------------

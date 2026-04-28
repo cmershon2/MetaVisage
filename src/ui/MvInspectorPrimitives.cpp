@@ -206,11 +206,12 @@ FileSlotResult DrawFileSlot(const char* filename,
 // =============================================================================
 // 4. Axis input — custom drag widget with right-aligned mono value.
 // =============================================================================
-bool DrawAxisInput(const char* axisLetter,
-                   const ImVec4& axisColor,
-                   float& valueInOut,
-                   float dragSpeed,
-                   bool disabled) {
+DragEditResult DrawAxisInput(const char* axisLetter,
+                             const ImVec4& axisColor,
+                             float& valueInOut,
+                             float dragSpeed,
+                             bool disabled) {
+    DragEditResult result;
     constexpr float FrameH = 28.0f;
     const float availW = ImGui::GetContentRegionAvail().x;
 
@@ -223,7 +224,6 @@ bool DrawAxisInput(const char* axisLetter,
     // exactly match the design either, so we build a custom widget on top
     // of an InvisibleButton. The InvisibleButton owns the hit-test and the
     // active-drag state; we paint the frame, axis letter, and value.
-    bool changed = false;
     bool hovered = false;
     bool active  = false;
 
@@ -233,6 +233,8 @@ bool DrawAxisInput(const char* axisLetter,
     ImGui::InvisibleButton("##axisDrag", ImVec2(availW, FrameH));
     hovered = ImGui::IsItemHovered();
     active  = ImGui::IsItemActive();
+    result.editStarted  = ImGui::IsItemActivated();
+    result.editFinished = ImGui::IsItemDeactivated();
     if (disabled) {
         ImGui::EndDisabled();
     }
@@ -241,7 +243,7 @@ bool DrawAxisInput(const char* axisLetter,
         const float dx = ImGui::GetIO().MouseDelta.x;
         if (dx != 0.0f) {
             valueInOut += dx * dragSpeed;
-            changed = true;
+            result.changed = true;
         }
     }
     if (hovered && !disabled) ImGui::SetMouseCursor(ImGuiMouseCursor_ResizeEW);
@@ -281,18 +283,18 @@ bool DrawAxisInput(const char* axisLetter,
     }
 
     ImGui::PopID();
-    return changed;
+    return result;
 }
 
 // =============================================================================
 // 5. Transform group
 // =============================================================================
-bool DrawTransformGroup(const char* label,
-                        const char* unit,
-                        TransformValues3& valuesInOut,
-                        bool uniform,
-                        float dragSpeed) {
-    bool changed = false;
+DragEditResult DrawTransformGroup(const char* label,
+                                  const char* unit,
+                                  TransformValues3& valuesInOut,
+                                  bool uniform,
+                                  float dragSpeed) {
+    DragEditResult result;
 
     // Label row: "Position" on the left, "cm · uniform" on the right (mono,
     // MvFg4 sub-tone for the unit).
@@ -327,35 +329,39 @@ bool DrawTransformGroup(const char* label,
     if (ImGui::BeginTable("##xform", 3, tableFlags)) {
         ImGui::TableNextRow();
 
+        // Aggregate per-axis edit signals — the caller wants a single
+        // editStarted/editFinished pair per drag gesture, regardless of
+        // which axis the user grabbed.
+        auto merge = [&](const DragEditResult& r) {
+            if (r.changed)      result.changed      = true;
+            if (r.editStarted)  result.editStarted  = true;
+            if (r.editFinished) result.editFinished = true;
+        };
+
         ImGui::TableNextColumn();
-        if (DrawAxisInput("X", MvStyle::MvAxisX,
-                          valuesInOut.x, dragSpeed, /*disabled=*/false)) {
-            changed = true;
-            if (uniform) {
-                valuesInOut.y = valuesInOut.x;
-                valuesInOut.z = valuesInOut.x;
-            }
+        const auto rx = DrawAxisInput("X", MvStyle::MvAxisX,
+                                      valuesInOut.x, dragSpeed, /*disabled=*/false);
+        merge(rx);
+        if (rx.changed && uniform) {
+            valuesInOut.y = valuesInOut.x;
+            valuesInOut.z = valuesInOut.x;
         }
 
         ImGui::TableNextColumn();
         ImGui::Dummy(ImVec2(2.0f, 0.0f));
         ImGui::SameLine();
-        if (DrawAxisInput("Y", MvStyle::MvAxisY,
-                          valuesInOut.y, dragSpeed, /*disabled=*/uniform)) {
-            changed = true;
-        }
+        merge(DrawAxisInput("Y", MvStyle::MvAxisY,
+                            valuesInOut.y, dragSpeed, /*disabled=*/uniform));
 
         ImGui::TableNextColumn();
         ImGui::Dummy(ImVec2(2.0f, 0.0f));
         ImGui::SameLine();
-        if (DrawAxisInput("Z", MvStyle::MvAxisZ,
-                          valuesInOut.z, dragSpeed, /*disabled=*/uniform)) {
-            changed = true;
-        }
+        merge(DrawAxisInput("Z", MvStyle::MvAxisZ,
+                            valuesInOut.z, dragSpeed, /*disabled=*/uniform));
 
         ImGui::EndTable();
     }
-    return changed;
+    return result;
 }
 
 // =============================================================================

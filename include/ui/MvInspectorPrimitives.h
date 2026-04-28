@@ -58,27 +58,49 @@ FileSlotResult DrawFileSlot(const char* filename,        // empty/null shows pla
 // ---------------------------------------------------------------------------
 // 4. Coloured-axis numeric input — drag-to-edit field with the X / Y / Z
 //    letter on the left in `axisColor`, value right-aligned in mono on the
-//    right. Returns true on the frame the value changes.
+//    right. The result struct carries enough signal for the caller to
+//    capture pre-state on drag-start and emit a single undo on drag-end:
+//
+//      auto r = DrawAxisInput(...);
+//      if (r.editStarted)  capture = currentValue;
+//      if (r.changed)      // apply
+//      if (r.editFinished) // diff capture vs current and push undo
+//
+//    InvisibleButton is the last ImGui item, so the call site can also
+//    use ImGui::IsItemActivated()/IsItemDeactivated() — but for the
+//    transform group below, the Z-axis InvisibleButton is the last item,
+//    making per-axis IsItem* calls unreliable. The struct flags work
+//    everywhere.
 // ---------------------------------------------------------------------------
-bool DrawAxisInput(const char* axisLetter,
-                   const ImVec4& axisColor,
-                   float& valueInOut,
-                   float dragSpeed,
-                   bool disabled = false);
+struct DragEditResult {
+    bool changed       = false;  // value changed at least once this frame
+    bool editStarted   = false;  // user just began a drag (this frame)
+    bool editFinished  = false;  // user just released a drag (this frame)
+};
+
+DragEditResult DrawAxisInput(const char* axisLetter,
+                             const ImVec4& axisColor,
+                             float& valueInOut,
+                             float dragSpeed,
+                             bool disabled = false);
 
 // ---------------------------------------------------------------------------
 // 5. Transform group — label + unit row, then a 3-column grid of axis
 //    inputs. When `uniform` is true, only the X axis is editable; Y and Z
 //    follow X automatically and render greyed.
+//
+//    The aggregate DragEditResult fires editStarted/editFinished if ANY
+//    axis transitions; `changed` if any axis changed. Sufficient for the
+//    "single undo per gesture" pattern.
 // ---------------------------------------------------------------------------
 struct TransformValues3 {
     float x = 0.0f, y = 0.0f, z = 0.0f;
 };
-bool DrawTransformGroup(const char* label,
-                        const char* unit,         // "cm" / "°" / "×" — may be null
-                        TransformValues3& valuesInOut,
-                        bool uniform,
-                        float dragSpeed = 0.5f);
+DragEditResult DrawTransformGroup(const char* label,
+                                  const char* unit,         // "cm" / "°" / "×" — may be null
+                                  TransformValues3& valuesInOut,
+                                  bool uniform,
+                                  float dragSpeed = 0.5f);
 
 // ---------------------------------------------------------------------------
 // 6. Validation row — circle status badge (✓ green / ! amber / × red) +
