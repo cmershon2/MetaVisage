@@ -633,9 +633,12 @@ void Viewport::DrawOverlays(float x, float y, float w, float h) {
 
     // Sprint 3.8.5 — three floating chrome windows anchored to the viewport
     // rect. Render last so they sit above the GL pass and the other overlays.
-    DrawTopCenterToolbar(x, y, w, h);
-    DrawTopRightPills   (x, y, w, h);
-    DrawBottomLeftHud   (x, y, w, h);
+    // Sprint 3.8.9 added the Stage 3 result-stats panel; when it's visible
+    // it replaces the bottom-left HUD (DrawBottomLeftHud has its own gate).
+    DrawTopCenterToolbar    (x, y, w, h);
+    DrawTopRightPills       (x, y, w, h);
+    DrawBottomLeftHud       (x, y, w, h);
+    DrawResultStatsOverlay  (x, y, w, h);
 }
 
 void Viewport::RenderGL(float x, float y, float w, float h, int fbHeight) {
@@ -1209,6 +1212,14 @@ void Viewport::DrawBottomLeftHud(float x, float y, float w, float h) {
     const WorkflowStage stage = project_ ? project_->GetCurrentStage()
                                          : WorkflowStage::Alignment;
 
+    // Story 3.8.9 — Stage 3 swaps the instruction HUD for the result stats
+    // overlay once a morph has been processed; bail out so the two panels
+    // never stack at the same anchor.
+    if (stage == WorkflowStage::Morph && project_ &&
+        project_->GetMorphData().isProcessed) {
+        return;
+    }
+
     // Stage-specific copy. Kept terse so the HUD stays compact at 320 px.
     struct StageHud {
         const char* label;
@@ -1336,6 +1347,135 @@ void Viewport::DrawBottomLeftHud(float x, float y, float w, float h) {
             }
         }
         ImGui::PopStyleVar();
+    }
+    ImGui::End();
+    ImGui::PopStyleColor(2);
+    ImGui::PopStyleVar(2);
+}
+
+// =============================================================================
+// Story 3.8.9 — Stage 3 result stats overlay. Bottom-left frosted panel that
+// reports the morph worker's output (max/avg displacement) plus a live
+// status indicator. Hidden until a process attempt has produced a result;
+// suppressed in every other stage. The bottom-left HUD bails out for
+// Stage 3 once isProcessed is true so the two panels never stack.
+// =============================================================================
+void Viewport::DrawResultStatsOverlay(float x, float y, float w, float h) {
+    if (w <= 0.0f || h <= 0.0f) return;
+    if (!project_) return;
+    if (project_->GetCurrentStage() != WorkflowStage::Morph) return;
+
+    const auto& morph = project_->GetMorphData();
+    if (!morph.isProcessed && morphStatus_ != MorphStatus::Processing) return;
+
+    char wid[64];
+    std::snprintf(wid, sizeof(wid), "##VpResultStats_%p",
+                  static_cast<void*>(this));
+
+    constexpr float PanelW = 240.0f;
+    ImGui::SetNextWindowPos(ImVec2(x + 16.0f, y + h - 16.0f),
+                            ImGuiCond_Always, ImVec2(0.0f, 1.0f));
+    ImGui::SetNextWindowSize(ImVec2(PanelW, 0.0f));
+    ImGui::SetNextWindowBgAlpha(0.88f);
+
+    constexpr ImGuiWindowFlags flags =
+        ImGuiWindowFlags_NoTitleBar | ImGuiWindowFlags_NoResize |
+        ImGuiWindowFlags_NoMove     | ImGuiWindowFlags_NoSavedSettings |
+        ImGuiWindowFlags_NoFocusOnAppearing |
+        ImGuiWindowFlags_NoScrollbar | ImGuiWindowFlags_NoCollapse |
+        ImGuiWindowFlags_NoDocking | ImGuiWindowFlags_AlwaysAutoResize;
+
+    ImGui::PushStyleVar(ImGuiStyleVar_WindowRounding, 6.0f);
+    ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding,  ImVec2(14.0f, 12.0f));
+    ImGui::PushStyleColor(ImGuiCol_WindowBg, MvStyle::MvBg1);
+    ImGui::PushStyleColor(ImGuiCol_Border,   MvStyle::MvLine2);
+
+    if (ImGui::Begin(wid, nullptr, flags)) {
+        ImDrawList* dl = ImGui::GetWindowDrawList();
+
+        // Header row — "/ RESULT" eyebrow on the left, status pill on the
+        // right. Status follows Viewport::morphStatus_ which AppWindow
+        // mirrors each frame (Processing → amber, Complete → green, Ready
+        // → blue but we don't show it here per the early-return above).
+        {
+            MvStyle::ScopedFont f(MvStyle::Font.MonoSm);
+            ImGui::PushStyleColor(ImGuiCol_Text, MvStyle::MvFg3);
+            ImGui::TextUnformatted("/ RESULT");
+            ImGui::PopStyleColor();
+        }
+
+        // Status pill — same dot+label idiom as the top-centre toolbar's
+        // Stage 3 indicator, drawn here via the window drawlist.
+        {
+            ImVec4 dotCol;
+            const char* statusText;
+            switch (morphStatus_) {
+                case MorphStatus::Processing:
+                    dotCol = MvStyle::MvWarning; statusText = "PROCESSING"; break;
+                case MorphStatus::Complete:
+                    dotCol = MvStyle::MvSuccess; statusText = "COMPLETE";   break;
+                case MorphStatus::Ready:
+                default:
+                    dotCol = MvStyle::MvBlue400; statusText = "READY";      break;
+            }
+            MvStyle::ScopedFont f(MvStyle::Font.MonoSm);
+            const ImVec2 ts = ImGui::CalcTextSize(statusText);
+            const float availW = ImGui::GetContentRegionAvail().x;
+            ImGui::SameLine();
+            const ImVec2 pos = ImGui::GetCursorScreenPos();
+            const float dotR = 3.0f;
+            const float clusterW = dotR * 2.0f + 6.0f + ts.x;
+            const float startX = pos.x + (availW - clusterW);
+            const float yMid = pos.y + ts.y * 0.5f;
+            dl->AddCircleFilled(ImVec2(startX + dotR, yMid),
+                                dotR, ColU(dotCol));
+            ImGui::SetCursorScreenPos(ImVec2(startX + dotR * 2.0f + 6.0f, pos.y));
+            ImGui::PushStyleColor(ImGuiCol_Text, dotCol);
+            ImGui::TextUnformatted(statusText);
+            ImGui::PopStyleColor();
+        }
+
+        // Hairline rule between the header and the data rows.
+        {
+            const ImVec2 cur = ImGui::GetCursorScreenPos();
+            const float lineW = ImGui::GetContentRegionAvail().x;
+            dl->AddLine(ImVec2(cur.x, cur.y + 6.0f),
+                        ImVec2(cur.x + lineW, cur.y + 6.0f),
+                        ColU(MvStyle::MvLine2), 1.0f);
+        }
+        ImGui::Dummy(ImVec2(0.0f, 10.0f));
+
+        // Stat rows — label left in BodySm MvFg3, value right in mono MvFg1.
+        // Iterations / elapsed are not stored on MorphData yet; we surface
+        // only the metrics that have real values until a future story
+        // expands the data model.
+        auto drawStatRow = [&](const char* label, const char* value) {
+            const ImVec2 rowStart = ImGui::GetCursorScreenPos();
+            const float availW = ImGui::GetContentRegionAvail().x;
+            constexpr float RowH = 18.0f;
+            {
+                MvStyle::ScopedFont f(MvStyle::Font.BodySm);
+                const float fs = ImGui::GetFontSize();
+                dl->AddText(ImVec2(rowStart.x,
+                                   rowStart.y + (RowH - fs) * 0.5f),
+                            ColU(MvStyle::MvFg3), label);
+            }
+            {
+                MvStyle::ScopedFont f(MvStyle::Font.Mono);
+                const ImVec2 ts = ImGui::CalcTextSize(value);
+                const float fs = ImGui::GetFontSize();
+                dl->AddText(ImVec2(rowStart.x + availW - ts.x,
+                                   rowStart.y + (RowH - fs) * 0.5f),
+                            ColU(MvStyle::MvFg1), value);
+            }
+            ImGui::Dummy(ImVec2(availW, RowH));
+        };
+
+        char buf[32];
+        std::snprintf(buf, sizeof(buf), "%.3f mm", morph.maxDisplacement);
+        drawStatRow("Max disp.", buf);
+        std::snprintf(buf, sizeof(buf), "%.3f mm", morph.avgDisplacement);
+        drawStatRow("Avg disp.", buf);
     }
     ImGui::End();
     ImGui::PopStyleColor(2);

@@ -89,7 +89,8 @@ StageSidebar::Actions StageSidebar::Render(Project* project,
     // generic header + footer so the workflow stays usable until each
     // story replaces them.
     const bool ownsChrome = (stage == WorkflowStage::Alignment ||
-                             stage == WorkflowStage::PointReference);
+                             stage == WorkflowStage::PointReference ||
+                             stage == WorkflowStage::Morph);
 
     if (!ownsChrome) {
         ImGui::Text("Stage %d / 4", static_cast<int>(stage) + 1);
@@ -741,123 +742,398 @@ void StageSidebar::RenderPointReference(Project& project, Actions& out) {
 // Stage 3 — Morph
 // ---------------------------------------------------------------------------
 
+// Built-in NRICP preset values lifted directly from stage3.jsx so the
+// design's "Quick Wrap" / "Fantasy Wrap" cards stamp identical params.
+// Sprint 4 (Wrap Engine Redesign) will replace this with persisted user
+// presets; for Story 3.8.9 the two built-ins are baked at compile time.
+namespace {
+struct MorphPreset {
+    int   stiffnessSteps;
+    float alphaInitial;
+    float alphaFinal;
+    int   icpIterations;
+    float normalThreshold;
+    float landmarkWeight;
+    float samplingInitial;
+    float samplingFinal;
+    bool  normalizeSampling;
+    float gammaInitial;
+    float gammaFinal;
+    float dpInitial;
+    float dpFinal;
+    int   optimizationIterations;
+    float epsilon;
+    bool  excludeBoundaries;
+    int   boundaryHops;
+};
+
+constexpr MorphPreset kPresetQuickWrap = {
+    /*stiffnessSteps*/         5,
+    /*alphaInitial*/           100.0f,
+    /*alphaFinal*/             70.4f,
+    /*icpIterations*/          7,
+    /*normalThreshold*/        89.0f,
+    /*landmarkWeight*/         10.0f,
+    /*samplingInitial*/        0.513f,
+    /*samplingFinal*/          0.20f,
+    /*normalizeSampling*/      true,
+    /*gammaInitial*/           0.0f,
+    /*gammaFinal*/             0.0f,
+    /*dpInitial*/              1.0f,
+    /*dpFinal*/                1.0f,
+    /*optimizationIterations*/ 1,
+    /*epsilon*/                0.0018f,
+    /*excludeBoundaries*/      true,
+    /*boundaryHops*/           3,
+};
+
+constexpr MorphPreset kPresetFantasyWrap = {
+    /*stiffnessSteps*/         8,
+    /*alphaInitial*/           65.0f,
+    /*alphaFinal*/             35.0f,
+    /*icpIterations*/          12,
+    /*normalThreshold*/        65.0f,
+    /*landmarkWeight*/         4.0f,
+    /*samplingInitial*/        0.32f,
+    /*samplingFinal*/          0.14f,
+    /*normalizeSampling*/      true,
+    /*gammaInitial*/           0.2f,
+    /*gammaFinal*/             0.05f,
+    /*dpInitial*/              0.85f,
+    /*dpFinal*/                0.85f,
+    /*optimizationIterations*/ 2,
+    /*epsilon*/                0.0012f,
+    /*excludeBoundaries*/      true,
+    /*boundaryHops*/           4,
+};
+
+void ApplyMorphPreset(MorphData& m, const MorphPreset& p) {
+    m.nricpStiffnessSteps           = p.stiffnessSteps;
+    m.nricpAlphaInitial             = p.alphaInitial;
+    m.nricpAlphaFinal               = p.alphaFinal;
+    m.nricpIcpIterations            = p.icpIterations;
+    m.nricpNormalThreshold          = p.normalThreshold;
+    m.nricpLandmarkWeight           = p.landmarkWeight;
+    m.nricpSamplingInitial          = p.samplingInitial;
+    m.nricpSamplingFinal            = p.samplingFinal;
+    m.nricpNormalizeSampling        = p.normalizeSampling;
+    m.nricpGammaInitial             = p.gammaInitial;
+    m.nricpGammaFinal               = p.gammaFinal;
+    m.nricpDpInitial                = p.dpInitial;
+    m.nricpDpFinal                  = p.dpFinal;
+    m.nricpOptimizationIterations   = p.optimizationIterations;
+    m.nricpEpsilon                  = p.epsilon;
+    m.nricpEnableBoundaryExclusion  = p.excludeBoundaries;
+    m.nricpBoundaryExclusionHops    = p.boundaryHops;
+}
+
+// Returns true on click. Caller decides whether to apply the preset; the
+// helper just paints the card and dispatches the hit-test.
+bool DrawPresetCard(const char* idStr,
+                    const char* name,
+                    const char* sub,
+                    const char* glyph,
+                    bool active,
+                    bool disabled) {
+    constexpr float CardH = 76.0f;
+    ImGui::PushID(idStr);
+    const ImVec2 pmin = ImGui::GetCursorScreenPos();
+    const float availW = ImGui::GetContentRegionAvail().x;
+    const ImVec2 pmax(pmin.x + availW, pmin.y + CardH);
+
+    ImGui::BeginDisabled(disabled);
+    const bool clicked = ImGui::InvisibleButton("##card", ImVec2(availW, CardH));
+    ImGui::EndDisabled();
+    const bool hovered = ImGui::IsItemHovered();
+    ImGui::PopID();
+
+    ImDrawList* dl = ImGui::GetWindowDrawList();
+
+    // Background + border. Active wins over hover.
+    if (active) {
+        ImVec4 fill = MvStyle::MvBlue500; fill.w = 0.08f;
+        dl->AddRectFilled(pmin, pmax, ImGui::ColorConvertFloat4ToU32(fill), 6.0f);
+        dl->AddRect(pmin, pmax,
+                    ImGui::ColorConvertFloat4ToU32(MvStyle::MvBlue500),
+                    6.0f, 0, 1.5f);
+    } else {
+        const ImU32 bgCol = hovered && !disabled
+            ? ImGui::ColorConvertFloat4ToU32(MvStyle::MvBg2)
+            : ImGui::ColorConvertFloat4ToU32(MvStyle::MvBg1);
+        dl->AddRectFilled(pmin, pmax, bgCol, 6.0f);
+        const ImU32 borderCol = disabled
+            ? ImGui::ColorConvertFloat4ToU32(MvStyle::MvLine3)
+            : ImGui::ColorConvertFloat4ToU32(MvStyle::MvLine2);
+        dl->AddRect(pmin, pmax, borderCol, 6.0f, 0, 1.0f);
+    }
+
+    // Centred icon, 24 px Lucide.
+    if (glyph && MvStyle::Font.Icon) {
+        ImFont* icon = MvStyle::Font.Icon;
+        constexpr float iconSize = 22.0f;
+        const ImVec2 ts = icon->CalcTextSizeA(iconSize, FLT_MAX, 0.0f, glyph);
+        const ImVec4 iconColor =
+            disabled ? MvStyle::MvFg4 :
+            active   ? MvStyle::MvBlue400 : MvStyle::MvFg2;
+        dl->AddText(icon, iconSize,
+                    ImVec2(pmin.x + (availW - ts.x) * 0.5f,
+                           pmin.y + 8.0f),
+                    ImGui::ColorConvertFloat4ToU32(iconColor),
+                    glyph);
+    }
+
+    // Name (Body Md) — centred horizontally.
+    if (name && name[0]) {
+        MvStyle::ScopedFont f(MvStyle::Font.BodyMd);
+        const ImVec2 ts = ImGui::CalcTextSize(name);
+        const ImVec4 nameColor =
+            disabled ? MvStyle::MvFg4 :
+            active   ? MvStyle::MvFg1 : MvStyle::MvFg1;
+        dl->AddText(ImVec2(pmin.x + (availW - ts.x) * 0.5f,
+                           pmin.y + 36.0f),
+                    ImGui::ColorConvertFloat4ToU32(nameColor),
+                    name);
+    }
+
+    // Sub-label (MonoSm MvFg3).
+    if (sub && sub[0]) {
+        MvStyle::ScopedFont f(MvStyle::Font.MonoSm);
+        const ImVec2 ts = ImGui::CalcTextSize(sub);
+        dl->AddText(ImVec2(pmin.x + (availW - ts.x) * 0.5f,
+                           pmin.y + CardH - ts.y - 8.0f),
+                    ImGui::ColorConvertFloat4ToU32(MvStyle::MvFg3),
+                    sub);
+    }
+
+    if (hovered && disabled) {
+        ImGui::SetTooltip("Coming in a future update");
+    }
+
+    return clicked && !disabled;
+}
+} // namespace
+
 void StageSidebar::RenderMorph(Project& project, bool processing, float progress, Actions& out) {
+    namespace I = MvInspector;
     auto& morph = project.GetMorphData();
 
-    // Sprint 4 will reintroduce the Quick Wrap / Fantasy Wrap preset cards.
-    // For now we expose the raw parameter fields that already exist on
-    // MorphData so the pipeline can be tuned manually.
-    ImGui::TextUnformatted("Parameters");
-    ImGui::Separator();
+    // ---- Header ---------------------------------------------------------
+    I::DrawStageHeader("STAGE 03 / 04",
+                       "Morph", "ing",
+                       "Tune the wrap parameters and run the algorithm. "
+                       "Compare Source / Target / Deformed in the viewport "
+                       "before accepting.");
 
-    ImGui::SliderInt("Stiffness Steps",     &morph.nricpStiffnessSteps, 1, 10);
-    ImGui::SliderFloat("Stiffness (Start)", &morph.nricpAlphaInitial,   1.0f, 500.0f, "%.1f");
-    ImGui::SliderFloat("Stiffness (End)",   &morph.nricpAlphaFinal,     0.1f, 200.0f, "%.1f");
-    ImGui::SliderInt("Iterations / Step",   &morph.nricpIcpIterations,  1, 20);
-    ImGui::SliderFloat("Normal Threshold",  &morph.nricpNormalThreshold, 5.0f, 120.0f, "%.0f°");
-    ImGui::SliderFloat("Landmark Weight",   &morph.nricpLandmarkWeight, 0.0f, 100.0f, "%.1f");
+    // ---- Scrollable body ------------------------------------------------
+    constexpr float FooterReserveH = 60.0f;
+    if (ImGui::BeginChild("##stage3body",
+                          ImVec2(0.0f, -FooterReserveH),
+                          false,
+                          ImGuiWindowFlags_NoBackground)) {
 
-    ImGui::Spacing();
-    if (ImGui::CollapsingHeader("Advanced")) {
-        ImGui::SliderFloat("Control Density (Start)", &morph.nricpSamplingInitial, 0.0f, 1.0f, "%.3f");
-        ImGui::SliderFloat("Control Density (End)",   &morph.nricpSamplingFinal,   0.0f, 1.0f, "%.3f");
-        ImGui::Checkbox("Normalize Sampling",         &morph.nricpNormalizeSampling);
+        // ---- Preset cards row ------------------------------------------
+        // Sprint 4 will replace these with persisted user presets; for now
+        // two built-ins (Quick Wrap / Fantasy Wrap) and a disabled "Save
+        // preset" placeholder per design.
+        I::DrawSectionLabel("PRESETS");
+        if (ImGui::BeginTable("##presetCards", 3,
+                              ImGuiTableFlags_SizingStretchSame |
+                              ImGuiTableFlags_NoPadOuterX)) {
+            ImGui::TableNextRow();
 
-        ImGui::SliderFloat("Rigidity (Start)",        &morph.nricpGammaInitial,    0.0f, 5.0f, "%.2f");
-        ImGui::SliderFloat("Rigidity (End)",          &morph.nricpGammaFinal,      0.0f, 5.0f, "%.2f");
+            ImGui::TableNextColumn();
+            if (DrawPresetCard("quick", "Quick Wrap",
+                               "Tight wrap", MV_ICON_TARGET,
+                               lastAppliedPreset_ == 0, /*disabled=*/false)) {
+                ApplyMorphPreset(morph, kPresetQuickWrap);
+                lastAppliedPreset_ = 0;
+            }
 
-        ImGui::SliderFloat("Step Damping (Start)",    &morph.nricpDpInitial,       0.1f, 1.0f, "%.2f");
-        ImGui::SliderFloat("Step Damping (End)",      &morph.nricpDpFinal,         0.1f, 1.0f, "%.2f");
+            ImGui::TableNextColumn();
+            if (DrawPresetCard("fantasy", "Fantasy Wrap",
+                               "Looser fit", MV_ICON_SPARKLES,
+                               lastAppliedPreset_ == 1, /*disabled=*/false)) {
+                ApplyMorphPreset(morph, kPresetFantasyWrap);
+                lastAppliedPreset_ = 1;
+            }
 
-        ImGui::SliderInt("Inner Iterations",          &morph.nricpOptimizationIterations, 1, 10);
-        ImGui::InputFloat("Convergence Threshold",    &morph.nricpEpsilon, 0.0f, 0.0f, "%.5f");
+            ImGui::TableNextColumn();
+            DrawPresetCard("save", "Save preset", "Custom", MV_ICON_PLUS,
+                           /*active=*/false, /*disabled=*/true);
 
-        ImGui::Checkbox("Exclude Mesh Boundaries",    &morph.nricpEnableBoundaryExclusion);
-        ImGui::BeginDisabled(!morph.nricpEnableBoundaryExclusion);
-        ImGui::SliderInt("Boundary Hops",             &morph.nricpBoundaryExclusionHops, 0, 10);
-        ImGui::EndDisabled();
-
-        if (ImGui::Button("Reset to Defaults", ImVec2(-FLT_MIN, 0))) {
-            morph = MorphData();
-        }
-    }
-
-    ImGui::Spacing();
-    ImGui::Separator();
-
-    if (processing) {
-        char label[64];
-        std::snprintf(label, sizeof(label), "Processing… %.0f%%", progress * 100.0f);
-        ImGui::ProgressBar(progress, ImVec2(-FLT_MIN, 0), label);
-        if (ImGui::Button("Cancel", ImVec2(-FLT_MIN, 0))) out.cancelMorphRequested = true;
-    } else {
-        const bool canProcess = project.GetMorphMesh().isLoaded
-                             && project.GetTargetMesh().isLoaded;
-        ImGui::BeginDisabled(!canProcess);
-        if (ImGui::Button("Process Morph", ImVec2(-FLT_MIN, 0))) out.processMorphRequested = true;
-        ImGui::EndDisabled();
-        if (!canProcess) ImGui::TextDisabled("Load both meshes before processing.");
-    }
-
-    ImGui::Spacing();
-    if (morph.isProcessed) {
-        ImGui::Text("Max displacement: %.3f", morph.maxDisplacement);
-        ImGui::Text("Avg displacement: %.3f", morph.avgDisplacement);
-
-        // Drive directly off morph.previewMode rather than a static — the
-        // value is also restored from disk on project load, and a static
-        // would keep showing whatever the user last picked in this session.
-        int previewIdx = static_cast<int>(morph.previewMode);
-        const char* modes[] = {"Deformed", "Original", "Overlay", "Heat Map"};
-        if (ImGui::Combo("Preview", &previewIdx, modes, 4)) {
-            morph.previewMode = static_cast<MorphPreviewMode>(previewIdx);
+            ImGui::EndTable();
         }
 
-        ImGui::BeginDisabled(morph.isAccepted);
-        if (ImGui::Button("Accept & Continue", ImVec2(-FLT_MIN, 0))) out.acceptMorphRequested = true;
-        ImGui::EndDisabled();
+        // ---- General parameters ----------------------------------------
+        // Track per-frame edits across the slider block so any manual
+        // tweak resets lastAppliedPreset_ → -1 and the active-card highlight
+        // disappears.
+        bool paramEdited = false;
+        I::DrawSectionLabel("GENERAL");
+        ImGui::PushItemWidth(ImGui::GetContentRegionAvail().x * 0.55f);
+        if (ImGui::SliderInt("Stiffness steps",     &morph.nricpStiffnessSteps, 1, 10))      paramEdited = true;
+        if (ImGui::SliderFloat("Stiffness (start)", &morph.nricpAlphaInitial,   1.0f, 500.0f, "%.1f")) paramEdited = true;
+        if (ImGui::SliderFloat("Stiffness (end)",   &morph.nricpAlphaFinal,     0.1f, 200.0f, "%.1f")) paramEdited = true;
+        if (ImGui::SliderInt("Iterations / step",   &morph.nricpIcpIterations,  1, 20))      paramEdited = true;
+        if (ImGui::SliderFloat("Normal threshold",  &morph.nricpNormalThreshold, 5.0f, 120.0f, "%.0f\xC2\xB0")) paramEdited = true;
+        if (ImGui::SliderFloat("Landmark weight",   &morph.nricpLandmarkWeight, 0.0f, 100.0f, "%.1f")) paramEdited = true;
+        ImGui::PopItemWidth();
+
+        // ---- Advanced parameters --------------------------------------
+        ImGui::Dummy(ImVec2(0.0f, 4.0f));
+        if (ImGui::CollapsingHeader("Advanced")) {
+            ImGui::PushItemWidth(ImGui::GetContentRegionAvail().x * 0.55f);
+            if (ImGui::SliderFloat("Control density (start)", &morph.nricpSamplingInitial, 0.0f, 1.0f, "%.3f")) paramEdited = true;
+            if (ImGui::SliderFloat("Control density (end)",   &morph.nricpSamplingFinal,   0.0f, 1.0f, "%.3f")) paramEdited = true;
+            if (ImGui::Checkbox("Normalize sampling",         &morph.nricpNormalizeSampling)) paramEdited = true;
+
+            if (ImGui::SliderFloat("Rigidity (start)",        &morph.nricpGammaInitial,    0.0f, 5.0f, "%.2f")) paramEdited = true;
+            if (ImGui::SliderFloat("Rigidity (end)",          &morph.nricpGammaFinal,      0.0f, 5.0f, "%.2f")) paramEdited = true;
+
+            if (ImGui::SliderFloat("Step damping (start)",    &morph.nricpDpInitial,       0.1f, 1.0f, "%.2f")) paramEdited = true;
+            if (ImGui::SliderFloat("Step damping (end)",      &morph.nricpDpFinal,         0.1f, 1.0f, "%.2f")) paramEdited = true;
+
+            if (ImGui::SliderInt("Inner iterations",          &morph.nricpOptimizationIterations, 1, 10)) paramEdited = true;
+            if (ImGui::InputFloat("Convergence threshold",    &morph.nricpEpsilon, 0.0f, 0.0f, "%.5f")) paramEdited = true;
+
+            if (ImGui::Checkbox("Exclude mesh boundaries",    &morph.nricpEnableBoundaryExclusion)) paramEdited = true;
+            ImGui::BeginDisabled(!morph.nricpEnableBoundaryExclusion);
+            if (ImGui::SliderInt("Boundary hops",             &morph.nricpBoundaryExclusionHops, 0, 10)) paramEdited = true;
+            ImGui::EndDisabled();
+            ImGui::PopItemWidth();
+
+            ImGui::Dummy(ImVec2(0.0f, 4.0f));
+            if (ImGui::Button("Reset to defaults", ImVec2(-FLT_MIN, 30.0f))) {
+                morph = MorphData();
+                lastAppliedPreset_ = -1;
+            }
+        }
+
+        if (paramEdited) lastAppliedPreset_ = -1;
+
+        // ---- Process / cancel ------------------------------------------
+        I::DrawSectionLabel("PROCESS");
+        if (processing) {
+            char label[64];
+            std::snprintf(label, sizeof(label), "Processing\xE2\x80\xA6 %.0f%%",
+                          progress * 100.0f);
+            ImGui::ProgressBar(progress, ImVec2(-FLT_MIN, 0), label);
+            if (ImGui::Button("Cancel", ImVec2(-FLT_MIN, 30.0f))) {
+                out.cancelMorphRequested = true;
+            }
+        } else {
+            const bool canProcess = project.GetMorphMesh().isLoaded
+                                 && project.GetTargetMesh().isLoaded;
+            ImGui::BeginDisabled(!canProcess);
+            // Primary blue Process button — the main action of the stage.
+            ImGui::PushStyleColor(ImGuiCol_Button,        MvStyle::MvBlue500);
+            ImGui::PushStyleColor(ImGuiCol_ButtonHovered, MvStyle::MvBlue400);
+            ImGui::PushStyleColor(ImGuiCol_ButtonActive,  MvStyle::MvBlue600);
+            ImGui::PushStyleColor(ImGuiCol_Text,
+                                  ImVec4(0x05/255.f, 0x13/255.f, 0x22/255.f, 1.f));
+            if (ImGui::Button("Process Morph", ImVec2(-FLT_MIN, 32.0f))) {
+                out.processMorphRequested = true;
+            }
+            ImGui::PopStyleColor(4);
+            ImGui::EndDisabled();
+            if (!canProcess) {
+                MvStyle::ScopedFont f(MvStyle::Font.BodySm);
+                ImGui::PushStyleColor(ImGuiCol_Text, MvStyle::MvFg4);
+                ImGui::TextWrapped("Load both meshes before processing.");
+                ImGui::PopStyleColor();
+            }
+        }
+
+        // ---- Inline result summary -------------------------------------
+        // The viewport stats overlay surfaces the same numbers in the GL
+        // pane; the inspector still echoes them here so users with the
+        // overlay hidden (e.g. via dual-monitor split) still see them.
+        if (morph.isProcessed) {
+            ImGui::Dummy(ImVec2(0.0f, 6.0f));
+            MvStyle::ScopedFont f(MvStyle::Font.Mono);
+            ImGui::PushStyleColor(ImGuiCol_Text, MvStyle::MvFg2);
+            ImGui::Text("Max disp.  %.3f mm", morph.maxDisplacement);
+            ImGui::Text("Avg disp.  %.3f mm", morph.avgDisplacement);
+            ImGui::PopStyleColor();
+        }
+
+        // ---- Vertex mask (existing functionality, restyled) ------------
+        const bool morphMeshReady = project.GetMorphMesh().isLoaded || morph.isProcessed;
+        if (morphMeshReady) {
+            I::DrawSectionLabel("VERTEX MASK");
+            {
+                MvStyle::ScopedFont f(MvStyle::Font.BodySm);
+                ImGui::PushStyleColor(ImGuiCol_Text, MvStyle::MvFg3);
+                ImGui::TextWrapped("Paint to exclude vertices from the next "
+                                   "Process — useful for eyes, mouths, and "
+                                   "interior cavities.");
+                ImGui::PopStyleColor();
+            }
+            ImGui::Dummy(ImVec2(0.0f, 4.0f));
+
+            ImGui::Checkbox("Paint mask", &maskPaintingActive_);
+            ImGui::SameLine();
+            ImGui::Checkbox("Show mask", &maskShowMask_);
+
+            ImGui::BeginDisabled(!maskPaintingActive_);
+            ImGui::PushItemWidth(ImGui::GetContentRegionAvail().x * 0.55f);
+            ImGui::SliderFloat("Mask radius", &maskBrushRadius_, 0.5f, 50.0f, "%.1f");
+            ImGui::PopItemWidth();
+            ImGui::Checkbox("Erase", &maskEraseMode_);
+            ImGui::EndDisabled();
+
+            const bool hasMaskData = !morph.vertexMask.empty();
+            ImGui::Dummy(ImVec2(0.0f, 4.0f));
+            ImGui::BeginDisabled(!hasMaskData);
+            if (ImGui::BeginTable("##maskActions", 2,
+                                  ImGuiTableFlags_SizingStretchSame |
+                                  ImGuiTableFlags_NoPadOuterX)) {
+                ImGui::TableNextRow();
+                ImGui::TableNextColumn();
+                if (ImGui::Button("Clear mask", ImVec2(-FLT_MIN, 28.0f))) {
+                    out.clearMaskRequested = true;
+                }
+                ImGui::TableNextColumn();
+                if (ImGui::Button("Invert mask", ImVec2(-FLT_MIN, 28.0f))) {
+                    out.invertMaskRequested = true;
+                }
+                ImGui::EndTable();
+            }
+            ImGui::EndDisabled();
+
+            // Push current mask UI state through Actions so AppWindow can
+            // mirror onto the primary viewport each frame.
+            out.maskPaintingActive = maskPaintingActive_;
+            out.maskShow           = maskShowMask_ || maskPaintingActive_;
+            out.maskEraseMode      = maskEraseMode_;
+            out.maskBrushRadius    = maskBrushRadius_;
+        } else {
+            // Ensure the viewport doesn't treat LMB as mask painting when
+            // no mesh is loaded yet.
+            out.maskPaintingActive = false;
+            out.maskShow           = false;
+        }
+
+        ImGui::Dummy(ImVec2(0.0f, 12.0f));
     }
+    ImGui::EndChild();
 
-    // ------------------------------------------------------------------
-    // Mask painting — available any time a morph-side mesh exists (before
-    // or after processing). Painted vertices are excluded from the NRICP
-    // correspondence search on the next Process, letting the user pin eyes
-    // / mouths / interior cavities that would otherwise pull wrong.
-    // ------------------------------------------------------------------
-    const bool morphMeshReady = project.GetMorphMesh().isLoaded || morph.isProcessed;
-    if (morphMeshReady) {
-        ImGui::Spacing();
-        ImGui::Separator();
-        ImGui::TextUnformatted("Vertex Mask");
-        ImGui::TextDisabled("Paint to exclude vertices from the next Process.");
-
-        ImGui::Checkbox("Paint Mask", &maskPaintingActive_);
-        ImGui::SameLine();
-        ImGui::Checkbox("Show Mask", &maskShowMask_);
-
-        ImGui::BeginDisabled(!maskPaintingActive_);
-        ImGui::SliderFloat("Mask Radius", &maskBrushRadius_, 0.5f, 50.0f, "%.1f");
-        ImGui::Checkbox("Erase", &maskEraseMode_);
-        ImGui::EndDisabled();
-
-        const bool hasMaskData = !morph.vertexMask.empty();
-        ImGui::BeginDisabled(!hasMaskData);
-        if (ImGui::Button("Clear Mask")) out.clearMaskRequested = true;
-        ImGui::SameLine();
-        if (ImGui::Button("Invert Mask")) out.invertMaskRequested = true;
-        ImGui::EndDisabled();
-
-        // Push current mask UI state through Actions so AppWindow can mirror
-        // onto the primary viewport each frame.
-        out.maskPaintingActive = maskPaintingActive_;
-        out.maskShow           = maskShowMask_ || maskPaintingActive_;
-        out.maskEraseMode      = maskEraseMode_;
-        out.maskBrushRadius    = maskBrushRadius_;
-    } else {
-        // Ensure viewport does not treat LMB as mask painting when no mesh is
-        // loaded yet.
-        out.maskPaintingActive = false;
-        out.maskShow           = false;
+    // ---- Footer ---------------------------------------------------------
+    // Continue button labelled "Accept" per design. Enabled once the morph
+    // worker has produced a result; clicking it flags the result accepted
+    // (so Project::CanProceedToNextStage returns true) AND requests the
+    // stage advance — AppWindow processes both this frame.
+    const bool canAccept = morph.isProcessed;
+    const auto footer = I::DrawInspectorFooter(
+        "STEP 03 OF 04",
+        /*previousEnabled=*/true,
+        /*continueEnabled=*/canAccept,
+        /*continueLabel=*/morph.isAccepted ? "Continue" : "Accept",
+        /*finishStyle=*/false);
+    if (footer.previousClicked) out.previousStageRequested = true;
+    if (footer.continueClicked) {
+        if (!morph.isAccepted) out.acceptMorphRequested = true;
+        out.nextStageRequested = true;
     }
 }
 

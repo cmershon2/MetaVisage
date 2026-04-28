@@ -100,6 +100,11 @@ private:
     // Mirror of viewport-side point selection so the Stage 2 list can
     // highlight the active row. Refreshed on each Render() call.
     int selectedPointIndexExternal_ = -1;
+
+    // Stage 3 — last preset stamped onto MorphData via the preset cards.
+    // 0 = Quick Wrap, 1 = Fantasy Wrap, -1 = Custom (any manual edit
+    // resets to this so the active card highlight stays accurate).
+    int lastAppliedPreset_ = -1;
 };
 
 } // namespace MetaVisage

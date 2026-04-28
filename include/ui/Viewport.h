@@ -157,6 +157,9 @@ private:
     void DrawTopRightPills   (float x, float y, float w, float h);
     void DrawBottomLeftHud   (float x, float y, float w, float h);
 
+    // Sprint 3.8.9 — bottom-left result stats panel (Stage 3 only, post-process)
+    void DrawResultStatsOverlay(float x, float y, float w, float h);
+
     bool IsGizmoVisible() const;
     Vector3 GetGizmoPosition() const;
 
