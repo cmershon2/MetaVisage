@@ -1428,18 +1428,18 @@ void AppWindow::RenderStatusBar() {
     const ImVec2 startCursor = ImGui::GetCursorPos();
     const ImVec2 origin = ImGui::GetCursorScreenPos();
 
-    // Background fill: MvBg0 with a hairline top border in MvLine2. Drawn
-    // via the host window's drawlist rather than a child window so the
-    // status bar inherits the host's clipping and doesn't introduce a
-    // separate scroll region.
+    // Background fill: MvBg0. Drawn via the host window's drawlist rather
+    // than a child window so the status bar inherits the host's clipping
+    // and doesn't introduce a separate scroll region. The previous
+    // 1 px MvLine2 top hairline was dropped per UX review — the MvBg0
+    // status fill against the host's MvBg1 dockspace already provides
+    // enough visual separation, and the explicit hairline read as a
+    // "gray spacer".
     ImDrawList* dl = ImGui::GetWindowDrawList();
     const float fullW = ImGui::GetContentRegionAvail().x;
     dl->AddRectFilled(origin,
                       ImVec2(origin.x + fullW, origin.y + StatusH),
                       Col(MvStyle::MvBg0));
-    dl->AddLine(origin,
-                ImVec2(origin.x + fullW, origin.y),
-                Col(MvStyle::MvLine2));
 
     const WorkflowStage stage = project_ ? project_->GetCurrentStage() : WorkflowStage::Alignment;
 

@@ -117,9 +117,15 @@ Result Render(State state, double tickSeconds) {
     ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding,    ImVec2(0.0f, 0.0f));
     ImGui::PushStyleColor(ImGuiCol_WindowBg, MvStyle::MvBg0);
 
-    // SetNextWindowFocus the first frame so input lands here even though
-    // the host shell is rendered after us in the loop.
-    ImGui::SetNextWindowFocus();
+    // No SetNextWindowFocus — when the title bar is rendered AFTER us in
+    // login mode (so its caption buttons sit on top), pinning focus to
+    // the login window every frame would route every click to login and
+    // swallow caption-button hits. ImGui's default hit-testing finds the
+    // topmost interactive item under the cursor regardless of focus, so
+    // dropping the explicit focus call lets clicks land on whichever
+    // window is actually drawn on top. Login still receives input on its
+    // own buttons because it's the only other interactive window in this
+    // mode (host shell is suppressed).
     ImGui::Begin("##MvLoginScreen", nullptr, flags);
     ImGui::PopStyleColor();
     ImGui::PopStyleVar(3);

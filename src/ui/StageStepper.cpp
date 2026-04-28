@@ -86,11 +86,10 @@ std::optional<int> Render(const Project* project, float width) {
     ImDrawList* dl = ImGui::GetWindowDrawList();
     const ImVec2 origin = ImGui::GetCursorScreenPos();
 
-    // 1 px hairline divider along the bottom of the stepper, matching the
-    // title bar / menu bar borders for visual consistency.
-    dl->AddLine(ImVec2(origin.x,         origin.y + StepperH - 1.0f),
-                ImVec2(origin.x + width, origin.y + StepperH - 1.0f),
-                Col(MvStyle::MvLine2));
+    // The stepper's MvBg1 fill already separates it from the surrounding
+    // chrome (menu bar above is MvBg2, dockspace below is transparent
+    // over the GL pass). An explicit MvLine2 hairline read as a "gray
+    // spacer" against the chrome and was dropped per UX review.
 
     const int N = static_cast<int>(kStages.size());
     const float chevronTotal = static_cast<float>(N - 1) * ChevronGap;
