@@ -917,17 +917,24 @@ void ToolbarSeparator() {
     ImGui::Dummy(ImVec2(gap, 26.0f));
 }
 
-// "PERSP" / "F · ⇧ axis" mono label, vertically centred on the 26px button
-// row so it shares the toolbar's baseline.
+// "PERSP" / "F · ⇧ axis" mono label, vertically centred on the 26 px button
+// row so it shares the toolbar's baseline. The earlier Dummy(0,yPad) +
+// SameLine pattern only advanced the cursor by yPad horizontally — it
+// didn't actually shift the text's Y position, leaving the label visually
+// floating above the row's mid-line. We now emit the glyph via ImDrawList
+// at the correct Y and reserve a 26 px-tall layout dummy so SameLine
+// continues to work for the next inline element.
 void ToolbarMonoLabel(const char* text, const ImVec4& color) {
     MetaVisage::MvStyle::ScopedFont f(MetaVisage::MvStyle::Font.Mono);
     const float fs = ImGui::GetFontSize();
-    const float yPad = (26.0f - fs) * 0.5f;
-    ImGui::Dummy(ImVec2(0.0f, yPad));
-    ImGui::SameLine(0.0f, 0.0f);
-    ImGui::PushStyleColor(ImGuiCol_Text, color);
-    ImGui::TextUnformatted(text);
-    ImGui::PopStyleColor();
+    const ImVec2 ts = ImGui::CalcTextSize(text);
+    const ImVec2 pos = ImGui::GetCursorScreenPos();
+
+    ImDrawList* dl = ImGui::GetWindowDrawList();
+    dl->AddText(ImVec2(pos.x, pos.y + (26.0f - fs) * 0.5f),
+                ColU(color), text);
+
+    ImGui::Dummy(ImVec2(ts.x, 26.0f));
 }
 
 } // namespace
@@ -938,6 +945,13 @@ void Viewport::DrawTopCenterToolbar(float x, float y, float w, float h) {
 
     const WorkflowStage stage = project_ ? project_->GetCurrentStage()
                                          : WorkflowStage::Alignment;
+
+    // Story 3.8.5 — Stage 2 (Point Reference) is the one stage that does
+    // NOT show the centred toolbar. Story 3.8.8 will replace it with a
+    // dedicated source/target info bar above the dual viewports. The HUD
+    // and pills still render in Stage 2, just not this strip.
+    if (stage == WorkflowStage::PointReference) return;
+
     const bool isStage3 = (stage == WorkflowStage::Morph);
 
     char wid[64];
@@ -1001,34 +1015,57 @@ void Viewport::DrawTopCenterToolbar(float x, float y, float w, float h) {
 
         if (isStage3) {
             // Stage 3 — Source / Target / Deformed view-mode toggles. The
-            // existing MorphPreviewMode enum has 4 values; we expose 3:
+            // canonical preview state lives in Project::MorphData::previewMode
+            // (the sidebar combo writes there too); AppWindow's per-frame
+            // mirror at AppWindow.cpp:597 pushes that into the renderer. So
+            // we WRITE to project state, not directly to the renderer —
+            // otherwise next frame's mirror clobbers the renderer back to
+            // the stale project value and the toggle appears to do nothing.
+            // We expose 3 of the 4 enum values; HeatMap stays in the
+            // sidebar's Compare panel.
             //   Source   → Original
             //   Target   → Overlay      (deformed + semi-transparent target)
             //   Deformed → Deformed
-            // HeatMap stays accessible from the inspector's Compare panel.
             const MorphPreviewMode pm = project_ ? project_->GetMorphData().previewMode
                                                   : MorphPreviewMode::Deformed;
+            auto setPreview = [&](MorphPreviewMode mode) {
+                if (project_) project_->GetMorphData().previewMode = mode;
+                SetMorphPreviewMode(mode);  // immediate, avoids 1-frame lag
+            };
             ImGui::SameLine(0.0f, 0.0f);
             if (ToolbarIconButton("vmSrc", MV_ICON_CIRCLE_DASHED,
                                   pm == MorphPreviewMode::Original, "Source")) {
-                SetMorphPreviewMode(MorphPreviewMode::Original);
+                setPreview(MorphPreviewMode::Original);
             }
             ImGui::SameLine(0.0f, 0.0f);
             if (ToolbarIconButton("vmTgt", MV_ICON_TARGET,
                                   pm == MorphPreviewMode::Overlay, "Target overlay")) {
-                SetMorphPreviewMode(MorphPreviewMode::Overlay);
+                setPreview(MorphPreviewMode::Overlay);
             }
             ImGui::SameLine(0.0f, 0.0f);
             if (ToolbarIconButton("vmDef", MV_ICON_SPARKLES,
                                   pm == MorphPreviewMode::Deformed, "Deformed result")) {
-                SetMorphPreviewMode(MorphPreviewMode::Deformed);
+                setPreview(MorphPreviewMode::Deformed);
             }
             ImGui::SameLine(0.0f, 0.0f);
             ToolbarSeparator();
 
-            // Process-status pill — green dot + READY / amber + PROCESSING.
-            const ImVec4 dotCol = morphProcessing_ ? MvStyle::MvWarning : MvStyle::MvSuccess;
-            const char* statusText = morphProcessing_ ? "PROCESSING" : "READY";
+            // Process-status pill — three states driven by AppWindow's
+            // per-frame Viewport::SetMorphStatus call:
+            //   Ready      blue   — no morph yet
+            //   Processing amber  — worker running
+            //   Complete   green  — morph isProcessed
+            ImVec4 dotCol;
+            const char* statusText;
+            switch (morphStatus_) {
+                case MorphStatus::Processing:
+                    dotCol = MvStyle::MvWarning; statusText = "PROCESSING"; break;
+                case MorphStatus::Complete:
+                    dotCol = MvStyle::MvSuccess; statusText = "COMPLETE";   break;
+                case MorphStatus::Ready:
+                default:
+                    dotCol = MvStyle::MvBlue400; statusText = "READY";      break;
+            }
             ImDrawList* dl = ImGui::GetWindowDrawList();
             const ImVec2 dotPos = ImGui::GetCursorScreenPos();
             dl->AddCircleFilled(ImVec2(dotPos.x + 8.0f, dotPos.y + 13.0f),

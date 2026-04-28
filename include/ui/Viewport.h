@@ -138,8 +138,12 @@ public:
     std::function<void(std::vector<bool>)> OnMaskStrokeCompleted;
 
     // --- Stage 3 morph state (drives the Stage 3 toolbar status indicator) ---
-    // Mirrored from AppWindow's morph worker each frame. Read-only signal.
-    void SetMorphProcessing(bool running) { morphProcessing_ = running; }
+    // Mirrored from AppWindow each frame:
+    //   Processing → morphRunning_.load() == true
+    //   Complete   → !running && project.morph.isProcessed
+    //   Ready      → otherwise
+    enum class MorphStatus { Ready, Processing, Complete };
+    void SetMorphStatus(MorphStatus s) { morphStatus_ = s; }
 
 private:
     // Overlay drawing (ImGui draw list)
@@ -200,7 +204,7 @@ private:
 
     // Render filter + active/label
     RenderFilter renderFilter_ = RenderFilter::All;
-    bool morphProcessing_ = false;  // Story 3.8.5 — drives Stage 3 toolbar status pill
+    MorphStatus morphStatus_ = MorphStatus::Ready;  // Story 3.8.5 — Stage 3 toolbar status pill
     bool isActive_ = false;
     std::string viewportLabel_;
 

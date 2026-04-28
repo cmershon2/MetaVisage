@@ -509,15 +509,23 @@ void AppWindow::Run() {
                 fbWidth, fbHeight,
                 centralRectPos_.x, centralRectPos_.y,
                 centralRectSize_.x, centralRectSize_.y);
-            // Story 3.8.5 — Stage 3 viewport toolbar shows a READY/PROCESSING
-            // status pill driven by the morph worker. Mirror the atomic into
-            // each viewport so its overlay can read it without locking.
+            // Story 3.8.5 — Stage 3 viewport toolbar shows a 3-state status
+            // pill driven by the morph worker + project state. Mirror it
+            // into each viewport so the overlay can read without locking.
+            //   Processing → worker is running
+            //   Complete   → not running, but morph has been processed
+            //   Ready      → no morph done yet (or isProcessed false)
             const bool processing = morphRunning_.load();
+            const bool processed  = project_ && project_->GetMorphData().isProcessed;
+            const Viewport::MorphStatus status =
+                processing ? Viewport::MorphStatus::Processing
+              : processed  ? Viewport::MorphStatus::Complete
+                           : Viewport::MorphStatus::Ready;
             if (Viewport* vp = viewportHost_->GetPrimaryViewport()) {
-                vp->SetMorphProcessing(processing);
+                vp->SetMorphStatus(status);
             }
             if (Viewport* vp = viewportHost_->GetSecondaryViewport()) {
-                vp->SetMorphProcessing(processing);
+                vp->SetMorphStatus(status);
             }
         }
         RenderFrame(fbWidth, fbHeight);
