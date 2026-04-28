@@ -638,7 +638,8 @@ void Viewport::DrawOverlays(float x, float y, float w, float h) {
     DrawTopCenterToolbar    (x, y, w, h);
     DrawTopRightPills       (x, y, w, h);
     DrawBottomLeftHud       (x, y, w, h);
-    DrawResultStatsOverlay  (x, y, w, h);
+    DrawResultStatsOverlay  (x, y, w, h);  // Stage 3 — gated internally
+    DrawMeshStatsOverlay    (x, y, w, h);  // Stage 4 — gated internally
 }
 
 void Viewport::RenderGL(float x, float y, float w, float h, int fbHeight) {
@@ -1220,6 +1221,13 @@ void Viewport::DrawBottomLeftHud(float x, float y, float w, float h) {
         return;
     }
 
+    // Story 3.8.10 — Stage 4 always shows the mesh stats overlay (the
+    // sculpt mesh always exists at this point), so the HUD steps aside
+    // there too.
+    if (stage == WorkflowStage::TouchUp) {
+        return;
+    }
+
     // Stage-specific copy. Kept terse so the HUD stays compact at 320 px.
     struct StageHud {
         const char* label;
@@ -1476,6 +1484,133 @@ void Viewport::DrawResultStatsOverlay(float x, float y, float w, float h) {
         drawStatRow("Max disp.", buf);
         std::snprintf(buf, sizeof(buf), "%.3f mm", morph.avgDisplacement);
         drawStatRow("Avg disp.", buf);
+    }
+    ImGui::End();
+    ImGui::PopStyleColor(2);
+    ImGui::PopStyleVar(2);
+}
+
+// =============================================================================
+// Story 3.8.10 — Stage 4 mesh stats overlay. Bottom-left frosted panel that
+// reports the active sculpt mesh's vert / triangle / UV-set counts plus a
+// "READY TO EXPORT" status indicator. The bottom-left HUD steps aside in
+// Stage 4 so the panels don't stack. Render gated to TouchUp + a non-null
+// sculpt mesh; bails out otherwise.
+// =============================================================================
+void Viewport::DrawMeshStatsOverlay(float x, float y, float w, float h) {
+    if (w <= 0.0f || h <= 0.0f) return;
+    if (!project_) return;
+    if (project_->GetCurrentStage() != WorkflowStage::TouchUp) return;
+
+    // Find the active sculpt mesh — prefer the morph's deformed result
+    // (what Stage 4 actually edits) and fall back to the source mesh
+    // before processing has run.
+    const auto& morph = project_->GetMorphData();
+    const Mesh* mesh = morph.deformedMorphMesh
+        ? morph.deformedMorphMesh.get()
+        : (project_->GetMorphMesh().mesh
+              ? project_->GetMorphMesh().mesh.get()
+              : nullptr);
+    if (!mesh) return;
+
+    char wid[64];
+    std::snprintf(wid, sizeof(wid), "##VpMeshStats_%p",
+                  static_cast<void*>(this));
+
+    constexpr float PanelW = 240.0f;
+    ImGui::SetNextWindowPos(ImVec2(x + 16.0f, y + h - 16.0f),
+                            ImGuiCond_Always, ImVec2(0.0f, 1.0f));
+    ImGui::SetNextWindowSize(ImVec2(PanelW, 0.0f));
+    ImGui::SetNextWindowBgAlpha(0.88f);
+
+    constexpr ImGuiWindowFlags flags =
+        ImGuiWindowFlags_NoTitleBar | ImGuiWindowFlags_NoResize |
+        ImGuiWindowFlags_NoMove     | ImGuiWindowFlags_NoSavedSettings |
+        ImGuiWindowFlags_NoFocusOnAppearing |
+        ImGuiWindowFlags_NoScrollbar | ImGuiWindowFlags_NoCollapse |
+        ImGuiWindowFlags_NoDocking | ImGuiWindowFlags_AlwaysAutoResize;
+
+    ImGui::PushStyleVar(ImGuiStyleVar_WindowRounding, 6.0f);
+    ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding,  ImVec2(14.0f, 12.0f));
+    ImGui::PushStyleColor(ImGuiCol_WindowBg, MvStyle::MvBg1);
+    ImGui::PushStyleColor(ImGuiCol_Border,   MvStyle::MvLine2);
+
+    if (ImGui::Begin(wid, nullptr, flags)) {
+        ImDrawList* dl = ImGui::GetWindowDrawList();
+
+        // "/ MESH" eyebrow + "● READY TO EXPORT" status pill.
+        {
+            MvStyle::ScopedFont f(MvStyle::Font.MonoSm);
+            ImGui::PushStyleColor(ImGuiCol_Text, MvStyle::MvFg3);
+            ImGui::TextUnformatted("/ MESH");
+            ImGui::PopStyleColor();
+        }
+        {
+            const ImVec4 dotCol = MvStyle::MvSuccess;
+            const char* statusText = "READY";
+            MvStyle::ScopedFont f(MvStyle::Font.MonoSm);
+            const ImVec2 ts = ImGui::CalcTextSize(statusText);
+            const float availW = ImGui::GetContentRegionAvail().x;
+            ImGui::SameLine();
+            const ImVec2 pos = ImGui::GetCursorScreenPos();
+            const float dotR = 3.0f;
+            const float clusterW = dotR * 2.0f + 6.0f + ts.x;
+            const float startX = pos.x + (availW - clusterW);
+            const float yMid = pos.y + ts.y * 0.5f;
+            dl->AddCircleFilled(ImVec2(startX + dotR, yMid),
+                                dotR, ColU(dotCol));
+            ImGui::SetCursorScreenPos(ImVec2(startX + dotR * 2.0f + 6.0f, pos.y));
+            ImGui::PushStyleColor(ImGuiCol_Text, dotCol);
+            ImGui::TextUnformatted(statusText);
+            ImGui::PopStyleColor();
+        }
+
+        // Hairline rule between header and rows.
+        {
+            const ImVec2 cur = ImGui::GetCursorScreenPos();
+            const float lineW = ImGui::GetContentRegionAvail().x;
+            dl->AddLine(ImVec2(cur.x, cur.y + 6.0f),
+                        ImVec2(cur.x + lineW, cur.y + 6.0f),
+                        ColU(MvStyle::MvLine2), 1.0f);
+        }
+        ImGui::Dummy(ImVec2(0.0f, 10.0f));
+
+        auto drawStatRow = [&](const char* label, const char* value) {
+            const ImVec2 rowStart = ImGui::GetCursorScreenPos();
+            const float availW = ImGui::GetContentRegionAvail().x;
+            constexpr float RowH = 18.0f;
+            {
+                MvStyle::ScopedFont f(MvStyle::Font.BodySm);
+                const float fs = ImGui::GetFontSize();
+                dl->AddText(ImVec2(rowStart.x,
+                                   rowStart.y + (RowH - fs) * 0.5f),
+                            ColU(MvStyle::MvFg3), label);
+            }
+            {
+                MvStyle::ScopedFont f(MvStyle::Font.Mono);
+                const ImVec2 ts = ImGui::CalcTextSize(value);
+                const float fs = ImGui::GetFontSize();
+                dl->AddText(ImVec2(rowStart.x + availW - ts.x,
+                                   rowStart.y + (RowH - fs) * 0.5f),
+                            ColU(MvStyle::MvFg1), value);
+            }
+            ImGui::Dummy(ImVec2(availW, RowH));
+        };
+
+        const size_t vertexCount   = mesh->GetVertices().size();
+        const size_t triangleCount = mesh->GetFaceCount();
+        // UV-map count: the engine currently stores a single UV set on
+        // the mesh — non-empty UVs == 1, empty == 0. Multi-UV support
+        // would surface here unchanged.
+        const size_t uvSetCount = mesh->GetUVs().empty() ? 0u : 1u;
+
+        char buf[32];
+        std::snprintf(buf, sizeof(buf), "%zu", vertexCount);
+        drawStatRow("Vertices",  buf);
+        std::snprintf(buf, sizeof(buf), "%zu", triangleCount);
+        drawStatRow("Triangles", buf);
+        std::snprintf(buf, sizeof(buf), "%zu", uvSetCount);
+        drawStatRow("UV maps",   buf);
     }
     ImGui::End();
     ImGui::PopStyleColor(2);

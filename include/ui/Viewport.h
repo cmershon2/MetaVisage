@@ -160,6 +160,9 @@ private:
     // Sprint 3.8.9 — bottom-left result stats panel (Stage 3 only, post-process)
     void DrawResultStatsOverlay(float x, float y, float w, float h);
 
+    // Sprint 3.8.10 — bottom-left mesh stats panel (Stage 4 only)
+    void DrawMeshStatsOverlay(float x, float y, float w, float h);
+
     bool IsGizmoVisible() const;
     Vector3 GetGizmoPosition() const;
 

@@ -90,7 +90,8 @@ StageSidebar::Actions StageSidebar::Render(Project* project,
     // story replaces them.
     const bool ownsChrome = (stage == WorkflowStage::Alignment ||
                              stage == WorkflowStage::PointReference ||
-                             stage == WorkflowStage::Morph);
+                             stage == WorkflowStage::Morph     ||
+                             stage == WorkflowStage::TouchUp);
 
     if (!ownsChrome) {
         ImGui::Text("Stage %d / 4", static_cast<int>(stage) + 1);
@@ -1118,57 +1119,122 @@ void StageSidebar::RenderMorph(Project& project, bool processing, float progress
 // ---------------------------------------------------------------------------
 
 void StageSidebar::RenderTouchUp(Project& project, Actions& out) {
+    namespace I = MvInspector;
     auto& sculpt = project.GetSculptState();
 
-    ImGui::TextUnformatted("Brush");
-    ImGui::Separator();
-    static const std::array<std::pair<BrushType, const char*>, 4> kBrushes = {{
-        {BrushType::Smooth,   "Smooth"},
-        {BrushType::Grab,     "Grab"},
-        {BrushType::PushPull, "Push/Pull"},
-        {BrushType::Inflate,  "Inflate"},
-    }};
-    for (size_t i = 0; i < kBrushes.size(); ++i) {
-        const bool selected = (sculpt.activeBrush == kBrushes[i].first);
-        if (i > 0) ImGui::SameLine();
-        if (ImGui::RadioButton(kBrushes[i].second, selected)) {
-            sculpt.activeBrush = kBrushes[i].first;
+    // ---- Header ---------------------------------------------------------
+    I::DrawStageHeader("STAGE 04 / 04",
+                       "Touch ", "up",
+                       "Sculpt the deformed mesh to refine the wrap. "
+                       "Pick a brush and scrub the surface; bracket keys "
+                       "adjust radius, Shift smooths.");
+
+    // ---- Scrollable body ------------------------------------------------
+    constexpr float FooterReserveH = 60.0f;
+    if (ImGui::BeginChild("##stage4body",
+                          ImVec2(0.0f, -FooterReserveH),
+                          false,
+                          ImGuiWindowFlags_NoBackground)) {
+
+        // ---- BRUSHES — 2×2 card grid ----------------------------------
+        I::DrawSectionLabel("BRUSHES");
+
+        struct BrushDef {
+            BrushType   kind;
+            const char* name;
+            const char* sub;
+            const char* glyph;
+        };
+        static const BrushDef kBrushes[4] = {
+            { BrushType::Smooth,   "Smooth",    "Average vertices",   MV_ICON_BRUSH         },
+            { BrushType::Grab,     "Grab",      "Drag with cursor",   MV_ICON_HAND          },
+            { BrushType::PushPull, "Push/Pull", "Along surface normal", MV_ICON_MOVE_VERTICAL },
+            { BrushType::Inflate,  "Inflate",   "Outward from each",  MV_ICON_EXPAND        },
+        };
+
+        if (ImGui::BeginTable("##brushGrid", 2,
+                              ImGuiTableFlags_SizingStretchSame |
+                              ImGuiTableFlags_NoPadOuterX)) {
+            for (size_t i = 0; i < 4; ++i) {
+                if (i % 2 == 0) ImGui::TableNextRow();
+                ImGui::TableNextColumn();
+                const bool active = (sculpt.activeBrush == kBrushes[i].kind);
+                if (DrawPresetCard(kBrushes[i].name, kBrushes[i].name,
+                                   kBrushes[i].sub, kBrushes[i].glyph,
+                                   active, /*disabled=*/false)) {
+                    sculpt.activeBrush = kBrushes[i].kind;
+                }
+            }
+            ImGui::EndTable();
         }
+
+        // ---- SETTINGS — brush radius / strength / falloff -------------
+        I::DrawSectionLabel("SETTINGS");
+
+        ImGui::PushItemWidth(ImGui::GetContentRegionAvail().x * 0.62f);
+        ImGui::SliderFloat("Radius",   &sculpt.brushRadius,   1.0f, 100.0f, "%.1f");
+        ImGui::SliderFloat("Strength", &sculpt.brushStrength, 0.0f, 1.0f,   "%.2f");
+
+        int falloffIdx = static_cast<int>(sculpt.falloff);
+        const char* falloffs[] = { "Linear", "Smooth", "Sharp" };
+        if (ImGui::Combo("Falloff", &falloffIdx, falloffs, 3)) {
+            sculpt.falloff = static_cast<FalloffType>(falloffIdx);
+        }
+        ImGui::PopItemWidth();
+
+        ImGui::Dummy(ImVec2(0.0f, 6.0f));
+
+        // Symmetry — checkbox + axis combo on one row.
+        ImGui::Checkbox("Symmetry", &sculpt.symmetryEnabled);
+        ImGui::SameLine();
+        ImGui::BeginDisabled(!sculpt.symmetryEnabled);
+        ImGui::PushItemWidth(80.0f);
+        int axisIdx = AxisToIndex(sculpt.symmetryAxis);
+        const char* axes[] = { "X", "Y", "Z" };
+        if (ImGui::Combo("##sym_axis", &axisIdx, axes, 3)) {
+            sculpt.symmetryAxis = IndexToAxis(axisIdx);
+        }
+        ImGui::PopItemWidth();
+        ImGui::EndDisabled();
+
+        ImGui::Checkbox("Show target overlay", &sculpt.showTargetOverlay);
+
+        // ---- Export Mesh button — full-width primary green ------------
+        // Echoes the green Finish button in the footer below; users
+        // expect a discoverable export entry point inside the panel
+        // body (the v1.0-era flow), the footer is for stage navigation
+        // semantics. Both fire the same Actions::exportMeshRequested.
+        ImGui::Dummy(ImVec2(0.0f, 16.0f));
+        ImGui::PushStyleColor(ImGuiCol_Button,        MvStyle::MvSuccess);
+        ImGui::PushStyleColor(ImGuiCol_ButtonHovered,
+                              ImVec4(MvStyle::MvSuccess.x, MvStyle::MvSuccess.y,
+                                     MvStyle::MvSuccess.z, 0.85f));
+        ImGui::PushStyleColor(ImGuiCol_ButtonActive,
+                              ImVec4(MvStyle::MvSuccess.x, MvStyle::MvSuccess.y,
+                                     MvStyle::MvSuccess.z, 0.70f));
+        ImGui::PushStyleColor(ImGuiCol_Text,
+                              ImVec4(0x05/255.f, 0x13/255.f, 0x22/255.f, 1.f));
+        if (ImGui::Button("Export Mesh\xE2\x80\xA6", ImVec2(-FLT_MIN, 36.0f))) {
+            out.exportMeshRequested = true;
+        }
+        ImGui::PopStyleColor(4);
+
+        ImGui::Dummy(ImVec2(0.0f, 12.0f));
     }
+    ImGui::EndChild();
 
-    ImGui::Spacing();
-    ImGui::SliderFloat("Radius",   &sculpt.brushRadius,   1.0f, 100.0f, "%.1f");
-    ImGui::SliderFloat("Strength", &sculpt.brushStrength, 0.0f, 1.0f,   "%.2f");
-
-    int falloffIdx = static_cast<int>(sculpt.falloff);
-    const char* falloffs[] = {"Linear", "Smooth", "Sharp"};
-    if (ImGui::Combo("Falloff", &falloffIdx, falloffs, 3)) {
-        sculpt.falloff = static_cast<FalloffType>(falloffIdx);
-    }
-
-    ImGui::Spacing();
-    ImGui::Checkbox("Symmetry", &sculpt.symmetryEnabled);
-    ImGui::SameLine();
-    int axisIdx = AxisToIndex(sculpt.symmetryAxis);
-    const char* axes[] = {"X", "Y", "Z"};
-    ImGui::BeginDisabled(!sculpt.symmetryEnabled);
-    ImGui::PushItemWidth(80);
-    if (ImGui::Combo("##sym_axis", &axisIdx, axes, 3)) {
-        sculpt.symmetryAxis = IndexToAxis(axisIdx);
-    }
-    ImGui::PopItemWidth();
-    ImGui::EndDisabled();
-
-    ImGui::Checkbox("Show target overlay", &sculpt.showTargetOverlay);
-
-    ImGui::Spacing();
-    ImGui::Separator();
-    // "Export Mesh..." is the only export entry point now — the v1.0 era
-    // "Finalize" button was just a wrapper that ran a mesh-validation popup
-    // and then called the same export flow, which created two redundant
-    // buttons in the sidebar. Mesh validation can move into the export
-    // pipeline itself if we want it back.
-    if (ImGui::Button("Export Mesh...", ImVec2(-FLT_MIN, 0))) out.exportMeshRequested = true;
+    // ---- Footer ---------------------------------------------------------
+    // Stage 4 is the terminal stage — Continue is relabelled "Finish" and
+    // styled green; clicking it triggers the same Export Mesh flow that
+    // the inline button above hits.
+    const auto footer = I::DrawInspectorFooter(
+        "STEP 04 OF 04",
+        /*previousEnabled=*/true,
+        /*continueEnabled=*/true,
+        /*continueLabel=*/"Finish",
+        /*finishStyle=*/true);
+    if (footer.previousClicked) out.previousStageRequested = true;
+    if (footer.continueClicked) out.exportMeshRequested = true;
 }
 
 } // namespace MetaVisage
