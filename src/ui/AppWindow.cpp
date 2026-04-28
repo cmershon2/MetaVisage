@@ -663,8 +663,17 @@ void AppWindow::Run() {
         // entire frame body — render only the login surface and skip the
         // app shell, viewports, sidebar, and modals.
         if (showLoginScreen_) {
+            // Render login first so the title bar (Begin'd second below)
+            // sits on top of it in ImGui's draw order — drag, minimize,
+            // maximize, close need to work even while the user hasn't
+            // signed in. The title bar's breadcrumb collapses to
+            // "MetaVisage · Sign in" since no project is loaded yet
+            // (RenderTitleBar branches on showLoginScreen_).
             const auto loginResult = LoginScreen::Render(loginState_,
                                                           ImGui::GetTime());
+
+            SyncOSWindowTitle();
+            RenderTitleBar();
             if (loginResult.signInRequested) {
                 loginState_ = LoginScreen::State::Waiting;
             }
@@ -1270,12 +1279,26 @@ void AppWindow::RenderTitleBar() {
         ImGui::PopStyleColor();
     };
 
-    const WorkflowStage stage = project_ ? project_->GetCurrentStage() : WorkflowStage::Alignment;
-
     drawSegment("MetaVisage", MvStyle::Font.BodyMd, MvStyle::MvFg1);
     cx += 10.0f;
     drawSegment("\xC2\xB7", MvStyle::Font.Body, MvStyle::MvLine3);   // U+00B7 middot
     cx += 10.0f;
+
+    // Story 3.8.12 follow-up — during login, the breadcrumb is just
+    // "MetaVisage · Sign in". No project is loaded yet and there's no
+    // active stage to surface, so we mirror the design's login.jsx
+    // title bar shorthand. The drag/close/min/max plumbing in
+    // RenderTitleBar (caption buttons + WM_NCHITTEST hook) keeps
+    // working unchanged.
+    if (showLoginScreen_) {
+        drawSegment("Sign in", MvStyle::Font.Body, MvStyle::MvFg2);
+        // Caption buttons drawn below; skip the rest of the breadcrumb.
+        ImGui::End();
+        return;
+    }
+
+    const WorkflowStage stage = project_ ? project_->GetCurrentStage() : WorkflowStage::Alignment;
+
     drawSegment(ProjectFileLabel(projectPath_), MvStyle::Font.Body, MvStyle::MvFg2);
     cx += 10.0f;
     drawSegment(">", MvStyle::Font.Body, MvStyle::MvLine3);
