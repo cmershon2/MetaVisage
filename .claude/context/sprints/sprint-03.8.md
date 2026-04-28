@@ -254,7 +254,72 @@ Restyle the existing `Modals::RenderWelcomeModal()` (`Modals.cpp:113`) to match 
 
 ## Sprint Outcome
 
-**Status**: Planned
-**Velocity (Actual)**: TBD
-**Carryover**: TBD
-**Notes**: TBD
+**Status**: Implementation Complete — pending `/review-pr` + manual UI smoke
+**Velocity (Actual)**: 32 / 32 points (100%)
+**Carryover**: None — all 12 stories shipped
+**Notes**:
+
+All twelve committed stories landed plus a substantial fold-in of UX
+review feedback that pushed the chrome past the original spec in
+several places. The single biggest change beyond the plan was a
+mid-sprint pivot from **decorated OS window + custom title bar** to
+**fully frameless** (Story 3.8.2 originally kept the OS chrome to
+avoid the GLFW frameless rabbit hole; user review flagged the double-
+title-bar redundancy and the WM_NCHITTEST hook turned out to be ~120
+lines of well-bounded Win32 code, not the multi-day rewrite the plan
+worried about).
+
+**Story landings (commit hashes for traceability):**
+- 3.8.1  `843c6ef` — design tokens + font atlas + logo asset
+- 3.8.2  `7c3e72c` — title bar + menu bar restyle + 28 px status bar
+- 3.8.3  `b717157` — full-width stage stepper
+- 3.8.4  `dec2783` — stage-aware tool rail (Stage 1 transforms + Stage 4 brushes — scope expanded mid-sprint per UX request)
+- 3.8.5  `272e8c5` + 4 follow-ups — viewport toolbar / pills / instruction HUD
+- 3.8.6  `3e76dc7` — shared MvInspector primitives (load-bearing for 3.8.7–10)
+- 3.8.7  `0ddfa28` — Stage 1 inspector panel
+- 3.8.8  `052f2e4` + iterations — Stage 2 inspector + (initially) viewport info bar; bar dropped per UX feedback (`8c0b3ae`) and replaced with a per-correspondence point list (`b28fc59`)
+- 3.8.9  `b6fa618` + `3e80734` — Stage 3 inspector + presets + result stats overlay; preset values restored to MorphData defaults after the design-file values broke the wrap
+- 3.8.10 `70d30c2` — Stage 4 inspector + brush card grid + mesh stats overlay
+- 3.8.11 `a5ca6ec` + `a636047` — welcome modal redesign with subtitle / padding / logo backdrop fixes
+- 3.8.12 `233b4c0` + `7a4d365` + `573dd45` — login screen with full-frame takeover and title bar passthrough
+
+**Mid-sprint scope changes (all driven by UX review):**
+- Stage 4 tool rail variant added — design originally only specified the rail for Stage 1; brush selection in Stage 4 was added at user request and reused the same 56 px rail chrome.
+- Lucide icon font adopted for Stories 3.8.5+ — original plan was per-icon ImDrawList primitives (Story 3.8.4 shipped 9 hand-drawn icons); switched to the Lucide TTF mid-sprint after the icon count made primitives untenable. Net `−280 lines` of geometry from ToolRail alone.
+- Stage 2 viewport info bar dropped — originally Story 3.8.8 included a 36 px bar above the dual viewports duplicating the SOURCE/TARGET filenames. User review flagged it as redundant clutter; bar removed and the inspector's correspondence-list section gained a per-row badge + S/T squares + delete X to compensate.
+- Live Link UI surface area removed entirely — both the menu-bar pill and the status-bar segment were dropped (Sprint 6.1 backend doesn't ship in v2.0; the green pill read as a real connection state).
+- Welcome modal "Use offline" → "Open project…" + login screen "Use offline" omitted — product policy: users must complete sign-in at least once per session.
+- Window-chrome promoted to **frameless OS window** (Option C from the original plan's risk matrix, deferred there to a separate sprint). GLFW_DECORATED=false + a 120-line Win32 WM_NCHITTEST + WM_NCCALCSIZE subclass (`fd287b0`) restored Aero Snap, edge-resize cursors, and the system menu without re-implementing drag from scratch.
+
+**Story 3.8.5 click-through bug worth flagging for retros**: the new
+viewport overlay windows had `ImGuiWindowFlags_NoBringToFrontOnFocus`
+copied from the host window, which pinned them behind the dockspace's
+central node. Clicks passed straight through. Fixed in `f788584`. The
+pre-3.8.5 `DrawShadingModeOverlay` worked because it didn't set the
+flag; the lesson is that "don't steal focus" and "must receive input"
+are different problems and the flag conflates them.
+
+**Asset bundle additions:**
+- `assets/fonts/lucide.ttf` (~800 KB, ISC) — Lucide icon font + `info.json`
+- `assets/fonts/Inter_18pt-{Regular,Medium}.ttf`,
+  `Inter_24pt-SemiBold.ttf`, `Saira-ExtraBoldItalic.ttf`,
+  `JetBrainsMono-{Regular,Medium}.ttf` (~1.3 MB total, SIL OFL)
+- `assets/metavisage-logo-mark.png` for the welcome / login mark
+
+**Net surface area:**
+- 32 commits since the sprint plan landed
+- 30 files touched (12 net-new modules)
+- ≈17 700 insertions / 441 deletions
+- New `MvStyle`, `MvIcons`, `MvInspectorPrimitives`, `StageStepper`,
+  `ToolRail`, `LoginScreen` modules plus a Viewport rewrite for the
+  3.8.5 chrome and the Stage 3/4 result/mesh-stats overlays.
+- `ApplyDarkTheme` and `DrawShadingModeOverlay` deleted; both
+  superseded by the new design system.
+
+**Pre-existing 3 × C5054 dockspace flag-combine warnings** in
+AppWindow.cpp's DockBuilder code carried through the entire sprint
+unchanged. Tracked back to Sprint 3.6's `04aa4ce`; out-of-scope here.
+
+**Smoke test green** end-to-end (smoke_load_serialize_export passes
+in 0.7–1.0 s on every commit). Phase D manual UI smoke + `/review-pr`
+gate the formal "Complete" status per the Sprint 3.7 retro DoD.
