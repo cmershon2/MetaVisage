@@ -279,8 +279,10 @@ void RenderWelcomeModal(WelcomeModalState& state) {
         constexpr float ModalW = 560.0f;
         const ImVec2 wpos = ImGui::GetWindowPos();
 
-        // ---- Header (64+ px, MvBg2 + bottom hairline) -------------------
-        constexpr float HeaderH = 92.0f;
+        // ---- Header — sized to fit subtitle + tagline -------------------
+        // Bumped from 92 → 112 px to make room for the subtitle below the
+        // Saira heading per user feedback.
+        constexpr float HeaderH = 112.0f;
         constexpr float SidePad = 28.0f;
         {
             const ImVec2 hMin = wpos;
@@ -292,19 +294,20 @@ void RenderWelcomeModal(WelcomeModalState& state) {
                         ImVec2(hMax.x, hMax.y - 1.0f),
                         ColU(MvStyle::MvLine2));
 
-            // 56×56 app-mark gradient square + logo overlay.
+            // 56×56 app-mark backdrop. The bundled logo PNG is itself a
+            // blue silhouette, so the previous MvBlue500→MvBlue700 gradient
+            // made the mark disappear into the box. Use a dark navy
+            // backdrop (MvBg3 → MvBg4 diagonal) with a thin MvBlue400 hair
+            // border — the bright-blue logo pops against the dark surface.
             constexpr float MarkSize = 56.0f;
             const ImVec2 mMin(hMin.x + SidePad, hMin.y + (HeaderH - MarkSize) * 0.5f);
             const ImVec2 mMax(mMin.x + MarkSize, mMin.y + MarkSize);
-            // Blue gradient: top-left MvBlue500, bottom-right MvBlue700.
             dl->AddRectFilledMultiColor(mMin, mMax,
-                ColU(MvStyle::MvBlue500), ColU(MvStyle::MvBlue500),
-                ColU(MvStyle::MvBlue700), ColU(MvStyle::MvBlue700));
+                ColU(MvStyle::MvBg3), ColU(MvStyle::MvBg3),
+                ColU(MvStyle::MvBg4), ColU(MvStyle::MvBg4));
             dl->AddRect(mMin, mMax,
                         ColU(MvStyle::MvBlue400),
                         8.0f, 0, 1.0f);
-            // Composite logo PNG on top when available; fall back to a
-            // simple Lucide user glyph so the square isn't empty.
             if (MvStyle::Asset.LogoTextureId) {
                 constexpr float LogoSize = 36.0f;
                 const ImVec2 logoMin((mMin.x + mMax.x - LogoSize) * 0.5f,
@@ -314,11 +317,11 @@ void RenderWelcomeModal(WelcomeModalState& state) {
                              logoMin, logoMax);
             }
 
-            // Right side text block.
+            // Right side text block — eyebrow, heading, subtitle.
             const float textX = mMax.x + 18.0f;
             {
                 MvStyle::ScopedFont f(MvStyle::Font.MonoSm);
-                dl->AddText(ImVec2(textX, hMin.y + 18.0f),
+                dl->AddText(ImVec2(textX, hMin.y + 24.0f),
                             ColU(MvStyle::MvBlue400),
                             "V 2.0.0 \xC2\xB7 EARLY ACCESS");
             }
@@ -328,10 +331,17 @@ void RenderWelcomeModal(WelcomeModalState& state) {
                 // span so the colour switch lands mid-sentence.
                 const char* prefix = "Welcome to ";
                 const ImVec2 ts1 = ImGui::CalcTextSize(prefix);
-                dl->AddText(ImVec2(textX, hMin.y + 32.0f),
+                dl->AddText(ImVec2(textX, hMin.y + 40.0f),
                             ColU(MvStyle::MvFg1), prefix);
-                dl->AddText(ImVec2(textX + ts1.x, hMin.y + 32.0f),
+                dl->AddText(ImVec2(textX + ts1.x, hMin.y + 40.0f),
                             ColU(MvStyle::MvBlue400), "MetaVisage");
+            }
+            {
+                // Subtitle — wraps below the Saira heading, BodySm MvFg2.
+                MvStyle::ScopedFont f(MvStyle::Font.BodySm);
+                dl->AddText(ImVec2(textX, hMin.y + 76.0f),
+                            ColU(MvStyle::MvFg2),
+                            "MetaHuman mesh morphing tool");
             }
 
             // Top-right close button.
@@ -365,9 +375,13 @@ void RenderWelcomeModal(WelcomeModalState& state) {
         ImGui::Dummy(ImVec2(0.0f, 18.0f));
         ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding, ImVec2(SidePad, 0.0f));
         ImGui::Indent(SidePad);
+        // Explicit outer_size with negative right offset = "available width
+        // minus SidePad" — keeps the right edge of the Open Project card
+        // from hitting the modal border (Indent only pads the left side).
         if (ImGui::BeginTable("##welcomeActions", 2,
                               ImGuiTableFlags_SizingStretchSame |
-                              ImGuiTableFlags_NoPadOuterX)) {
+                              ImGuiTableFlags_NoPadOuterX,
+                              ImVec2(-SidePad, 0.0f))) {
             ImGui::TableNextRow();
 
             ImGui::TableNextColumn();
