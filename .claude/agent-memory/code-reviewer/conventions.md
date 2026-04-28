@@ -74,3 +74,34 @@ Defined in two separate anonymous namespaces: `src/utils/FileDialogs.cpp` and `s
 ## ProjectSerializer Uses ordered_json
 
 `nlohmann::ordered_json` (not `nlohmann::json`) is intentional in `ProjectSerializer` so `.mmproj` key order stays stable and v1.0 round-trips remain byte-clean. Do not suggest switching to unordered json.
+
+## Sprint 3.8 Design System Rules (PR #21)
+
+`MvStyle` owns the design palette. New code may NOT use raw `IM_COL32` or `ImVec4(r,g,b,a)` literals in stage/modal/overlay code — look up an `MvStyle::*` token. **Exceptions that are explicitly sanctioned:**
+- `IM_COL32(0x05, 0x13, 0x22, 0xFF)` / `ImVec4(0x05/255.f, 0x13/255.f, 0x22/255.f, 1.f)` — "dark text on bright blue" used for active-button labels. This colour is `MvBg0` but the context is "text atop filled MvBlue500 button" and it appears in multiple draw-list paths that predate/run before the style is applied. PR #21 has 8 occurrences. Flag if it proliferates further — the right fix is `MvStyle::MvBg0` or a named `MvTextOnBlue` token.
+- `IM_COL32(0xE8, 0x11, 0x23, 0xFF)` — Windows close-button red, intentional OS-convention colour (only in `RenderTitleBar`).
+- `IM_COL32(0, 0, 0, 80)` — drop shadow black. Acceptable as it has no design-token equivalent.
+
+## Frameless Window (Sprint 3.8, PR #21)
+
+`GLFW_DECORATED = GLFW_FALSE` + Win32 `WM_NCHITTEST`/`WM_NCCALCSIZE` subclass via `SetWindowLongPtr`. The global `g_originalWndProc` is file-scoped in `AppWindow.cpp` — safe for the single-window architecture but would need refactoring if a second window is ever created. `NOMINMAX` / `WIN32_LEAN_AND_MEAN` must remain at the very top of `AppWindow.cpp` (before any include that transitively pulls `<windows.h>`).
+
+## ownsChrome Branch in StageSidebar (Sprint 3.8, PR #21)
+
+The `ownsChrome` bool in `StageSidebar::Render` is always true (all four `WorkflowStage` values are listed). The legacy generic header/footer code in the `!ownsChrome` branches is dead code. It exists as a guardrail against future stages being added before the design is ready. Do not flag as a bug; flag as dead code if it still exists in Sprint 4.
+
+## FormatRelativeTime uses clock_cast (Sprint 3.8, PR #21)
+
+`Modals.cpp::FormatRelativeTime` uses `std::chrono::clock_cast<system_clock>` to convert `file_time_type` to `system_clock::time_point`. This is C++20 and correct for the codebase's stated C++20 standard. MSVC 2022 supports it. Do not flag.
+
+## Static-Local sSelectedSlot (Sprint 3.8, PR #21)
+
+`static int sSelectedSlot = 0` in `StageSidebar::RenderAlignment` is an ImGui pattern — the combo selection persists across frames within the session without needing a member variable. This matches the pre-existing `static const char* kSlotNames[]` in the same function. Acceptable for a per-session UI value, but worth noting if state needs to be serialized/reset between projects.
+
+## DeletePointAt_ lambda (Sprint 3.8, PR #21)
+
+`deletePointAt_` (`std::function<void(int)>` member) is initialized in `Initialize()`. Invoked both by the Delete-key path lambda and by the sidebar's per-row X click dispatch. Both invocations are on the main UI thread — no concurrency risk.
+
+## ImGui CalcTextSize Inside ScopedFont (Sprint 3.8, PR #21)
+
+Several call sites use `ImGui::CalcTextSize(str)` without a surrounding `ScopedFont` — in those paths the measurement is taken against the active (default) font, not the font used to render. This can cause minor horizontal alignment drift in the status bar and breadcrumb. Not a P0 but worth watching as more chrome lands.

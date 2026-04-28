@@ -21,7 +21,9 @@
       "Bash(powershell.exe -Command \"./build-msvc.ps1 -Clean -Deploy -QtPath ''C:/Qt/6.10.1/msvc2022_64'' -VcpkgToolchain ''C:/Users/Casey Mershon/vcpkg/scripts/buildsystems/vcpkg.cmake''\")",
       "Bash(grep -v \"//\")",
       "Bash(find /c/Users/Casey Mershon/Desktop/Web Dev/MetaVisage/src -type f \\\\\\(-name *.cpp -o -name *.h \\\\\\))",
-      "Bash(find '/c/Users/Casey Mershon/Desktop/Web Dev/MetaVisage' -maxdepth 2 -type d -not -path */build/* -not -path */.git/*)"
+      "Bash(find '/c/Users/Casey Mershon/Desktop/Web Dev/MetaVisage' -maxdepth 2 -type d -not -path */build/* -not -path */.git/*)",
+      "Bash(mkdir -p assets/fonts)",
+      "Bash(cp \".claude/context/design/version_2/assets/metavisage-logo-mark.png\" \"assets/metavisage-logo-mark.png\")"
     ]
   }
 }
