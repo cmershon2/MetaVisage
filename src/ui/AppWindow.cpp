@@ -1,3 +1,13 @@
+// NOMINMAX must land before any header that could transitively include
+// <windows.h> — otherwise its `min` / `max` macros shadow std::min /
+// std::max wherever AppWindow.cpp uses them (e.g. the sculpt-stroke undo
+// builder). Hoisted here even before the project headers because GLFW's
+// imgui_impl_* and the Win32 native helper both pull windows.h in.
+#ifdef _WIN32
+#define NOMINMAX
+#define WIN32_LEAN_AND_MEAN
+#endif
+
 #include "ui/AppWindow.h"
 #include "ui/FileDialogs.h"
 #include "ui/LoginScreen.h"
@@ -40,6 +50,20 @@
 #include <format>
 #include <string>
 
+// Sprint 3.8 follow-up — frameless OS window + custom title bar. We expose
+// the Win32 HWND so our WM_NCHITTEST handler can tell Windows where the
+// drag-able title bar / resize edges are, which buys us back native Aero
+// Snap, edge-resize cursors, and the right-click system menu without the
+// double title bar redundancy of the previous decorated-window approach.
+#ifdef _WIN32
+#define GLFW_EXPOSE_NATIVE_WIN32
+#include <GLFW/glfw3native.h>
+// NOMINMAX / WIN32_LEAN_AND_MEAN are defined at the very top of this file
+// (before any header that could transitively pull windows.h in).
+#include <windows.h>
+#include <windowsx.h>
+#endif
+
 namespace MetaVisage {
 
 namespace {
@@ -48,6 +72,118 @@ void GlfwErrorCallback(int error, const char* description) {
     std::fprintf(stderr, "GLFW error %d: %s\n", error, description);
     MV_LOG_ERROR(std::format("GLFW error {}: {}", error, description));
 }
+
+#ifdef _WIN32
+// =============================================================================
+// Frameless-window hit-test hook
+//
+// GLFW's GLFW_DECORATED=false strips the OS chrome but also strips the
+// native edge-resize / title-bar-drag / Aero Snap behaviour. We get those
+// back by subclassing the GLFW window's WndProc and answering the OS's
+// WM_NCHITTEST query: "given this cursor position, which non-client zone
+// is it in?"
+//
+// Layout we tell Windows about:
+//
+//   ┌─────────────────────────────────────────────────────────┐
+//   │ ▲ resize-top                            ▲ caption btns ▲│
+//   │ ◀ resize-left  HTCAPTION  (drag-zone)   ▶  HTCLIENT     │
+//   ├─────────────────────────────────────────────────────────┤  ← y = TitleBarH
+//   │                                                         │
+//   │                  HTCLIENT  (ImGui)                      │
+//   │                                                         │
+//   └─────────────────────────────────────────────────────────┘
+//
+// HTCAPTION makes the OS handle drag, double-click-maximize, drag-to-snap.
+// HTCLIENT lets ImGui's invisible buttons receive the click for our
+// custom min/max/close caption buttons. The 4 px resize border on each
+// edge gives the user the standard resize cursor + drag.
+// =============================================================================
+
+// Constants must match RenderTitleBar's layout in this same file.
+constexpr int kTitleBarH        = 36;
+constexpr int kCaptionBtnW      = 46;
+constexpr int kCaptionClusterW  = 3 * kCaptionBtnW;   // min + max + close
+constexpr int kResizeBorder     = 4;
+
+WNDPROC g_originalWndProc = nullptr;
+
+LRESULT CALLBACK MvFramelessWndProc(HWND hwnd, UINT msg,
+                                    WPARAM wp, LPARAM lp) {
+    switch (msg) {
+        // Tell Windows the entire window rect is client area — no
+        // automatic non-client frame inset that would otherwise put a
+        // few-pixel border between the actual window edge and our
+        // GL/ImGui surface.
+        case WM_NCCALCSIZE:
+            if (wp == TRUE) return 0;
+            break;
+
+        // Pre-empt the default DWM rendering of a fake border on
+        // top of borderless windows by reporting size changes early.
+        case WM_NCHITTEST: {
+            POINT pt = { GET_X_LPARAM(lp), GET_Y_LPARAM(lp) };
+            ::ScreenToClient(hwnd, &pt);
+
+            RECT rc;
+            ::GetClientRect(hwnd, &rc);
+            const int cw = rc.right - rc.left;
+            const int ch = rc.bottom - rc.top;
+
+            const bool maximized = ::IsZoomed(hwnd);
+            // Resize edges are suppressed when maximized — the window is
+            // already pinned to the work area, and a stray edge-drag
+            // would un-maximize at the cursor.
+            if (!maximized) {
+                const bool top    = pt.y < kResizeBorder;
+                const bool bottom = pt.y > ch - kResizeBorder;
+                const bool left   = pt.x < kResizeBorder;
+                const bool right  = pt.x > cw - kResizeBorder;
+                if (top    && left)  return HTTOPLEFT;
+                if (top    && right) return HTTOPRIGHT;
+                if (bottom && left)  return HTBOTTOMLEFT;
+                if (bottom && right) return HTBOTTOMRIGHT;
+                if (top)    return HTTOP;
+                if (bottom) return HTBOTTOM;
+                if (left)   return HTLEFT;
+                if (right)  return HTRIGHT;
+            }
+
+            // Custom title bar zone.
+            if (pt.y < kTitleBarH) {
+                // The right-most cluster is our min/max/close caption
+                // buttons; pass clicks through to ImGui so InvisibleButton
+                // can fire its glfwIconify / Maximize / SetWindowShouldClose
+                // callbacks.
+                if (pt.x > cw - kCaptionClusterW) {
+                    return HTCLIENT;
+                }
+                return HTCAPTION;
+            }
+
+            return HTCLIENT;
+        }
+    }
+    return ::CallWindowProc(g_originalWndProc, hwnd, msg, wp, lp);
+}
+
+void InstallFramelessHook(GLFWwindow* glfwWindow) {
+    HWND hwnd = ::glfwGetWin32Window(glfwWindow);
+    if (!hwnd) {
+        MV_LOG_WARNING("InstallFramelessHook: glfwGetWin32Window returned null");
+        return;
+    }
+    g_originalWndProc = reinterpret_cast<WNDPROC>(
+        ::SetWindowLongPtr(hwnd, GWLP_WNDPROC,
+                           reinterpret_cast<LONG_PTR>(MvFramelessWndProc)));
+    // Force the OS to recompute the non-client area now that we own
+    // WM_NCCALCSIZE — without this nudge the pre-existing frame inset
+    // sticks until the user resizes.
+    ::SetWindowPos(hwnd, nullptr, 0, 0, 0, 0,
+                   SWP_FRAMECHANGED | SWP_NOMOVE | SWP_NOSIZE |
+                   SWP_NOZORDER | SWP_NOACTIVATE);
+}
+#endif // _WIN32
 
 // Case-insensitive suffix check used in path-extension comparisons.
 bool EndsWithICase(const std::string& s, const std::string& suffix) {
@@ -121,6 +257,12 @@ bool AppWindow::Initialize(int width, int height, const char* title) {
     glfwWindowHint(GLFW_DEPTH_BITS, 24);
     glfwWindowHint(GLFW_STENCIL_BITS, 8);
     glfwWindowHint(GLFW_SAMPLES, 4); // 4x MSAA
+    // Sprint 3.8 follow-up — frameless mode. Sprint 3.8.2's plan kept the
+    // OS native title bar and added our custom one inside the client area,
+    // which produced two title bars stacked. With DECORATED=false the OS
+    // chrome disappears entirely; the InstallFramelessHook below restores
+    // native drag / resize / Aero Snap by answering WM_NCHITTEST.
+    glfwWindowHint(GLFW_DECORATED, GLFW_FALSE);
 
     window_ = glfwCreateWindow(width, height, title, nullptr, nullptr);
     if (!window_) {
@@ -128,6 +270,10 @@ bool AppWindow::Initialize(int width, int height, const char* title) {
         glfwTerminate();
         return false;
     }
+
+#ifdef _WIN32
+    InstallFramelessHook(window_);
+#endif
 
     glfwMakeContextCurrent(window_);
     glfwSwapInterval(1); // vsync
