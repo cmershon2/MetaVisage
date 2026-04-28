@@ -69,10 +69,19 @@ StageSidebar::Actions StageSidebar::Render(Project* project,
     // NoMove + NoCollapse + NoTitleBar work together with the dock node flags
     // set by AppWindow (NoUndocking / NoDockingOverMe / HiddenTabBar) to keep
     // the sidebar statically pinned to the right of the app shell.
+    //
+    // NoScrollbar / NoScrollWithMouse: the per-stage panels each open
+    // their own BeginChild scroll region for the body (between the
+    // header and the footer). Letting the outer "Stage" window scroll
+    // too produced a redundant scrollbar — and one that scrolled the
+    // header / footer out of the visible area, which the design pins
+    // top + bottom respectively.
     const ImGuiWindowFlags flags =
         ImGuiWindowFlags_NoMove |
         ImGuiWindowFlags_NoCollapse |
-        ImGuiWindowFlags_NoTitleBar;
+        ImGuiWindowFlags_NoTitleBar |
+        ImGuiWindowFlags_NoScrollbar |
+        ImGuiWindowFlags_NoScrollWithMouse;
     if (!ImGui::Begin("Stage", nullptr, flags)) { ImGui::End(); return out; }
 
     if (!project) {

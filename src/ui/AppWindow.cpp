@@ -780,6 +780,15 @@ void AppWindow::RenderAppShell() {
         ImGuiWindowFlags_NoMove |
         ImGuiWindowFlags_NoBringToFrontOnFocus |
         ImGuiWindowFlags_NoNavFocus |
+        // NoScrollbar / NoScrollWithMouse — the host window must never
+        // scroll. ImGui's ItemSpacing.y between the menu bar / stepper
+        // child / dockspace / status bar can push total content a few
+        // pixels over the host's size, which triggered a vertical
+        // scrollbar on the entire app and let users drag chrome out of
+        // alignment with the design hairlines. Inner BeginChild regions
+        // (stage body, point list, etc.) still scroll on their own.
+        ImGuiWindowFlags_NoScrollbar |
+        ImGuiWindowFlags_NoScrollWithMouse |
         // NoBackground is essential — combined with PassthruCentralNode on the
         // dockspace below, the central (viewport) area becomes transparent so
         // the 3D GL pass shows through. Without this the host's grey fill hid
