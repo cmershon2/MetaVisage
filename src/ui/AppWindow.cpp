@@ -1138,33 +1138,25 @@ void AppWindow::RenderMainMenuBar() {
     }
 
     // ---- Right-side cluster ---------------------------------------------
-    // Save indicator (mono, MvFg3) + Live Link pill (mono MvSuccess).
-    // The previous stage-indicator that lived here moved into the title bar.
-    ImDrawList* dl = ImGui::GetWindowDrawList();
-
+    // Save indicator (mono, MvFg3). The Story 3.8.2 "UE 5.4 · LIVE LINK"
+    // pill that previously sat to the right of the save label has been
+    // dropped — Live Link is far-future scope and the green pill confused
+    // users into thinking the connection was real. The previous stage-
+    // indicator from Sprint 3.6 already moved into the title bar.
     const std::string savedLabel = SavedAgoLabel(lastSavedAt_);
-    const char* livePillText = "UE 5.4 \xC2\xB7 LIVE LINK";
 
     float savedW = 0.0f;
     {
         MvStyle::ScopedFont f(MvStyle::Font.Mono);
         savedW = ImGui::CalcTextSize(savedLabel.c_str()).x;
     }
-    float pillTextW = 0.0f;
-    {
-        MvStyle::ScopedFont f(MvStyle::Font.Mono);
-        pillTextW = ImGui::CalcTextSize(livePillText).x;
-    }
-    const float pillW = pillTextW + 18.0f /* dot + paddings */;
-    const float gap   = 14.0f;
-    const float wantW = savedW + gap + pillW + 10.0f;
+    const float wantW = savedW + 10.0f;
     const float available = ImGui::GetContentRegionAvail().x;
     if (available < wantW) {
         ImGui::EndMenuBar();
         return;
     }
 
-    // Saved indicator
     ImGui::SameLine(ImGui::GetCursorPosX() + (available - wantW));
     {
         MvStyle::ScopedFont f(MvStyle::Font.Mono);
@@ -1172,32 +1164,6 @@ void AppWindow::RenderMainMenuBar() {
         ImGui::TextUnformatted(savedLabel.c_str());
         ImGui::PopStyleColor();
     }
-
-    // Live Link pill — drawn manually so the rounded background + green
-    // border match the design.
-    ImGui::SameLine(0, gap);
-    const ImVec2 pillMin = ImGui::GetCursorScreenPos();
-    const float pillH = 20.0f;
-    const ImVec2 pillMax(pillMin.x + pillW, pillMin.y + pillH);
-    dl->AddRectFilled(pillMin, pillMax,
-                      Col(ImVec4(MvStyle::MvSuccess.x, MvStyle::MvSuccess.y,
-                                 MvStyle::MvSuccess.z, 0.06f)),
-                      4.0f);
-    dl->AddRect(pillMin, pillMax,
-                Col(ImVec4(MvStyle::MvSuccess.x, MvStyle::MvSuccess.y,
-                           MvStyle::MvSuccess.z, 0.40f)),
-                4.0f, 0, 1.0f);
-    // Green dot
-    dl->AddCircleFilled(ImVec2(pillMin.x + 9.0f, pillMin.y + pillH * 0.5f),
-                        3.0f, Col(MvStyle::MvSuccess));
-    // Pill text
-    {
-        MvStyle::ScopedFont f(MvStyle::Font.Mono);
-        const ImVec2 textPos(pillMin.x + 18.0f,
-                             pillMin.y + (pillH - ImGui::GetFontSize()) * 0.5f);
-        dl->AddText(textPos, Col(MvStyle::MvSuccess), livePillText);
-    }
-    ImGui::Dummy(ImVec2(pillW, pillH));
 
     ImGui::EndMenuBar();
 }
@@ -1279,22 +1245,18 @@ void AppWindow::RenderStatusBar() {
         drawSection(tgt, MvStyle::MvFg1);
     }
 
-    // ---- Right-aligned cluster: GPU + Live link --------------------------
+    // ---- Right-aligned cluster: GPU readout ------------------------------
     // No FPS counter — Sprint 1.4 decision retained per Sprint 3.8 plan.
-    const std::string rightGpuLabel  = std::format("GPU {}", gpuRenderer_);
-    const std::string rightLiveLabel = "Live link UE 5.4";
-    const float gpuW   = ImGui::CalcTextSize(rightGpuLabel.c_str()).x;
-    const float liveW  = ImGui::CalcTextSize(rightLiveLabel.c_str()).x;
-    const float dotW   = ImGui::CalcTextSize("\xE2\x97\x8F").x;
-    const float midW   = ImGui::CalcTextSize("\xC2\xB7").x;
-    const float rightCluster = gpuW + 8.0f + midW + 8.0f + liveW + 6.0f + dotW + SidePad;
+    // The Story 3.8.2 "Live link UE 5.4 ●" segment that previously followed
+    // the GPU label has been dropped — Live Link is far-future scope and
+    // the green dot read as a real connection status.
+    const std::string rightGpuLabel = std::format("GPU {}", gpuRenderer_);
+    const float gpuW = ImGui::CalcTextSize(rightGpuLabel.c_str()).x;
+    const float rightCluster = gpuW + SidePad;
     const float rightStartX  = startCursor.x + fullW - rightCluster;
     if (rightStartX > cx + 16.0f) {
         cx = rightStartX;
         drawSection(rightGpuLabel, MvStyle::MvFg2);
-        drawSep();
-        drawSection(rightLiveLabel + " ", MvStyle::MvFg2);
-        drawSection("\xE2\x97\x8F", MvStyle::MvSuccess);
     }
 
     // Reserve the bar's height so the host's content cursor advances past
