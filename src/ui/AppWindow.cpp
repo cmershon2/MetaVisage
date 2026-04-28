@@ -963,6 +963,17 @@ void AppWindow::RenderAppShell() {
     ImGui::Begin("##AppHostWindow", nullptr, hostFlags);
     ImGui::PopStyleVar(3);
 
+    // Push ItemSpacing.y = 0 for the host's direct children (menu bar,
+    // stepper child, dockspace, status bar). The default ItemSpacing.y
+    // of 6 px inserted hairline gaps between those layout blocks where
+    // the host's NoBackground transparency leaked the framebuffer
+    // colour through, reading as "spacer bars" between the chrome
+    // sections. Popping before End() keeps the per-stage sidebar's own
+    // Begin scope on the un-pushed default spacing.
+    const ImVec2 prevSpacing = ImGui::GetStyle().ItemSpacing;
+    ImGui::PushStyleVar(ImGuiStyleVar_ItemSpacing,
+                        ImVec2(prevSpacing.x, 0.0f));
+
     RenderMainMenuBar();
 
     // Story 3.8.3 — full-width stage stepper between the menu bar and the
@@ -1071,6 +1082,7 @@ void AppWindow::RenderAppShell() {
     ImGui::SetCursorPosY(ImGui::GetCursorPosY());
     RenderStatusBar();
 
+    ImGui::PopStyleVar(); // ItemSpacing pushed at top of host body
     ImGui::End();
 }
 
@@ -1435,18 +1447,18 @@ void AppWindow::RenderStatusBar() {
     const ImVec2 startCursor = ImGui::GetCursorPos();
     const ImVec2 origin = ImGui::GetCursorScreenPos();
 
-    // Background fill: MvBg0. Drawn via the host window's drawlist rather
+    // Background fill: MvBg1 — same as the sidebar's WindowBg so the
+    // footer reads as one continuous surface with the sidebar's body
+    // when the eye scans down the right side. Earlier MvBg0 produced
+    // a visible colour transition between the sidebar (MvBg1) and the
+    // status bar (MvBg0). Drawn via the host window's drawlist rather
     // than a child window so the status bar inherits the host's clipping
-    // and doesn't introduce a separate scroll region. The previous
-    // 1 px MvLine2 top hairline was dropped per UX review — the MvBg0
-    // status fill against the host's MvBg1 dockspace already provides
-    // enough visual separation, and the explicit hairline read as a
-    // "gray spacer".
+    // and doesn't introduce a separate scroll region.
     ImDrawList* dl = ImGui::GetWindowDrawList();
     const float fullW = ImGui::GetContentRegionAvail().x;
     dl->AddRectFilled(origin,
                       ImVec2(origin.x + fullW, origin.y + StatusH),
-                      Col(MvStyle::MvBg0));
+                      Col(MvStyle::MvBg1));
 
     const WorkflowStage stage = project_ ? project_->GetCurrentStage() : WorkflowStage::Alignment;
 
