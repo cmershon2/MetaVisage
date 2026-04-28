@@ -8,6 +8,7 @@
 
 #include <atomic>
 #include <chrono>
+#include <functional>
 #include <memory>
 #include <mutex>
 #include <optional>
@@ -110,6 +111,11 @@ private:
 
     PendingAction pendingAction_ = PendingAction::None;
     std::string statusMessage_;
+
+    // Stage 2 — index-aware point delete, shared by the Delete-key path
+    // (reads the active viewport's selected index) and the sidebar's per-
+    // row X click (passes the row index directly).
+    std::function<void(int)> deletePointAt_;
 
     // Story 3.8.2 — chrome state.
     // lastSavedAt_ drives the menu bar's "Saved Ns ago" indicator. Set every

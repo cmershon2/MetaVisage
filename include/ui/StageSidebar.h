@@ -57,6 +57,11 @@ public:
         // that into both viewports via ViewportHost::SetSelectedPointIndex.
         // Use -1 to clear selection.
         std::optional<int> selectPointIndex;
+
+        // Stage 2 — per-row delete request. When set, the user clicked the
+        // X on that row; AppWindow erases the correspondence (and its
+        // symmetric pair if present) and pushes a PointPlacementUndoAction.
+        std::optional<int> deletePointIndex;
     };
 
     // Render docked panel titled "Stage". Returns the actions requested this

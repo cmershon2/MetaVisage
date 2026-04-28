@@ -433,12 +433,24 @@ void StageSidebar::RenderPointReference(Project& project, Actions& out) {
         }
 
         // ---- Points list ------------------------------------------------
-        // Scrollable list of every correspondence with two presence squares
-        // on the right (S = source/morph mesh, T = target mesh). Filled
-        // square = a vertex is set on that side, hollow square = orphan.
-        // Click a row to select the point in both viewports — the row
-        // matching `selectedPointIndexExternal_` (mirrored from the primary
-        // viewport at Render entry) renders highlighted.
+        // Scrollable list of every correspondence. Each row matches the
+        // design's stage2.jsx layout:
+        //
+        //   [bd] Point N         [S][T] [×]
+        //        STATUS LABEL
+        //
+        // - bd: 32 px badge, transparent fill + 1 px border in the point's
+        //       palette colour, mono "0N" centred inside.
+        // - "Point N":   Body text, MvFg1.
+        // - STATUS:      MonoSm; "PAIRED" green when both sides set,
+        //                "NEEDS A" / "NEEDS B" amber when one side missing.
+        // - [S][T]:      two 12 px squares — filled in palette colour when
+        //                that side has a vertex, hollow MvLine2 otherwise.
+        //                Source first, target second to match the design.
+        // - [×]:         deletes the row's correspondence (forwards to
+        //                AppWindow's existing delete path with this index).
+        //
+        // Click anywhere on the row body to select; click the X to delete.
         I::DrawSectionLabel("POINTS");
         if (data.correspondences.empty()) {
             MvStyle::ScopedFont fE(MvStyle::Font.BodySm);
@@ -447,28 +459,41 @@ void StageSidebar::RenderPointReference(Project& project, Actions& out) {
                                    "or target mesh to begin.");
             ImGui::PopStyleColor();
         } else {
-            // Cap the list height so the rest of the sidebar (settings +
-            // Clear All button) stays reachable without scrolling the whole
-            // panel — 8 rows × 26 px + a little chrome covers the typical
-            // usage; scroll for more.
-            constexpr float RowH      = 26.0f;
-            constexpr float MaxListH  = 8.0f * RowH + 8.0f;
+            // Per-point palette — mirrors stage2.jsx pointColor(idx). Cycles
+            // by pointID so colours stay stable across deletions.
+            static const ImVec4 kPalette[] = {
+                ImVec4(0x3D/255.f, 0xA5/255.f, 0xF5/255.f, 1.f), // blue 500
+                ImVec4(0x7B/255.f, 0xC2/255.f, 0xFA/255.f, 1.f), // blue 300
+                ImVec4(0x3F/255.f, 0xD6/255.f, 0x9E/255.f, 1.f), // success
+                ImVec4(0xF2/255.f, 0xB5/255.f, 0x47/255.f, 1.f), // warning
+                ImVec4(0xF2/255.f, 0x6A/255.f, 0x6A/255.f, 1.f), // danger
+                ImVec4(0xC5/255.f, 0x8C/255.f, 0xF7/255.f, 1.f), // violet
+                ImVec4(0x5D/255.f, 0xCA/255.f, 0xE0/255.f, 1.f), // cyan
+            };
+            constexpr int kPaletteSize = sizeof(kPalette) / sizeof(kPalette[0]);
+
+            // 60 px-tall rows: 32 badge + 14 + 14 lines. Cap visible height
+            // at ~6 rows so the SETTINGS block below stays reachable.
+            constexpr float RowH     = 60.0f;
+            constexpr float MaxListH = 6.0f * RowH + 8.0f;
             const float listH = std::min(
                 MaxListH,
                 static_cast<float>(data.correspondences.size()) * RowH + 4.0f);
 
             ImGui::PushStyleColor(ImGuiCol_ChildBg, MvStyle::MvBg1);
             ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding, ImVec2(0.0f, 0.0f));
+            // No NoScrollWithMouse — the user must be able to wheel the list
+            // when more than ~6 points exist. Border stays for the framed
+            // look.
             if (ImGui::BeginChild("##ptList",
                                   ImVec2(-FLT_MIN, listH),
                                   true,
-                                  ImGuiWindowFlags_NoScrollWithMouse)) {
+                                  ImGuiWindowFlags_None)) {
 
                 ImDrawList* dl = ImGui::GetWindowDrawList();
                 const float rowW = ImGui::GetContentRegionAvail().x;
-                const ImU32 colSrcAccent = ImGui::ColorConvertFloat4ToU32(MvStyle::MvWarning);
-                const ImU32 colTgtAccent = ImGui::ColorConvertFloat4ToU32(MvStyle::MvBlue400);
-                const ImU32 colMissing   = ImGui::ColorConvertFloat4ToU32(MvStyle::MvFg4);
+                const ImU32 colMissingBorder =
+                    ImGui::ColorConvertFloat4ToU32(MvStyle::MvLine2);
 
                 for (size_t i = 0; i < data.correspondences.size(); ++i) {
                     const auto& corr = data.correspondences[i];
@@ -477,13 +502,32 @@ void StageSidebar::RenderPointReference(Project& project, Actions& out) {
                     const bool isSelected =
                         (static_cast<int>(i) == selectedPointIndexExternal_);
 
+                    const ImVec4 accent =
+                        kPalette[((corr.pointID >= 0 ? corr.pointID : 0) % kPaletteSize)];
+                    const ImU32 accentU = ImGui::ColorConvertFloat4ToU32(accent);
+
                     ImGui::PushID(static_cast<int>(i));
+
                     const ImVec2 rowMin = ImGui::GetCursorScreenPos();
-                    if (ImGui::InvisibleButton("##row", ImVec2(rowW, RowH))) {
+                    constexpr float DelBtnW = 28.0f;
+                    const float bodyW = rowW - DelBtnW;
+
+                    // Row body button — owns row-select hit-testing.
+                    if (ImGui::InvisibleButton("##sel", ImVec2(bodyW, RowH))) {
                         out.selectPointIndex = static_cast<int>(i);
                     }
-                    const bool hovered = ImGui::IsItemHovered();
-                    ImGui::PopID();
+                    const bool rowHovered = ImGui::IsItemHovered();
+                    const ImVec2 bodyMax(rowMin.x + bodyW, rowMin.y + RowH);
+
+                    // X delete button — second item, adjacent on the same row.
+                    ImGui::SameLine(0.0f, 0.0f);
+                    const ImVec2 delMin = ImGui::GetCursorScreenPos();
+                    if (ImGui::InvisibleButton("##del", ImVec2(DelBtnW, RowH))) {
+                        out.deletePointIndex = static_cast<int>(i);
+                    }
+                    const bool delHovered = ImGui::IsItemHovered();
+                    const ImVec2 delMax(delMin.x + DelBtnW, delMin.y + RowH);
+
                     const ImVec2 rowMax(rowMin.x + rowW, rowMin.y + RowH);
 
                     // Row background — selected wins over hover.
@@ -491,60 +535,128 @@ void StageSidebar::RenderPointReference(Project& project, Actions& out) {
                         ImVec4 bg = MvStyle::MvBlue500; bg.w = 0.18f;
                         dl->AddRectFilled(rowMin, rowMax,
                                           ImGui::ColorConvertFloat4ToU32(bg));
-                    } else if (hovered) {
+                    } else if (rowHovered || delHovered) {
                         ImVec4 bg = MvStyle::MvBlue500; bg.w = 0.06f;
                         dl->AddRectFilled(rowMin, rowMax,
                                           ImGui::ColorConvertFloat4ToU32(bg));
                     }
 
-                    // Point ID — mono, MvFg1 when selected, MvFg2 otherwise.
+                    // ---- Badge (32×32, point colour outline) ------------
+                    constexpr float BadgeSize = 32.0f;
+                    constexpr float BadgePadL = 10.0f;
+                    const ImVec2 bMin(rowMin.x + BadgePadL,
+                                      rowMin.y + (RowH - BadgeSize) * 0.5f);
+                    const ImVec2 bMax(bMin.x + BadgeSize, bMin.y + BadgeSize);
+                    // Faint tinted fill + 1 px coloured border.
+                    ImVec4 badgeFill = accent; badgeFill.w = 0.10f;
+                    dl->AddRectFilled(bMin, bMax,
+                                      ImGui::ColorConvertFloat4ToU32(badgeFill),
+                                      4.0f);
+                    dl->AddRect(bMin, bMax, accentU, 4.0f, 0, 1.0f);
                     {
-                        char idBuf[16];
+                        char idBuf[8];
                         std::snprintf(idBuf, sizeof(idBuf), "%02d", corr.pointID);
                         MvStyle::ScopedFont f(MvStyle::Font.Mono);
                         const ImVec2 ts = ImGui::CalcTextSize(idBuf);
                         const float fs = ImGui::GetFontSize();
-                        const ImU32 col = ImGui::ColorConvertFloat4ToU32(
-                            isSelected ? MvStyle::MvFg1 : MvStyle::MvFg2);
-                        dl->AddText(ImVec2(rowMin.x + 12.0f,
-                                           rowMin.y + (RowH - fs) * 0.5f),
-                                    col, idBuf);
-                        (void)ts;
+                        dl->AddText(ImVec2(bMin.x + (BadgeSize - ts.x) * 0.5f,
+                                           bMin.y + (BadgeSize - fs) * 0.5f),
+                                    accentU, idBuf);
                     }
 
-                    // Two presence squares on the right (S then T). Filled
-                    // = vertex set on that side, hollow = orphan. The
-                    // empty-list block above also covers the "no points
-                    // yet" case.
-                    constexpr float SqSize = 10.0f;
-                    constexpr float SqPad  = 6.0f;
-                    constexpr float RightPad = 12.0f;
+                    // ---- Text stack: "Point N" + status -----------------
+                    const float textX = bMax.x + 12.0f;
+                    {
+                        // Body label
+                        char nameBuf[32];
+                        std::snprintf(nameBuf, sizeof(nameBuf), "Point %d", corr.pointID);
+                        MvStyle::ScopedFont f(MvStyle::Font.BodyMd);
+                        const float fs = ImGui::GetFontSize();
+                        const float yTop = rowMin.y + (RowH * 0.5f) - fs - 1.0f;
+                        dl->AddText(ImVec2(textX, yTop),
+                                    ImGui::ColorConvertFloat4ToU32(MvStyle::MvFg1),
+                                    nameBuf);
+                    }
+                    {
+                        // Status sub-label.
+                        const char* statusText;
+                        ImVec4 statusColor;
+                        if (hasSrc && hasTgt) {
+                            statusText = "PAIRED";
+                            statusColor = MvStyle::MvSuccess;
+                        } else if (hasSrc && !hasTgt) {
+                            statusText = "NEEDS B";
+                            statusColor = MvStyle::MvWarning;
+                        } else if (!hasSrc && hasTgt) {
+                            statusText = "NEEDS A";
+                            statusColor = MvStyle::MvWarning;
+                        } else {
+                            statusText = "EMPTY";
+                            statusColor = MvStyle::MvFg4;
+                        }
+                        MvStyle::ScopedFont f(MvStyle::Font.MonoSm);
+                        const float yBot = rowMin.y + (RowH * 0.5f) + 3.0f;
+                        dl->AddText(ImVec2(textX, yBot),
+                                    ImGui::ColorConvertFloat4ToU32(statusColor),
+                                    statusText);
+                    }
+
+                    // ---- Right cluster: two squares + X icon ------------
+                    constexpr float SqSize  = 12.0f;
+                    constexpr float SqPad   = 4.0f;
+                    constexpr float SqClusterPad = 8.0f; // gap between squares and X
                     const float yMid = rowMin.y + RowH * 0.5f;
-                    const float tgtRight = rowMax.x - RightPad;
+
+                    // X icon (Lucide MV_ICON_X) is centred inside the
+                    // delete-button hit area on the right edge.
+                    const ImU32 xCol = ImGui::ColorConvertFloat4ToU32(
+                        delHovered ? MvStyle::MvDanger : MvStyle::MvFg3);
+                    if (MvStyle::Font.IconSm) {
+                        ImFont* iconFont = MvStyle::Font.IconSm;
+                        constexpr float xSize = 14.0f;
+                        const ImVec2 ts = iconFont->CalcTextSizeA(
+                            xSize, FLT_MAX, 0.0f, MV_ICON_X);
+                        dl->AddText(iconFont, xSize,
+                                    ImVec2((delMin.x + delMax.x - ts.x) * 0.5f,
+                                           yMid - ts.y * 0.5f),
+                                    xCol, MV_ICON_X);
+                    }
+
+                    // Squares — Source then Target. Both filled in the
+                    // point's accent colour when present; hollow MvLine2
+                    // outline when missing. Placed just left of the X.
+                    const float xClusterRight = delMin.x - SqClusterPad;
+                    const float tgtRight = xClusterRight;
                     const float tgtLeft  = tgtRight - SqSize;
                     const float srcRight = tgtLeft - SqPad;
                     const float srcLeft  = srcRight - SqSize;
 
-                    auto drawSquare = [&](float x0, float x1,
-                                          bool filled, ImU32 accentCol) {
+                    auto drawSquare = [&](float x0, float x1, bool filled) {
                         const ImVec2 amin(x0, yMid - SqSize * 0.5f);
                         const ImVec2 amax(x1, yMid + SqSize * 0.5f);
                         if (filled) {
-                            dl->AddRectFilled(amin, amax, accentCol, 2.0f);
+                            dl->AddRectFilled(amin, amax, accentU, 2.0f);
                         } else {
-                            dl->AddRect(amin, amax, colMissing, 2.0f, 0, 1.0f);
+                            dl->AddRect(amin, amax, colMissingBorder,
+                                        2.0f, 0, 1.0f);
                         }
                     };
-                    drawSquare(srcLeft, srcRight, hasSrc, colSrcAccent);
-                    drawSquare(tgtLeft, tgtRight, hasTgt, colTgtAccent);
+                    drawSquare(srcLeft, srcRight, hasSrc);
+                    drawSquare(tgtLeft, tgtRight, hasTgt);
 
-                    if (hovered) {
-                        ImGui::SetTooltip(
-                            "Point %d \xC2\xB7 source %s \xC2\xB7 target %s",
-                            corr.pointID,
-                            hasSrc ? "set" : "missing",
-                            hasTgt ? "set" : "missing");
+                    if (rowHovered || delHovered) {
+                        if (delHovered) {
+                            ImGui::SetTooltip("Delete point %d", corr.pointID);
+                        } else {
+                            ImGui::SetTooltip(
+                                "Point %d \xC2\xB7 source %s \xC2\xB7 target %s",
+                                corr.pointID,
+                                hasSrc ? "set" : "missing",
+                                hasTgt ? "set" : "missing");
+                        }
                     }
+
+                    ImGui::PopID();
                 }
             }
             ImGui::EndChild();

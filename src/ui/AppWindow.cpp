@@ -330,26 +330,21 @@ bool AppWindow::Initialize(int width, int height, const char* title) {
 
     // Stage 2 delete: Delete key on the active viewport fires this. Removes
     // the currently-selected correspondence and its symmetric pair if any.
-    auto onPointDelete = [this]() {
+    // Index-aware deletion helper — used by both the Delete-key path (which
+    // reads the currently-selected index from the viewport) and the
+    // sidebar's per-row X click (which passes its row index directly).
+    deletePointAt_ = [this](int index) {
         if (!project_ || !viewportHost_) return;
-        auto* vp = viewportHost_->GetPrimaryViewport();
-        int primaryIdx = vp ? vp->GetSelectedPointIndex() : -1;
-        int secondaryIdx = viewportHost_->GetSecondaryViewport()
-            ? viewportHost_->GetSecondaryViewport()->GetSelectedPointIndex()
-            : -1;
-        int selected = (primaryIdx >= 0) ? primaryIdx : secondaryIdx;
-        if (selected < 0) return;
-
         auto& correspondences = project_->GetPointReferenceData().correspondences;
-        if (selected >= static_cast<int>(correspondences.size())) return;
+        if (index < 0 || index >= static_cast<int>(correspondences.size())) return;
 
         const std::vector<PointCorrespondence> beforeSnapshot = correspondences;
 
         int pairID = -1;
-        if (correspondences[selected].isSymmetric) {
-            pairID = correspondences[selected].symmetricPairID;
+        if (correspondences[index].isSymmetric) {
+            pairID = correspondences[index].symmetricPairID;
         }
-        correspondences.erase(correspondences.begin() + selected);
+        correspondences.erase(correspondences.begin() + index);
         if (pairID >= 0) {
             for (auto it = correspondences.begin(); it != correspondences.end(); ++it) {
                 if (it->pointID == pairID) { correspondences.erase(it); break; }
@@ -361,6 +356,20 @@ bool AppWindow::Initialize(int width, int height, const char* title) {
             undoStack_->Push(std::make_unique<PointPlacementUndoAction>(
                 project_.get(), beforeSnapshot, correspondences, "Delete Point"));
         }
+    };
+
+    // Delete-key path — figure out which side has the selection and forward
+    // to the index-aware helper.
+    auto onPointDelete = [this]() {
+        if (!viewportHost_) return;
+        auto* vp = viewportHost_->GetPrimaryViewport();
+        int primaryIdx = vp ? vp->GetSelectedPointIndex() : -1;
+        int secondaryIdx = viewportHost_->GetSecondaryViewport()
+            ? viewportHost_->GetSecondaryViewport()->GetSelectedPointIndex()
+            : -1;
+        int selected = (primaryIdx >= 0) ? primaryIdx : secondaryIdx;
+        if (selected < 0) return;
+        deletePointAt_(selected);
     };
 
     // Stage 1 gizmo drag: Viewport fires OnTransformApplied on LMB release with
@@ -554,6 +563,9 @@ void AppWindow::Run() {
 
             if (actions.selectPointIndex && viewportHost_) {
                 viewportHost_->SetSelectedPointIndex(*actions.selectPointIndex);
+            }
+            if (actions.deletePointIndex && deletePointAt_) {
+                deletePointAt_(*actions.deletePointIndex);
             }
 
             if (actions.nextStageRequested && project_) {
