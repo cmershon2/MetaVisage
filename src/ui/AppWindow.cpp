@@ -890,7 +890,14 @@ void AppWindow::Run() {
         ImGui::Render();
 
         glViewport(0, 0, fbWidth, fbHeight);
-        glClearColor(30.0f / 255.0f, 30.0f / 255.0f, 30.0f / 255.0f, 1.0f);
+        // OS framebuffer clear matches MvBg0 (deep navy). Anywhere ImGui
+        // doesn't paint and the viewport's GL pass doesn't cover (1-2 px
+        // gaps between the host window's NoBackground area and adjacent
+        // docked windows) used to leak the legacy 30/255 ImGui dark-grey
+        // through, which read as "#1e1e1e gray bars" between the stepper /
+        // dockspace / status bar. Clearing to MvBg0 makes those gaps
+        // invisible against the design palette.
+        glClearColor(MvStyle::MvBg0.x, MvStyle::MvBg0.y, MvStyle::MvBg0.z, 1.0f);
         glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT);
 
         if (viewportHost_) viewportHost_->RenderGL(fbHeight);
