@@ -742,89 +742,61 @@ void StageSidebar::RenderPointReference(Project& project, Actions& out) {
 // Stage 3 — Morph
 // ---------------------------------------------------------------------------
 
-// Built-in NRICP preset values lifted directly from stage3.jsx so the
-// design's "Quick Wrap" / "Fantasy Wrap" cards stamp identical params.
+// Built-in preset semantics per CLAUDE.md / product-vision.md:
+//   Fantasy Wrap — uses the default MorphData parameters that the NRICP
+//                  pipeline was tuned against. Tuned for dramatic features
+//                  (pointed ears, large noses, etc.).
+//   Quick Wrap   — Fantasy defaults with rigidity (gamma) bumped to 1.0,
+//                  which forces a tighter, more rigid wrap suitable for
+//                  human-like target meshes.
+//
+// Story 3.8.9's earlier attempt baked numbers from stage3.jsx into both
+// presets. Those values had no relationship to what the NRICP impl was
+// tuned for and produced visibly broken wraps; we revert to the
+// MorphData() constructor defaults as the canonical baseline so the
+// presets actually run.
+//
 // Sprint 4 (Wrap Engine Redesign) will replace this with persisted user
-// presets; for Story 3.8.9 the two built-ins are baked at compile time.
+// presets, so we deliberately don't grow a parameter struct here — both
+// presets are expressible as default ± a couple of overrides.
 namespace {
-struct MorphPreset {
-    int   stiffnessSteps;
-    float alphaInitial;
-    float alphaFinal;
-    int   icpIterations;
-    float normalThreshold;
-    float landmarkWeight;
-    float samplingInitial;
-    float samplingFinal;
-    bool  normalizeSampling;
-    float gammaInitial;
-    float gammaFinal;
-    float dpInitial;
-    float dpFinal;
-    int   optimizationIterations;
-    float epsilon;
-    bool  excludeBoundaries;
-    int   boundaryHops;
-};
 
-constexpr MorphPreset kPresetQuickWrap = {
-    /*stiffnessSteps*/         5,
-    /*alphaInitial*/           100.0f,
-    /*alphaFinal*/             70.4f,
-    /*icpIterations*/          7,
-    /*normalThreshold*/        89.0f,
-    /*landmarkWeight*/         10.0f,
-    /*samplingInitial*/        0.513f,
-    /*samplingFinal*/          0.20f,
-    /*normalizeSampling*/      true,
-    /*gammaInitial*/           0.0f,
-    /*gammaFinal*/             0.0f,
-    /*dpInitial*/              1.0f,
-    /*dpFinal*/                1.0f,
-    /*optimizationIterations*/ 1,
-    /*epsilon*/                0.0018f,
-    /*excludeBoundaries*/      true,
-    /*boundaryHops*/           3,
-};
+void ApplyMorphPreset(MorphData& m, int presetIdx) {
+    // Reset all NRICP fields to constructor defaults — equivalent to
+    // applying Fantasy Wrap. We then overlay Quick Wrap's overrides if
+    // requested. Goes through the project's MorphData (caller passes a
+    // reference) so the renderer + serializer pick up the change.
+    const MorphData defaults;
+    m.algorithm                     = defaults.algorithm;
+    m.stiffness                     = defaults.stiffness;
+    m.smoothness                    = defaults.smoothness;
+    m.nricpStiffnessSteps           = defaults.nricpStiffnessSteps;
+    m.nricpAlphaInitial             = defaults.nricpAlphaInitial;
+    m.nricpAlphaFinal               = defaults.nricpAlphaFinal;
+    m.nricpIcpIterations            = defaults.nricpIcpIterations;
+    m.nricpNormalThreshold          = defaults.nricpNormalThreshold;
+    m.nricpLandmarkWeight           = defaults.nricpLandmarkWeight;
+    m.nricpEpsilon                  = defaults.nricpEpsilon;
+    m.nricpEnableBoundaryExclusion  = defaults.nricpEnableBoundaryExclusion;
+    m.nricpBoundaryExclusionHops    = defaults.nricpBoundaryExclusionHops;
+    m.nricpOptimizationIterations   = defaults.nricpOptimizationIterations;
+    m.nricpDpInitial                = defaults.nricpDpInitial;
+    m.nricpDpFinal                  = defaults.nricpDpFinal;
+    m.nricpGammaInitial             = defaults.nricpGammaInitial;
+    m.nricpGammaFinal               = defaults.nricpGammaFinal;
+    m.nricpSamplingInitial          = defaults.nricpSamplingInitial;
+    m.nricpSamplingFinal            = defaults.nricpSamplingFinal;
+    m.nricpNormalizeSampling        = defaults.nricpNormalizeSampling;
 
-constexpr MorphPreset kPresetFantasyWrap = {
-    /*stiffnessSteps*/         8,
-    /*alphaInitial*/           65.0f,
-    /*alphaFinal*/             35.0f,
-    /*icpIterations*/          12,
-    /*normalThreshold*/        65.0f,
-    /*landmarkWeight*/         4.0f,
-    /*samplingInitial*/        0.32f,
-    /*samplingFinal*/          0.14f,
-    /*normalizeSampling*/      true,
-    /*gammaInitial*/           0.2f,
-    /*gammaFinal*/             0.05f,
-    /*dpInitial*/              0.85f,
-    /*dpFinal*/                0.85f,
-    /*optimizationIterations*/ 2,
-    /*epsilon*/                0.0012f,
-    /*excludeBoundaries*/      true,
-    /*boundaryHops*/           4,
-};
-
-void ApplyMorphPreset(MorphData& m, const MorphPreset& p) {
-    m.nricpStiffnessSteps           = p.stiffnessSteps;
-    m.nricpAlphaInitial             = p.alphaInitial;
-    m.nricpAlphaFinal               = p.alphaFinal;
-    m.nricpIcpIterations            = p.icpIterations;
-    m.nricpNormalThreshold          = p.normalThreshold;
-    m.nricpLandmarkWeight           = p.landmarkWeight;
-    m.nricpSamplingInitial          = p.samplingInitial;
-    m.nricpSamplingFinal            = p.samplingFinal;
-    m.nricpNormalizeSampling        = p.normalizeSampling;
-    m.nricpGammaInitial             = p.gammaInitial;
-    m.nricpGammaFinal               = p.gammaFinal;
-    m.nricpDpInitial                = p.dpInitial;
-    m.nricpDpFinal                  = p.dpFinal;
-    m.nricpOptimizationIterations   = p.optimizationIterations;
-    m.nricpEpsilon                  = p.epsilon;
-    m.nricpEnableBoundaryExclusion  = p.excludeBoundaries;
-    m.nricpBoundaryExclusionHops    = p.boundaryHops;
+    if (presetIdx == 0) {
+        // Quick Wrap — same as Fantasy plus rigidity locked to 1.0 on
+        // both ends of the schedule. Higher rigidity preserves the
+        // source mesh's shape, which is what indie devs want for
+        // realistic human heads.
+        m.nricpGammaInitial = 1.0f;
+        m.nricpGammaFinal   = 1.0f;
+    }
+    // presetIdx == 1 → Fantasy Wrap — defaults already applied above.
 }
 
 // Returns true on click. Caller decides whether to apply the preset; the
@@ -945,7 +917,9 @@ void StageSidebar::RenderMorph(Project& project, bool processing, float progress
             if (DrawPresetCard("quick", "Quick Wrap",
                                "Tight wrap", MV_ICON_TARGET,
                                lastAppliedPreset_ == 0, /*disabled=*/false)) {
-                ApplyMorphPreset(morph, kPresetQuickWrap);
+                // Quick = defaults + rigidity 1.0 (rigid wrap for
+                // human-like targets).
+                ApplyMorphPreset(morph, /*presetIdx=*/0);
                 lastAppliedPreset_ = 0;
             }
 
@@ -953,7 +927,9 @@ void StageSidebar::RenderMorph(Project& project, bool processing, float progress
             if (DrawPresetCard("fantasy", "Fantasy Wrap",
                                "Looser fit", MV_ICON_SPARKLES,
                                lastAppliedPreset_ == 1, /*disabled=*/false)) {
-                ApplyMorphPreset(morph, kPresetFantasyWrap);
+                // Fantasy = the canonical MorphData defaults the NRICP
+                // pipeline was tuned against.
+                ApplyMorphPreset(morph, /*presetIdx=*/1);
                 lastAppliedPreset_ = 1;
             }
 
