@@ -120,6 +120,14 @@ FileSlotResult DrawFileSlot(const char* filename,
     FileSlotResult result;
     ImDrawList* dl = ImGui::GetWindowDrawList();
 
+    // Scope the Import button's ID — callers typically render multiple file
+    // slots back-to-back with the same "Import" label, which would collapse
+    // to one ImGui widget ID and trigger the conflicting-ID assert. Use the
+    // placeholder as the discriminator (each call site passes a unique one
+    // like "No source mesh" / "No target mesh"); fall back to a literal so
+    // a null placeholder still pushes a valid scope.
+    ImGui::PushID(placeholder ? placeholder : "##fileSlot");
+
     // Container — MvBg1 + MvLine2 border, rounded 6, padding 10×12. Drawn
     // manually so the folder icon aligns with the filename baseline.
     const ImVec2 boxMin = ImGui::GetCursorScreenPos();
@@ -200,6 +208,7 @@ FileSlotResult DrawFileSlot(const char* filename,
     }
     if (isPrimary) ImGui::PopStyleColor(4);
 
+    ImGui::PopID();
     return result;
 }
 
