@@ -3,6 +3,7 @@
 
 #include "core/Transform.h"
 
+#include <optional>
 #include <string>
 
 namespace MetaVisage {
@@ -50,12 +51,21 @@ public:
         bool transformEditCompleted = false;
         Transform transformEditBefore;
         Transform transformEditAfter;
+
+        // Stage 2 — point-list selection request. When set, the user clicked
+        // a row in the inspector's point list and AppWindow should mirror
+        // that into both viewports via ViewportHost::SetSelectedPointIndex.
+        // Use -1 to clear selection.
+        std::optional<int> selectPointIndex;
     };
 
     // Render docked panel titled "Stage". Returns the actions requested this
     // frame — the caller (AppWindow) dispatches them to the appropriate
-    // command / worker.
-    Actions Render(Project* project, bool morphProcessing, float morphProgress);
+    // command / worker. `selectedPointIndex` is read by Stage 2's point list
+    // so the active row stays highlighted when the user picks a point in
+    // the viewport.
+    Actions Render(Project* project, bool morphProcessing, float morphProgress,
+                   int selectedPointIndex = -1);
 
 private:
     void RenderAlignment(Project& project, Actions& out);
@@ -81,6 +91,10 @@ private:
     // Captured target-mesh transform on the frame a Stage 1 spinbox is first
     // activated, so we can emit a (before, after) pair on edit-end.
     Transform transformEditCapture_;
+
+    // Mirror of viewport-side point selection so the Stage 2 list can
+    // highlight the active row. Refreshed on each Render() call.
+    int selectedPointIndexExternal_ = -1;
 };
 
 } // namespace MetaVisage

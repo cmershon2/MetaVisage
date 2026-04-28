@@ -10,6 +10,7 @@
 
 #include <cstdio>
 
+#include <algorithm>
 #include <array>
 #include <filesystem>
 
@@ -60,8 +61,10 @@ Axis IndexToAxis(int i) {
 
 StageSidebar::Actions StageSidebar::Render(Project* project,
                                            bool morphProcessing,
-                                           float morphProgress) {
+                                           float morphProgress,
+                                           int selectedPointIndex) {
     Actions out;
+    selectedPointIndexExternal_ = selectedPointIndex;
 
     // NoMove + NoCollapse + NoTitleBar work together with the dock node flags
     // set by AppWindow (NoUndocking / NoDockingOverMe / HiddenTabBar) to keep
@@ -427,6 +430,126 @@ void StageSidebar::RenderPointReference(Project& project, Actions& out) {
                 }
             }
             ImGui::Dummy(ImVec2(availW, CardH));
+        }
+
+        // ---- Points list ------------------------------------------------
+        // Scrollable list of every correspondence with two presence squares
+        // on the right (S = source/morph mesh, T = target mesh). Filled
+        // square = a vertex is set on that side, hollow square = orphan.
+        // Click a row to select the point in both viewports — the row
+        // matching `selectedPointIndexExternal_` (mirrored from the primary
+        // viewport at Render entry) renders highlighted.
+        I::DrawSectionLabel("POINTS");
+        if (data.correspondences.empty()) {
+            MvStyle::ScopedFont fE(MvStyle::Font.BodySm);
+            ImGui::PushStyleColor(ImGuiCol_Text, MvStyle::MvFg4);
+            ImGui::TextUnformatted("No points placed yet. Click the source "
+                                   "or target mesh to begin.");
+            ImGui::PopStyleColor();
+        } else {
+            // Cap the list height so the rest of the sidebar (settings +
+            // Clear All button) stays reachable without scrolling the whole
+            // panel — 8 rows × 26 px + a little chrome covers the typical
+            // usage; scroll for more.
+            constexpr float RowH      = 26.0f;
+            constexpr float MaxListH  = 8.0f * RowH + 8.0f;
+            const float listH = std::min(
+                MaxListH,
+                static_cast<float>(data.correspondences.size()) * RowH + 4.0f);
+
+            ImGui::PushStyleColor(ImGuiCol_ChildBg, MvStyle::MvBg1);
+            ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding, ImVec2(0.0f, 0.0f));
+            if (ImGui::BeginChild("##ptList",
+                                  ImVec2(-FLT_MIN, listH),
+                                  true,
+                                  ImGuiWindowFlags_NoScrollWithMouse)) {
+
+                ImDrawList* dl = ImGui::GetWindowDrawList();
+                const float rowW = ImGui::GetContentRegionAvail().x;
+                const ImU32 colSrcAccent = ImGui::ColorConvertFloat4ToU32(MvStyle::MvWarning);
+                const ImU32 colTgtAccent = ImGui::ColorConvertFloat4ToU32(MvStyle::MvBlue400);
+                const ImU32 colMissing   = ImGui::ColorConvertFloat4ToU32(MvStyle::MvFg4);
+
+                for (size_t i = 0; i < data.correspondences.size(); ++i) {
+                    const auto& corr = data.correspondences[i];
+                    const bool hasSrc = corr.morphMeshVertexIndex  >= 0;
+                    const bool hasTgt = corr.targetMeshVertexIndex >= 0;
+                    const bool isSelected =
+                        (static_cast<int>(i) == selectedPointIndexExternal_);
+
+                    ImGui::PushID(static_cast<int>(i));
+                    const ImVec2 rowMin = ImGui::GetCursorScreenPos();
+                    if (ImGui::InvisibleButton("##row", ImVec2(rowW, RowH))) {
+                        out.selectPointIndex = static_cast<int>(i);
+                    }
+                    const bool hovered = ImGui::IsItemHovered();
+                    ImGui::PopID();
+                    const ImVec2 rowMax(rowMin.x + rowW, rowMin.y + RowH);
+
+                    // Row background — selected wins over hover.
+                    if (isSelected) {
+                        ImVec4 bg = MvStyle::MvBlue500; bg.w = 0.18f;
+                        dl->AddRectFilled(rowMin, rowMax,
+                                          ImGui::ColorConvertFloat4ToU32(bg));
+                    } else if (hovered) {
+                        ImVec4 bg = MvStyle::MvBlue500; bg.w = 0.06f;
+                        dl->AddRectFilled(rowMin, rowMax,
+                                          ImGui::ColorConvertFloat4ToU32(bg));
+                    }
+
+                    // Point ID — mono, MvFg1 when selected, MvFg2 otherwise.
+                    {
+                        char idBuf[16];
+                        std::snprintf(idBuf, sizeof(idBuf), "%02d", corr.pointID);
+                        MvStyle::ScopedFont f(MvStyle::Font.Mono);
+                        const ImVec2 ts = ImGui::CalcTextSize(idBuf);
+                        const float fs = ImGui::GetFontSize();
+                        const ImU32 col = ImGui::ColorConvertFloat4ToU32(
+                            isSelected ? MvStyle::MvFg1 : MvStyle::MvFg2);
+                        dl->AddText(ImVec2(rowMin.x + 12.0f,
+                                           rowMin.y + (RowH - fs) * 0.5f),
+                                    col, idBuf);
+                        (void)ts;
+                    }
+
+                    // Two presence squares on the right (S then T). Filled
+                    // = vertex set on that side, hollow = orphan. The
+                    // empty-list block above also covers the "no points
+                    // yet" case.
+                    constexpr float SqSize = 10.0f;
+                    constexpr float SqPad  = 6.0f;
+                    constexpr float RightPad = 12.0f;
+                    const float yMid = rowMin.y + RowH * 0.5f;
+                    const float tgtRight = rowMax.x - RightPad;
+                    const float tgtLeft  = tgtRight - SqSize;
+                    const float srcRight = tgtLeft - SqPad;
+                    const float srcLeft  = srcRight - SqSize;
+
+                    auto drawSquare = [&](float x0, float x1,
+                                          bool filled, ImU32 accentCol) {
+                        const ImVec2 amin(x0, yMid - SqSize * 0.5f);
+                        const ImVec2 amax(x1, yMid + SqSize * 0.5f);
+                        if (filled) {
+                            dl->AddRectFilled(amin, amax, accentCol, 2.0f);
+                        } else {
+                            dl->AddRect(amin, amax, colMissing, 2.0f, 0, 1.0f);
+                        }
+                    };
+                    drawSquare(srcLeft, srcRight, hasSrc, colSrcAccent);
+                    drawSquare(tgtLeft, tgtRight, hasTgt, colTgtAccent);
+
+                    if (hovered) {
+                        ImGui::SetTooltip(
+                            "Point %d \xC2\xB7 source %s \xC2\xB7 target %s",
+                            corr.pointID,
+                            hasSrc ? "set" : "missing",
+                            hasTgt ? "set" : "missing");
+                    }
+                }
+            }
+            ImGui::EndChild();
+            ImGui::PopStyleVar();
+            ImGui::PopStyleColor();
         }
 
         // ---- Placement tools (stub buttons per design) --------------------

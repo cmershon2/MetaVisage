@@ -110,7 +110,6 @@ set(CORE_SOURCES
     src/ui/Modals.cpp
     src/ui/MvInspectorPrimitives.cpp
     src/ui/MvStyle.cpp
-    src/ui/Stage2InfoBar.cpp
     src/ui/StageSidebar.cpp
     src/ui/StageStepper.cpp
     src/ui/ToolRail.cpp
@@ -147,7 +146,6 @@ set(CORE_HEADERS
     include/ui/Modals.h
     include/ui/MvInspectorPrimitives.h
     include/ui/MvStyle.h
-    include/ui/Stage2InfoBar.h
     include/ui/StageSidebar.h
     include/ui/StageStepper.h
     include/ui/ToolRail.h
