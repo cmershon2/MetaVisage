@@ -1,6 +1,7 @@
 #include "ui/AppWindow.h"
 #include "ui/FileDialogs.h"
 #include "ui/MvStyle.h"
+#include "ui/Stage2InfoBar.h"
 #include "ui/StageStepper.h"
 #include "ui/ToolRail.h"
 #include "ui/Viewport.h"
@@ -505,10 +506,21 @@ void AppWindow::Run() {
         RenderAppShell();
 
         if (viewportHost_) {
+            // Story 3.8.8 — Stage 2 reserves a 36 px strip at the top of
+            // the central rect for the source/target info bar; the bar
+            // renders here and the dual viewports start below it.
+            float topInsetH = 0.0f;
+            if (project_ && project_->GetCurrentStage() == WorkflowStage::PointReference) {
+                topInsetH = Stage2InfoBar::HeightPx;
+                Stage2InfoBar::Render(project_.get(),
+                                      centralRectPos_.x,
+                                      centralRectPos_.y,
+                                      centralRectSize_.x);
+            }
             viewportHost_->BuildLayout(
                 fbWidth, fbHeight,
-                centralRectPos_.x, centralRectPos_.y,
-                centralRectSize_.x, centralRectSize_.y);
+                centralRectPos_.x, centralRectPos_.y + topInsetH,
+                centralRectSize_.x, centralRectSize_.y - topInsetH);
             // Story 3.8.5 — Stage 3 viewport toolbar shows a 3-state status
             // pill driven by the morph worker + project state. Mirror it
             // into each viewport so the overlay can read without locking.

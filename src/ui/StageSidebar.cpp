@@ -85,7 +85,8 @@ StageSidebar::Actions StageSidebar::Render(Project* project,
     // header/footer entirely. Remaining stages still use the legacy
     // generic header + footer so the workflow stays usable until each
     // story replaces them.
-    const bool ownsChrome = (stage == WorkflowStage::Alignment);
+    const bool ownsChrome = (stage == WorkflowStage::Alignment ||
+                             stage == WorkflowStage::PointReference);
 
     if (!ownsChrome) {
         ImGui::Text("Stage %d / 4", static_cast<int>(stage) + 1);
@@ -347,39 +348,158 @@ void StageSidebar::RenderAlignment(Project& project, Actions& out) {
 // ---------------------------------------------------------------------------
 
 void StageSidebar::RenderPointReference(Project& project, Actions& out) {
+    namespace I = MvInspector;
     auto& data = project.GetPointReferenceData();
+
+    // Pre-tally correspondence counts — feeds the stat cards and the
+    // Continue gating logic below.
     int paired = 0;
-    int morphOnly = 0;
-    int targetOnly = 0;
+    int srcOnly = 0;
+    int tgtOnly = 0;
     for (const auto& c : data.correspondences) {
         const bool hasM = c.morphMeshVertexIndex >= 0;
         const bool hasT = c.targetMeshVertexIndex >= 0;
         if (hasM && hasT) ++paired;
-        else if (hasM) ++morphOnly;
-        else if (hasT) ++targetOnly;
+        else if (hasM)    ++srcOnly;
+        else if (hasT)    ++tgtOnly;
     }
-    ImGui::Text("Paired points:     %d", paired);
-    ImGui::Text("Morph-only:        %d", morphOnly);
-    ImGui::Text("Target-only:       %d", targetOnly);
-    ImGui::Spacing();
 
-    bool symmetry = data.symmetryEnabled;
-    if (ImGui::Checkbox("Mirror across symmetry axis", &symmetry)) {
-        data.symmetryEnabled = symmetry;
+    // ---- Header ---------------------------------------------------------
+    I::DrawStageHeader("STAGE 02 / 04",
+                       "Point ", "reference",
+                       "Click each mesh at matching anatomical landmarks. "
+                       "Pair every placed point on one mesh with its match "
+                       "on the other before continuing.");
+
+    // ---- Scrollable body ------------------------------------------------
+    constexpr float FooterReserveH = 60.0f;
+    if (ImGui::BeginChild("##stage2body",
+                          ImVec2(0.0f, -FooterReserveH),
+                          false,
+                          ImGuiWindowFlags_NoBackground)) {
+
+        // ---- Stat cards row -----------------------------------------------
+        // 3 equal-width cards: PAIRED (blue) / SOURCE ONLY (amber) /
+        // TARGET ONLY (amber when >0, success green when 0). Drawn manually
+        // via ImDrawList so we own the centre alignment + accent colours.
+        {
+            ImDrawList* dl = ImGui::GetWindowDrawList();
+            const ImVec2 origin = ImGui::GetCursorScreenPos();
+            const float availW  = ImGui::GetContentRegionAvail().x;
+            constexpr float Gap = 6.0f;
+            constexpr float CardH = 56.0f;
+            const float cardW = (availW - Gap * 2.0f) / 3.0f;
+
+            struct Card {
+                const char* label;
+                int value;
+                ImVec4 accent;
+            };
+            const Card cards[3] = {
+                { "PAIRED",      paired,
+                  paired > 0 ? MvStyle::MvBlue500 : MvStyle::MvFg4 },
+                { "SOURCE ONLY", srcOnly,
+                  srcOnly > 0 ? MvStyle::MvWarning : MvStyle::MvFg4 },
+                { "TARGET ONLY", tgtOnly,
+                  tgtOnly > 0 ? MvStyle::MvWarning : MvStyle::MvSuccess },
+            };
+
+            for (int i = 0; i < 3; ++i) {
+                const ImVec2 cmin(origin.x + i * (cardW + Gap), origin.y);
+                const ImVec2 cmax(cmin.x + cardW, cmin.y + CardH);
+                dl->AddRectFilled(cmin, cmax, ImGui::ColorConvertFloat4ToU32(MvStyle::MvBg1), 6.0f);
+                dl->AddRect      (cmin, cmax, ImGui::ColorConvertFloat4ToU32(MvStyle::MvLine2), 6.0f, 0, 1.0f);
+
+                // Big count number — Heading, accent colour, top half.
+                {
+                    MvStyle::ScopedFont f(MvStyle::Font.Heading);
+                    char buf[16]; std::snprintf(buf, sizeof(buf), "%d", cards[i].value);
+                    const ImVec2 ts = ImGui::CalcTextSize(buf);
+                    dl->AddText(ImVec2(cmin.x + (cardW - ts.x) * 0.5f, cmin.y + 6.0f),
+                                ImGui::ColorConvertFloat4ToU32(cards[i].accent), buf);
+                }
+                // Mono uppercase label — bottom half, MvFg3.
+                {
+                    MvStyle::ScopedFont f(MvStyle::Font.MonoSm);
+                    const ImVec2 ts = ImGui::CalcTextSize(cards[i].label);
+                    dl->AddText(ImVec2(cmin.x + (cardW - ts.x) * 0.5f, cmax.y - ts.y - 8.0f),
+                                ImGui::ColorConvertFloat4ToU32(MvStyle::MvFg3), cards[i].label);
+                }
+            }
+            ImGui::Dummy(ImVec2(availW, CardH));
+        }
+
+        // ---- Placement tools (stub buttons per design) --------------------
+        I::DrawSectionLabel("PLACEMENT TOOLS");
+        if (ImGui::BeginTable("##placeTools", 2,
+                              ImGuiTableFlags_SizingStretchSame |
+                              ImGuiTableFlags_NoPadOuterX)) {
+            ImGui::TableNextRow();
+
+            ImGui::TableNextColumn();
+            ImGui::BeginDisabled();
+            ImGui::Button("Auto-detect", ImVec2(-FLT_MIN, 30.0f));
+            ImGui::EndDisabled();
+            if (ImGui::IsItemHovered(ImGuiHoveredFlags_AllowWhenDisabled)) {
+                ImGui::SetTooltip("Coming in a future update");
+            }
+
+            ImGui::TableNextColumn();
+            ImGui::BeginDisabled();
+            ImGui::Button("Load preset", ImVec2(-FLT_MIN, 30.0f));
+            ImGui::EndDisabled();
+            if (ImGui::IsItemHovered(ImGuiHoveredFlags_AllowWhenDisabled)) {
+                ImGui::SetTooltip("Coming in a future update");
+            }
+
+            ImGui::EndTable();
+        }
+
+        // ---- Settings (existing controls, restyled) -----------------------
+        I::DrawSectionLabel("SETTINGS");
+
+        bool symmetry = data.symmetryEnabled;
+        if (ImGui::Checkbox("Mirror across symmetry axis", &symmetry)) {
+            data.symmetryEnabled = symmetry;
+        }
+
+        int axisIdx = AxisToIndex(data.symmetryAxis);
+        const char* axes[] = { "X axis", "Y axis", "Z axis" };
+        ImGui::BeginDisabled(!symmetry);
+        ImGui::PushItemWidth(ImGui::GetContentRegionAvail().x);
+        if (ImGui::Combo("##symAxis", &axisIdx, axes, 3)) {
+            data.symmetryAxis = IndexToAxis(axisIdx);
+        }
+        ImGui::PopItemWidth();
+        ImGui::EndDisabled();
+
+        ImGui::Dummy(ImVec2(0.0f, 4.0f));
+        ImGui::PushItemWidth(ImGui::GetContentRegionAvail().x);
+        ImGui::SliderFloat("##ptSize", &data.pointRenderSize, 4.0f, 32.0f,
+                           "Point size %.1f");
+        ImGui::PopItemWidth();
+
+        ImGui::Dummy(ImVec2(0.0f, 8.0f));
+        if (ImGui::Button("Clear All Points", ImVec2(-FLT_MIN, 30.0f))) {
+            out.clearAllPointsRequested = true;
+        }
+
+        ImGui::Dummy(ImVec2(0.0f, 12.0f));
     }
-    int axisIdx = AxisToIndex(data.symmetryAxis);
-    const char* axes[] = {"X", "Y", "Z"};
-    ImGui::BeginDisabled(!symmetry);
-    if (ImGui::Combo("Symmetry Axis", &axisIdx, axes, 3)) {
-        data.symmetryAxis = IndexToAxis(axisIdx);
-    }
-    ImGui::EndDisabled();
+    ImGui::EndChild();
 
-    ImGui::Spacing();
-    ImGui::SliderFloat("Point Size", &data.pointRenderSize, 4.0f, 32.0f, "%.1f");
-
-    ImGui::Spacing();
-    if (ImGui::Button("Clear All Points")) out.clearAllPointsRequested = true;
+    // ---- Footer ---------------------------------------------------------
+    // Continue gates on "all points are paired" — paired > 0 and no orphans
+    // on either side. Stricter than Project::CanProceedToNextStage's existing
+    // count-equality check (which would let a 3-and-3 mismatched layout
+    // through). Matches the design's intent: progress only when every
+    // landmark has its counterpart.
+    const bool canContinue = paired > 0 && srcOnly == 0 && tgtOnly == 0;
+    const auto footer = I::DrawInspectorFooter(
+        "STEP 02 OF 04", /*previousEnabled=*/true, /*continueEnabled=*/canContinue,
+        "Continue", /*finishStyle=*/false);
+    if (footer.continueClicked) out.nextStageRequested = true;
+    if (footer.previousClicked) out.previousStageRequested = true;
 }
 
 // ---------------------------------------------------------------------------
