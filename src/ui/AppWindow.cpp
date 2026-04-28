@@ -509,6 +509,46 @@ void AppWindow::Run() {
         ImGui_ImplGlfw_NewFrame();
         ImGui::NewFrame();
 
+        // Story 3.8.12 — when the login screen is showing, it must fully
+        // replace every other UI surface. Otherwise the foreground-drawlist
+        // primitives in Viewport::DrawOverlays (orientation gizmo, point
+        // labels, active-pane border) bleed through, and the GL 3D pass
+        // keeps writing pixels behind the login card. Short-circuit the
+        // entire frame body — render only the login surface and skip the
+        // app shell, viewports, sidebar, and modals.
+        if (showLoginScreen_) {
+            const auto loginResult = LoginScreen::Render(loginState_,
+                                                          ImGui::GetTime());
+            if (loginResult.signInRequested) {
+                loginState_ = LoginScreen::State::Waiting;
+            }
+            if (loginResult.cancelRequested || loginResult.retryRequested) {
+                // Both reset back to Idle — Retry implies "browser didn't
+                // open, take me back to the Sign in button" until the auth
+                // backend differentiates them.
+                loginState_ = LoginScreen::State::Idle;
+            }
+            if (loginResult.closeRequested) {
+                showLoginScreen_ = false;
+            }
+
+            // Still poll worker thread state in case a morph started
+            // pre-login. Doesn't render anything; cleans up the thread
+            // when it finishes so closing the login resumes a coherent app.
+            PollMorphCompletion();
+
+            ImGui::Render();
+            // Solid MvBg0 fill for the OS-window letterbox area outside the
+            // login card. The login screen itself is opaque and covers
+            // every pixel inside the viewport.
+            glViewport(0, 0, fbWidth, fbHeight);
+            glClearColor(MvStyle::MvBg0.x, MvStyle::MvBg0.y, MvStyle::MvBg0.z, 1.0f);
+            glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT);
+            ImGui_ImplOpenGL3_RenderDrawData(ImGui::GetDrawData());
+            glfwSwapBuffers(window_);
+            continue;
+        }
+
         // App shell (dockspace + menu bar + status bar) goes first so that
         // docked windows — the future sidebar and the viewport — can reserve
         // their dock slots before BuildLayout runs.
@@ -688,25 +728,9 @@ void AppWindow::Run() {
         DispatchPendingAction();
         RenderModals();
 
-        // Story 3.8.12 — login screen renders last so it sits above the
-        // host shell + sidebar + modals. Visibility gated by a dev toggle
-        // (Help menu) until Sprint 6.1's auth backend takes over.
-        if (showLoginScreen_) {
-            const auto loginResult = LoginScreen::Render(loginState_,
-                                                          ImGui::GetTime());
-            if (loginResult.signInRequested) {
-                loginState_ = LoginScreen::State::Waiting;
-            }
-            if (loginResult.cancelRequested || loginResult.retryRequested) {
-                // Both reset back to Idle — Retry implies "browser didn't
-                // open, take me back to the Sign in button" until the auth
-                // backend differentiates them.
-                loginState_ = LoginScreen::State::Idle;
-            }
-            if (loginResult.closeRequested) {
-                showLoginScreen_ = false;
-            }
-        }
+        // Story 3.8.12 — login screen takes over the entire frame at the
+        // top of this loop (see early-continue branch above). When that
+        // branch fires we never reach this point.
 
         ImGui::Render();
 
