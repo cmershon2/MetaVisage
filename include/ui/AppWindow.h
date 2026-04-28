@@ -1,6 +1,7 @@
 #ifndef APPWINDOW_H
 #define APPWINDOW_H
 
+#include "ui/LoginScreen.h"
 #include "ui/Modals.h"
 #include "ui/StageSidebar.h"
 
@@ -130,6 +131,12 @@ private:
     // Modal state — every struct is inert until its Open() is called.
     bool showAbout_ = false;
     bool showIconExplorer_ = false;        // Dev tool, gated by Help menu
+
+    // Story 3.8.12 — dev-only login screen preview. Sprint 6.1 will
+    // promote this to first-launch surface driven by the auth backend;
+    // for now the toggle lives behind Help → Login Screen (Dev).
+    bool showLoginScreen_ = false;
+    LoginScreen::State loginState_ = LoginScreen::State::Idle;
     ConfirmModalState confirmModal_;
     ErrorModalState errorModal_;
     WelcomeModalState welcomeModal_;

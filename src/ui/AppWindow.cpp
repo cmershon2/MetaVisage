@@ -1,5 +1,6 @@
 #include "ui/AppWindow.h"
 #include "ui/FileDialogs.h"
+#include "ui/LoginScreen.h"
 #include "ui/MvStyle.h"
 #include "ui/StageStepper.h"
 #include "ui/ToolRail.h"
@@ -687,6 +688,26 @@ void AppWindow::Run() {
         DispatchPendingAction();
         RenderModals();
 
+        // Story 3.8.12 — login screen renders last so it sits above the
+        // host shell + sidebar + modals. Visibility gated by a dev toggle
+        // (Help menu) until Sprint 6.1's auth backend takes over.
+        if (showLoginScreen_) {
+            const auto loginResult = LoginScreen::Render(loginState_,
+                                                          ImGui::GetTime());
+            if (loginResult.signInRequested) {
+                loginState_ = LoginScreen::State::Waiting;
+            }
+            if (loginResult.cancelRequested || loginResult.retryRequested) {
+                // Both reset back to Idle — Retry implies "browser didn't
+                // open, take me back to the Sign in button" until the auth
+                // backend differentiates them.
+                loginState_ = LoginScreen::State::Idle;
+            }
+            if (loginResult.closeRequested) {
+                showLoginScreen_ = false;
+            }
+        }
+
         ImGui::Render();
 
         glViewport(0, 0, fbWidth, fbHeight);
@@ -1159,6 +1180,13 @@ void AppWindow::RenderMainMenuBar() {
         // and copy codepoints into MvIcons.h. Will move behind a debug build
         // flag once the icon constants are stable.
         ImGui::MenuItem("Icon Glyph Explorer (Dev)", nullptr, &showIconExplorer_);
+        // Sprint 3.8.12 — preview the login screen ahead of the Sprint 6.1
+        // auth backend. Toggling resets the state machine so the preview
+        // always opens in Idle.
+        if (ImGui::MenuItem("Login Screen (Dev)", nullptr, showLoginScreen_)) {
+            showLoginScreen_ = !showLoginScreen_;
+            loginState_ = LoginScreen::State::Idle;
+        }
         ImGui::EndMenu();
     }
 

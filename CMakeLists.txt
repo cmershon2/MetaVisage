@@ -107,6 +107,7 @@ set(CORE_SOURCES
     src/ui/Viewport.cpp
     src/ui/ViewportHost.cpp
     src/ui/FileDialogs.cpp
+    src/ui/LoginScreen.cpp
     src/ui/Modals.cpp
     src/ui/MvInspectorPrimitives.cpp
     src/ui/MvStyle.cpp
@@ -143,6 +144,7 @@ set(CORE_HEADERS
     include/ui/Viewport.h
     include/ui/ViewportHost.h
     include/ui/FileDialogs.h
+    include/ui/LoginScreen.h
     include/ui/Modals.h
     include/ui/MvInspectorPrimitives.h
     include/ui/MvStyle.h
