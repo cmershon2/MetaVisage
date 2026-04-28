@@ -945,13 +945,6 @@ void Viewport::DrawTopCenterToolbar(float x, float y, float w, float h) {
 
     const WorkflowStage stage = project_ ? project_->GetCurrentStage()
                                          : WorkflowStage::Alignment;
-
-    // Story 3.8.5 — Stage 2 (Point Reference) is the one stage that does
-    // NOT show the centred toolbar. Story 3.8.8 will replace it with a
-    // dedicated source/target info bar above the dual viewports. The HUD
-    // and pills still render in Stage 2, just not this strip.
-    if (stage == WorkflowStage::PointReference) return;
-
     const bool isStage3 = (stage == WorkflowStage::Morph);
 
     char wid[64];
@@ -1079,36 +1072,43 @@ void Viewport::DrawTopCenterToolbar(float x, float y, float w, float h) {
             // RenderFilter enum is mutually exclusive (All / MorphOnly /
             // TargetOnly), so we derive two booleans, flip the relevant one,
             // and recompose. Never let both go off — fall back to All.
-            const RenderFilter rf = renderFilter_;
-            const bool srcVis = (rf != RenderFilter::TargetOnly);
-            const bool tgtVis = (rf != RenderFilter::MorphOnly);
+            //
+            // Stage 2 (Point Reference) skips visibility toggles: the per-
+            // pane Source/Target labels coming in Story 3.8.8 own that
+            // state, and exposing both controls would let the user click
+            // them out of sync. PERSP + shading still render.
+            if (stage != WorkflowStage::PointReference) {
+                const RenderFilter rf = renderFilter_;
+                const bool srcVis = (rf != RenderFilter::TargetOnly);
+                const bool tgtVis = (rf != RenderFilter::MorphOnly);
 
-            ImGui::SameLine(0.0f, 0.0f);
-            if (ToolbarIconButton("vSrc",
-                                  srcVis ? MV_ICON_EYE : MV_ICON_EYE_OFF,
-                                  srcVis, "Show source")) {
-                bool ns = !srcVis;
-                bool nt = tgtVis;
-                if (!ns && !nt) ns = true;
-                RenderFilter newF = RenderFilter::All;
-                if (ns && !nt)      newF = RenderFilter::MorphOnly;
-                else if (!ns && nt) newF = RenderFilter::TargetOnly;
-                SetRenderFilter(newF);
+                ImGui::SameLine(0.0f, 0.0f);
+                if (ToolbarIconButton("vSrc",
+                                      srcVis ? MV_ICON_EYE : MV_ICON_EYE_OFF,
+                                      srcVis, "Show source")) {
+                    bool ns = !srcVis;
+                    bool nt = tgtVis;
+                    if (!ns && !nt) ns = true;
+                    RenderFilter newF = RenderFilter::All;
+                    if (ns && !nt)      newF = RenderFilter::MorphOnly;
+                    else if (!ns && nt) newF = RenderFilter::TargetOnly;
+                    SetRenderFilter(newF);
+                }
+                ImGui::SameLine(0.0f, 0.0f);
+                if (ToolbarIconButton("vTgt",
+                                      tgtVis ? MV_ICON_EYE : MV_ICON_EYE_OFF,
+                                      tgtVis, "Show target")) {
+                    bool ns = srcVis;
+                    bool nt = !tgtVis;
+                    if (!ns && !nt) nt = true;
+                    RenderFilter newF = RenderFilter::All;
+                    if (ns && !nt)      newF = RenderFilter::MorphOnly;
+                    else if (!ns && nt) newF = RenderFilter::TargetOnly;
+                    SetRenderFilter(newF);
+                }
+                ImGui::SameLine(0.0f, 0.0f);
+                ToolbarSeparator();
             }
-            ImGui::SameLine(0.0f, 0.0f);
-            if (ToolbarIconButton("vTgt",
-                                  tgtVis ? MV_ICON_EYE : MV_ICON_EYE_OFF,
-                                  tgtVis, "Show target")) {
-                bool ns = srcVis;
-                bool nt = !tgtVis;
-                if (!ns && !nt) nt = true;
-                RenderFilter newF = RenderFilter::All;
-                if (ns && !nt)      newF = RenderFilter::MorphOnly;
-                else if (!ns && nt) newF = RenderFilter::TargetOnly;
-                SetRenderFilter(newF);
-            }
-            ImGui::SameLine(0.0f, 0.0f);
-            ToolbarSeparator();
 
             // Hotkey strip — tiny mono mnemonic. Stage-specific text.
             const char* hotkeyStrip;
@@ -1137,6 +1137,12 @@ void Viewport::DrawTopRightPills(float x, float y, float w, float h) {
     const WorkflowStage stage = project_ ? project_->GetCurrentStage()
                                          : WorkflowStage::Alignment;
 
+    // Story 3.8.5 follow-up — the LIVE pill was misleading scaffolding (no
+    // UE Live Link backend in v2.0) and has been removed. The function
+    // currently renders only the Stage 4 strength pill; bail out for any
+    // other stage so we don't paint an empty 1×1 background-less window.
+    if (stage != WorkflowStage::TouchUp || !project_) return;
+
     char wid[64];
     std::snprintf(wid, sizeof(wid), "##VpPills_%p", static_cast<void*>(this));
 
@@ -1150,13 +1156,11 @@ void Viewport::DrawTopRightPills(float x, float y, float w, float h) {
     constexpr ImGuiWindowFlags flags =
         ImGuiWindowFlags_NoTitleBar | ImGuiWindowFlags_NoResize |
         ImGuiWindowFlags_NoMove     | ImGuiWindowFlags_NoSavedSettings |
-        // NoFocusOnAppearing keeps the toolbar from grabbing keyboard focus
-        // on its first frame; we deliberately omit NoBringToFrontOnFocus so
-        // a click on a toolbar button raises the window above the host
-        // window's central dockspace node — otherwise the click passes
-        // through to the (transparent) viewport, never reaches the button,
-        // and the toggle appears to do nothing. The pre-3.8.5
-        // DrawShadingModeOverlay worked because it didn't set this flag.
+        // NoFocusOnAppearing keeps the pill from grabbing keyboard focus on
+        // its first frame; we deliberately omit NoBringToFrontOnFocus so
+        // future interactive pills can be clicked (the strength pill is
+        // currently display-only, but the same flag policy keeps other
+        // overlays consistent).
         ImGuiWindowFlags_NoFocusOnAppearing |
         ImGuiWindowFlags_NoScrollbar | ImGuiWindowFlags_NoCollapse |
         ImGuiWindowFlags_NoDocking | ImGuiWindowFlags_AlwaysAutoResize |
@@ -1167,13 +1171,13 @@ void Viewport::DrawTopRightPills(float x, float y, float w, float h) {
     if (ImGui::Begin(wid, nullptr, flags)) {
         ImDrawList* dl = ImGui::GetWindowDrawList();
 
-        // Single-pill draw helper — frosted dark MvBg1 fill, MvLine2 border,
-        // optional dot prefix in `dotCol`. Returns the pill's rect width.
-        auto drawPill = [&](const char* text, const ImVec4* dotColor) {
+        // Single-pill draw helper — frosted dark MvBg1 fill, MvLine2 border.
+        // The Story 3.8.5 dot-prefixed variant has been retired with the
+        // LIVE pill; this version just renders centred mono text.
+        auto drawPill = [&](const char* text) {
             MvStyle::ScopedFont f(MvStyle::Font.Mono);
             const ImVec2 ts = ImGui::CalcTextSize(text);
-            const float dotPad = dotColor ? 12.0f : 0.0f;
-            const float pillW = ts.x + dotPad + 14.0f;
+            const float pillW = ts.x + 14.0f;
             constexpr float pillH = 22.0f;
 
             const ImVec2 pos = ImGui::GetCursorScreenPos();
@@ -1182,31 +1186,18 @@ void Viewport::DrawTopRightPills(float x, float y, float w, float h) {
             dl->AddRectFilled(pos, pmax, ColU(bg), 4.0f);
             dl->AddRect      (pos, pmax, ColU(MvStyle::MvLine2), 4.0f, 0, 1.0f);
 
-            float textX = pos.x + 7.0f;
-            if (dotColor) {
-                dl->AddCircleFilled(ImVec2(pos.x + 8.0f, pos.y + pillH * 0.5f),
-                                    3.0f, ColU(*dotColor));
-                textX += dotPad;
-            }
             const float textY = pos.y + (pillH - ImGui::GetFontSize()) * 0.5f;
-            dl->AddText(ImVec2(textX, textY), ColU(MvStyle::MvFg2), text);
+            dl->AddText(ImVec2(pos.x + 7.0f, textY),
+                        ColU(MvStyle::MvFg2), text);
 
             ImGui::Dummy(ImVec2(pillW, pillH));
         };
 
-        // LIVE pill — always shown.
-        const ImVec4 liveDot = MvStyle::MvBlue400;
-        drawPill("LIVE", &liveDot);
-
-        // Stage 4 — strength % pill alongside LIVE.
-        if (stage == WorkflowStage::TouchUp && project_) {
-            const float strength = project_->GetSculptState().brushStrength;
-            char buf[32];
-            std::snprintf(buf, sizeof(buf), "STRENGTH %d%%",
-                          static_cast<int>(strength * 100.0f + 0.5f));
-            ImGui::SameLine();
-            drawPill(buf, nullptr);
-        }
+        const float strength = project_->GetSculptState().brushStrength;
+        char buf[32];
+        std::snprintf(buf, sizeof(buf), "STRENGTH %d%%",
+                      static_cast<int>(strength * 100.0f + 0.5f));
+        drawPill(buf);
     }
     ImGui::End();
     ImGui::PopStyleVar();
