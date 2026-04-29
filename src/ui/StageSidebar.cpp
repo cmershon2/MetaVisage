@@ -2,6 +2,7 @@
 #include "core/Mesh.h"
 #include "core/Project.h"
 #include "core/TextureData.h"
+#include "core/WrapPreset.h"
 #include "ui/MvIcons.h"
 #include "ui/MvInspectorPrimitives.h"
 #include "ui/MvStyle.h"
@@ -752,62 +753,7 @@ void StageSidebar::RenderPointReference(Project& project, Actions& out) {
 // Stage 3 — Morph
 // ---------------------------------------------------------------------------
 
-// Built-in preset semantics per CLAUDE.md / product-vision.md:
-//   Fantasy Wrap — uses the default MorphData parameters that the NRICP
-//                  pipeline was tuned against. Tuned for dramatic features
-//                  (pointed ears, large noses, etc.).
-//   Quick Wrap   — Fantasy defaults with rigidity (gamma) bumped to 1.0,
-//                  which forces a tighter, more rigid wrap suitable for
-//                  human-like target meshes.
-//
-// Story 3.8.9's earlier attempt baked numbers from stage3.jsx into both
-// presets. Those values had no relationship to what the NRICP impl was
-// tuned for and produced visibly broken wraps; we revert to the
-// MorphData() constructor defaults as the canonical baseline so the
-// presets actually run.
-//
-// Sprint 4 (Wrap Engine Redesign) will replace this with persisted user
-// presets, so we deliberately don't grow a parameter struct here — both
-// presets are expressible as default ± a couple of overrides.
 namespace {
-
-void ApplyMorphPreset(MorphData& m, int presetIdx) {
-    // Reset all NRICP fields to constructor defaults — equivalent to
-    // applying Fantasy Wrap. We then overlay Quick Wrap's overrides if
-    // requested. Goes through the project's MorphData (caller passes a
-    // reference) so the renderer + serializer pick up the change.
-    const MorphData defaults;
-    m.algorithm                     = defaults.algorithm;
-    m.stiffness                     = defaults.stiffness;
-    m.smoothness                    = defaults.smoothness;
-    m.nricpStiffnessSteps           = defaults.nricpStiffnessSteps;
-    m.nricpAlphaInitial             = defaults.nricpAlphaInitial;
-    m.nricpAlphaFinal               = defaults.nricpAlphaFinal;
-    m.nricpIcpIterations            = defaults.nricpIcpIterations;
-    m.nricpNormalThreshold          = defaults.nricpNormalThreshold;
-    m.nricpLandmarkWeight           = defaults.nricpLandmarkWeight;
-    m.nricpEpsilon                  = defaults.nricpEpsilon;
-    m.nricpEnableBoundaryExclusion  = defaults.nricpEnableBoundaryExclusion;
-    m.nricpBoundaryExclusionHops    = defaults.nricpBoundaryExclusionHops;
-    m.nricpOptimizationIterations   = defaults.nricpOptimizationIterations;
-    m.nricpDpInitial                = defaults.nricpDpInitial;
-    m.nricpDpFinal                  = defaults.nricpDpFinal;
-    m.nricpGammaInitial             = defaults.nricpGammaInitial;
-    m.nricpGammaFinal               = defaults.nricpGammaFinal;
-    m.nricpSamplingInitial          = defaults.nricpSamplingInitial;
-    m.nricpSamplingFinal            = defaults.nricpSamplingFinal;
-    m.nricpNormalizeSampling        = defaults.nricpNormalizeSampling;
-
-    if (presetIdx == 0) {
-        // Quick Wrap — same as Fantasy plus rigidity locked to 1.0 on
-        // both ends of the schedule. Higher rigidity preserves the
-        // source mesh's shape, which is what indie devs want for
-        // realistic human heads.
-        m.nricpGammaInitial = 1.0f;
-        m.nricpGammaFinal   = 1.0f;
-    }
-    // presetIdx == 1 → Fantasy Wrap — defaults already applied above.
-}
 
 // Returns true on click. Caller decides whether to apply the preset; the
 // helper just paints the card and dispatches the hit-test.
@@ -914,9 +860,9 @@ void StageSidebar::RenderMorph(Project& project, bool processing, float progress
                           ImGuiWindowFlags_NoBackground)) {
 
         // ---- Preset cards row ------------------------------------------
-        // Sprint 4 will replace these with persisted user presets; for now
-        // two built-ins (Quick Wrap / Fantasy Wrap) and a disabled "Save
-        // preset" placeholder per design.
+        // Built-ins come from WrapPreset::BuiltIns(); the canonical params
+        // live in core/WrapPreset.cpp. The "Save preset" card is still a
+        // disabled placeholder — Story 4.4 wires its callback.
         I::DrawSectionLabel("PRESETS");
         if (ImGui::BeginTable("##presetCards", 3,
                               ImGuiTableFlags_SizingStretchSame |
@@ -927,9 +873,7 @@ void StageSidebar::RenderMorph(Project& project, bool processing, float progress
             if (DrawPresetCard("quick", "Quick Wrap",
                                "Tight wrap", MV_ICON_TARGET,
                                lastAppliedPreset_ == 0, /*disabled=*/false)) {
-                // Quick = defaults + rigidity 1.0 (rigid wrap for
-                // human-like targets).
-                ApplyMorphPreset(morph, /*presetIdx=*/0);
+                WrapPreset::QuickWrap().ApplyTo(morph);
                 lastAppliedPreset_ = 0;
             }
 
@@ -937,9 +881,7 @@ void StageSidebar::RenderMorph(Project& project, bool processing, float progress
             if (DrawPresetCard("fantasy", "Fantasy Wrap",
                                "Looser fit", MV_ICON_SPARKLES,
                                lastAppliedPreset_ == 1, /*disabled=*/false)) {
-                // Fantasy = the canonical MorphData defaults the NRICP
-                // pipeline was tuned against.
-                ApplyMorphPreset(morph, /*presetIdx=*/1);
+                WrapPreset::FantasyWrap().ApplyTo(morph);
                 lastAppliedPreset_ = 1;
             }
 

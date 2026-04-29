@@ -99,6 +99,7 @@ set(CORE_SOURCES
     src/core/Camera.cpp
     src/core/UndoStack.cpp
     src/core/TextureData.cpp
+    src/core/WrapPreset.cpp
     src/rendering/Renderer.cpp
     src/rendering/MeshRenderer.cpp
     src/rendering/ShaderManager.cpp
@@ -159,6 +160,7 @@ set(CORE_HEADERS
     include/core/UndoStack.h
     include/core/UndoActions.h
     include/core/TextureData.h
+    include/core/WrapPreset.h
     include/rendering/Renderer.h
     include/rendering/MeshRenderer.h
     include/rendering/ShaderManager.h
