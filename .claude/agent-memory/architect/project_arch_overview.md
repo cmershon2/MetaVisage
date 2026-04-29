@@ -1,306 +1,108 @@
 ---
 name: MetaVisage Architecture Overview
-description: High-level layer map, key files, build system, and Qt coupling as of Sprint 3.5 audit
+description: Layer map, ImGui shell structure, Qt removal completion, and Sprint 3.8 UI/UX audit findings as of 2026-04-27
 type: project
 ---
 
 ## Layer Map
 
 ```
-Presentation  → src/ui/ (MainWindow, ViewportWidget, ViewportContainer, SidebarWidget, dialogs)
-Application   → src/ui/MainWindow.cpp (stage orchestration, morph threading, undo/redo wiring)
+Presentation  → src/ui/AppWindow.cpp, StageSidebar.cpp, Modals.cpp, ViewportHost.cpp, Viewport.cpp, FileDialogs.cpp
+Application   → src/ui/AppWindow.cpp (stage orchestration, morph threading, undo/redo wiring)
 Domain        → src/core/, src/deformation/, src/sculpting/, src/baking/
 Infrastructure → src/rendering/, src/io/, src/utils/
 ```
 
-Single root CMakeLists.txt only — no subdirectory cmake files.
+## Qt Status (Sprint 3.7 complete, branch sprint/UI-UX-Redesign-Implementation)
 
-## Entry Point
+Qt6::Core is fully removed from all live files. AppWindow, StageSidebar, Modals, ViewportHost, Viewport use only std:: types. All Qt dead files were deleted. CMakeLists.txt has a configure-time guard blocking Qt reintroduction.
 
-`src/main.cpp` — QApplication init, OpenGL format (4.3 core, 4xMSAA), dark Fusion palette, icon load, Logger init, MainWindow show.
+## ImGui Shell Structure (Sprint 3.8 audit)
 
-## Key Structural Facts
+### Theme / Style init
+- Single function: `AppWindow::ApplyDarkTheme()` at `src/ui/AppWindow.cpp:471–505`
+- Called once during `Initialize()` at line 150
+- Pattern: `ImGui::StyleColorsDark()` baseline, then explicit `s.Colors[...]` overrides
+- Current palette: WindowBg/ChildBg = rgb(30,30,30), PopupBg/FrameBg = rgb(44,62,80), accents = rgb(52,152,219)
+- Rounding: WindowRounding=4, FrameRounding=3, GrabRounding=3
+- No PushStyleColor overrides in the main frame loop except: StageSidebar.cpp:77 (stage name text blue tint), Modals.cpp:92–93 (error/info title color), and Viewport.cpp hardcoded PackColor() calls
 
-- No .qrc files; no embedded resources. Shaders/assets copied to build dir via file(COPY) in CMakeLists.
-- No vcpkg.json — must be created for Sprint 3.5.
-- No single-instance detection, crash handler, or CLI arg parsing in main.cpp.
-- tr() used ~50+ times but no QTranslator installed — pure string literals, no real i18n.
-- QSettings appears only in WelcomeDialog.cpp (recently-opened projects).
-- MorphWorker is a QObject defined inside MainWindow.cpp (lines 36-99), requires #include "MainWindow.moc" at line 1855.
+### App shell / DockSpace
+- `AppWindow::RenderAppShell()` at `src/ui/AppWindow.cpp:679–771`
+- Single full-screen host window `##AppHostWindow` with `ImGuiWindowFlags_MenuBar | NoBackground | NoDocking | NoTitleBar...`
+- `ImGui::DockSpace("AppDockSpace", ...)` with `PassthruCentralNode` flag — the central area is transparent, OpenGL renders behind it
+- Dockspace split rebuilt every launch (static bool sDockBuilt): 28% right → "Stage" window, 72% center → viewport. Locked with `NoUndocking | NoDockingOverMe | NoDockingSplit | HiddenTabBar`
+- `centralRectPos_` / `centralRectSize_` captured from `DockBuilderGetCentralNode` and passed to `ViewportHost::BuildLayout`
 
-## Qt Threading Pattern
+### Menu bar
+- `AppWindow::RenderMainMenuBar()` at `src/ui/AppWindow.cpp:773–847`
+- Menus: File (New/Open/Save/SaveAs/Exit), Edit (Undo/Redo), View (Show Grid/camera presets — all disabled stubs except grid toggle), Help (Docs/Account/Updates/Shortcuts/About)
+- Right-aligned stage indicator text: "Stage N / 4 — StageName"
 
-QThread + moveToThread pattern for morph deformation:
-- MainWindow.cpp:1491 creates QThread, MorphWorker moved to it
-- Signals: progressUpdated, finished — connect back to MainWindow slots
-- Replacement: std::thread + std::atomic + callback/future
+### Status bar
+- `AppWindow::RenderStatusBar()` at `src/ui/AppWindow.cpp:849–859`
+- Single `ImGui::Text(...)` line at bottom of host window: "Stage N / 4 — StageName | StatusMessage"
+- No separate top-level window — rendered as last child of host window
 
-## Rendering Layer Qt Coupling (Risk)
+### StageSidebar
+- Entry: `StageSidebar::Render()` at `src/ui/StageSidebar.cpp:55–106`
+- Single `ImGui::Begin("Stage", ...)` window with `NoMove | NoCollapse | NoTitleBar`
+- Header: stage counter, blue-tinted stage name (PushStyleColor), hint text, Separator
+- Per-stage dispatch via switch → RenderAlignment / RenderPointReference / RenderMorph / RenderTouchUp
+- Footer: Previous / Next buttons with CanProceedToNextStage gate
 
-All 5 renderer classes inherit QOpenGLFunctions_4_3_Core as base:
-- Renderer, ShaderManager, MeshRenderer, PointRenderer, GizmoRenderer
-- Each calls initializeOpenGLFunctions() in constructor
-- ShaderManager uses QFile/QTextStream for shader file loading
-- Under GLAD, GL functions are global — base class and initializeOpenGLFunctions() both go away
+### Per-stage sidebar render functions (all in StageSidebar.cpp):
+- `RenderAlignment()` lines 112–206 (~95 lines): flat layout — TextUnformatted labels, Button rows, DragFloat3 for Position/Rotation/Scale, Combo for texture slot, Button for Reset Transform. No collapsing headers or BeginChild.
+- `RenderPointReference()` lines 212–246 (~35 lines): Text stats (paired/morph-only/target-only), Checkbox + Combo for symmetry, SliderFloat for point size, Button for clear.
+- `RenderMorph()` lines 252–370 (~120 lines): flat SliderInt/SliderFloat for main params, CollapsingHeader("Advanced") wrapping 10+ advanced sliders + Reset button, ProgressBar + Cancel when processing, Combo for preview mode, Accept button, then BeginChild-free Vertex Mask sub-panel with Checkbox/SliderFloat.
+- `RenderTouchUp()` lines 376–428 (~55 lines): RadioButton row for brush type, SliderFloat for Radius/Strength, Combo for Falloff, Checkbox for Symmetry + axis Combo, Checkbox for target overlay, full-width Export button.
 
-## Domain Layer Qt Coupling (Risk)
+### Modals (all in src/ui/Modals.cpp except About)
+- `RenderConfirmModal()` lines 48–67: `BeginPopupModal("##ConfirmModal")` — AlwaysAutoResize, title + separator + message + two buttons
+- `RenderErrorModal()` lines 87–101: `BeginPopupModal("##ErrorModal")` — title color push (red or green), separator, message, OK button
+- `RenderWelcomeModal()` lines 113–172: `BeginPopupModal("Welcome to MetaVisage")` — 520×420, New Project / Open Project buttons, BeginChild("##recent_projects", {0,180}, border=true) scrollable recent list, Close button
+- `RenderExportModal()` lines 185–279: `BeginPopupModal("Export Mesh")` — 560 wide, file path + Browse button, format/materials/transform/Y-up/MetaHuman/scale/prefix checkboxes, texture baking combos, Export + Cancel. One PushStyleVar(FrameBorderSize, 1.0f) override.
+- `RenderShortcutsModal()` lines 287–349: `BeginPopupModal("Keyboard Shortcuts")` — 560×520, BeginChild("##shortcuts_scroll", {0,420}, border=true), groups rendered via BeginTable 2-col
+- `RenderAboutModal()` at `src/ui/AppWindow.cpp:947–961`: inline in AppWindow, not in Modals.cpp — `BeginPopupModal("About MetaVisage")` — plain text, OK button
+- `RenderModals()` at AppWindow.cpp:963 dispatches all six
 
-QString used as cross-layer currency in:
-- include/core/Mesh.h (Load/Save/GetName/GetFilePath)
-- include/core/Project.h (QString + QDateTime in structs)
-- include/core/TextureData.h (QString + QImage — ToQImage() used only by TexturePreviewDialog)
-- include/core/UndoableAction.h (Description() returns QString)
-- include/utils/Logger.h (entire API surface: QString, QFile, QMutex, QTextStream)
-- include/utils/ErrorHelper.h (QString, QWidget* params)
-- include/io/ProjectSerializer.h (QString, QJsonObject, QJsonArray)
-- include/io/MeshExporter.h (QString)
-- include/baking/TextureWriter.h (QString)
+### Welcome screen
+- Implemented as `BeginPopupModal` (centered modal), not a separate window or docked panel
+- Triggered on first frame if project has no content: AppWindow.cpp:651–660
+- Contains a `BeginChild` scrollable recent-projects list
 
-## Serialization
+### Custom drawing (ImDrawList)
+- `Viewport::DrawOverlays()` at `src/ui/Viewport.cpp:610–631` — clips a foreground draw list to viewport rect, then calls four sub-functions:
+  - `DrawViewportLabelOverlay()` line 694: AddRectFilled + AddText (bottom-left label badge)
+  - `DrawOrientationGizmoOverlay()` line 717: AddLine + AddCircleFilled + AddText (XYZ axis gizmo, top-right)
+  - `DrawPointLabelsOverlay()` line 770: AddRectFilled + AddText per correspondence point (orange selected, black unselected)
+  - `DrawActiveBorderOverlay()` line 821: AddRect — blue border (52,152,219) on active viewport in dual mode
+- `DrawShadingModeOverlay()` line 828: floating ImGui window `##ShadingMode_<ptr>` at top-left of viewport, semi-transparent (BgAlpha=0.55), 120px combo
+- All hardcoded colors via PackColor() helper (IM_COL32) — no theme tokens
 
-ProjectSerializer uses QJsonDocument/QJsonObject/QJsonArray/QFile throughout.
-.mmproj format is plain JSON. nlohmann/json + std::fstream is the planned replacement.
+### Viewport background
+- GL clear: `glClearColor(0.2f, 0.2f, 0.2f, 1.0f)` at Viewport.cpp:662 (medium grey)
+- Host window clear: `glClearColor(30/255, 30/255, 30/255, ...)` at AppWindow.cpp:668
+- No blueprint grid background — there is a `assets/shaders/grid.vert/.frag` but the GL grid is rendered by the Renderer class, not ImGui
 
-## Dialog Contracts (Sprint 3.6.3 audit — 2026-04-21)
+### Font loading
+- No TTF fonts loaded anywhere in src/. `io.Fonts->AddFont*` is never called.
+- App uses ImGui's default embedded ProggyClean bitmap font throughout
+- All overlay text (`AddText`, label combos, sidebar widgets) uses `ImGui::GetFont()` / `ImGui::GetFontSize()` — always returns the single default font
+- No font asset files exist under assets/
 
-### ExportDialog (src/ui/ExportDialog.cpp)
-- Modal QDialog; no signals emitted
-- Public API: GetOptions() → ExportOptions, GetFilePath() → QString, SetTexturesAvailable(bool)
-- Contains its own QFileDialog::getSaveFileName call (ExportDialog.cpp:134)
-- Launch: MainWindow::OnExportMesh() at MainWindow.cpp:780
+### Sidebar sidebar width
+- Dock split hardcoded at 28% right at AppWindow.cpp:733: `ImGui::DockBuilderSplitNode(dockId, ImGuiDir_Right, 0.28f, ...)`
 
-### WelcomeDialog (src/ui/WelcomeDialog.cpp)
-- Modal QDialog; Result enum: NewProject / OpenProject / OpenRecent / Cancelled
-- Public API: GetResult(), GetSelectedProjectPath(); static GetRecentProjects(), AddRecentProject()
-- Contains QFileDialog::getOpenFileName at WelcomeDialog.cpp:220 (Open Project button)
-- QSettings at lines 237,242,246 — key "recentProjects" (QStringList, max 5 MRU)
-- Launch: MainWindow::ShowWelcomeDialog() via QTimer::singleShot(0,...) in MainWindow ctor (line 142)
-- AddRecentProject called from MainWindow at lines 544, 565, 587, 1102
+## Constraints for Sprint 3.8 Visual Overhaul
 
-### ShortcutsDialog (src/ui/ShortcutsDialog.cpp)
-- Modal read-only QDialog; hardcoded shortcut table; no signals, no output
-- Launch: MainWindow::OnKeyboardShortcuts() at MainWindow.cpp:1151
-- Content: 6 categories, ~21 shortcut rows
-
-### TexturePreviewDialog (src/ui/TexturePreviewDialog.cpp)
-- Non-modal (show(), WA_DeleteOnClose); no signals, no output
-- Accepts (QString textureName, const TextureData& texture)
-- Calls texture.ToQImage() — only consumer of that method; removing this dialog frees ToQImage()
-- Launch: SidebarWidget.cpp:2156 — texture thumbnail click in Morph sidebar
-
-## QFileDialog Call Sites (7 total — all → NFD)
-- WelcomeDialog.cpp:220 — getOpenFileName, *.mmproj
-- MainWindow.cpp:452 — getOpenFileName, *.mmproj
-- MainWindow.cpp:575 — getSaveFileName, *.mmproj
-- MainWindow.cpp:598 — getOpenFileName, mesh files
-- MainWindow.cpp:675 — getOpenFileName, mesh files
-- MainWindow.cpp:717 — getOpenFileName, image files
-- ExportDialog.cpp:134 — getSaveFileName, format-specific
-
-## QMessageBox Call Sites
-- All via ErrorHelper.cpp (ShowError/ShowWarning/ConfirmAction) — 14 call sites in MainWindow.cpp
-- Direct QMessageBox in MainWindow.cpp: lines 894, 1189, 1719, 1842
-- Replacement: queued ImGui modal system (cannot show mid-frame synchronously)
-
-## System Services (Sprint 3.6.4 audit — 2026-04-21)
-
-### QSettings
-- Only in WelcomeDialog.cpp:237,242,246
-- Key: "recentProjects", value: QStringList of absolute paths, max 5 MRU
-- Migration target: %APPDATA%\MetaVisage\config.json
-
-### QDesktopServices::openUrl (3 call sites, MainWindow.cpp)
-- Line 900: open export folder in Explorer (fromLocalFile)
-- Line 1147: https://docs.metavisage.io
-- Line 1156: https://github.com/cmershon2/MetaVisage/issues
-- Replacement: ShellExecuteW for all three
-
-### QLocalServer / QLocalSocket — ABSENT; net-new via CreateMutexW
-### QNetworkAccessManager — ABSENT; net-new via WinHTTP or libcurl
-
-### Qt Threading (all sites)
-- morphThread_: MainWindow.cpp:1491-1514 (MorphWorker defined inline MainWindow.cpp:36-99)
-- statsTimer_: MainWindow.cpp:133-135, QTimer 500ms stats tick
-- QTimer::singleShot: MainWindow.cpp:142, deferred welcome dialog
-- QProgressDialog: MainWindow.cpp:798, export progress
-- QMutex: Logger.h:38, Logger.cpp:25,57 only
-- QWaitCondition, QAtomicInt: ABSENT
-- No texture thumbnail loader thread exists — only MorphWorker
-
-### About Dialog
-- Does NOT exist. Help menu has Documentation + Report Issue → both QDesktopServices::openUrl.
-
-## ViewportWidget Deep Structure (Sprint 3.5 port target)
-
-### Owns (must survive port)
-- unique_ptr<Camera> — zero Qt deps, portable as-is
-- unique_ptr<Renderer> — needs QOpenGLFunctions→GLAD rework
-- All brush instances (SmoothBrush, GrabBrush, PushPullBrush, InflateBrush, MaskBrush)
-- QComboBox* shadingModeCombo_ at (8,8) — becomes ImGui::Combo in viewport window
-- QPoint lastMousePos_, transformStartPos_ — become plain int/float pairs
-
-### GL context lifecycle
-- initializeGL(): calls initializeOpenGLFunctions(), creates Renderer, glEnable(GL_MULTISAMPLE)
-- paintGL(): renderer_->Render() then QPainter overlay pass (label, axis letters, point numbers)
-- resizeGL(): only glViewport(0, 0, w, h)
-
-### QPainter overlays in paintGL (lines 835–968) — must become ImGui draw-list calls
-1. Viewport label text (e.g. "Target Mesh") — line 840–856
-2. Orientation gizmo X/Y/Z axis letter labels with NDC projection — lines 862–904
-3. Point number labels with WorldToScreen projection (Stage 2 only) — lines 907–968
-
-### makeCurrent()/doneCurrent() call sites (GPU uploads from sculpt/mask strokes)
-Lines: 194, 201, 209, 388, 420, 492, 532, 627, 681, 715
-All on main thread — become no-ops under GLFW (context permanently current on main thread).
-
-### Keyboard shortcuts in keyPressEvent (line 1209)
-All via QKeyEvent::key() switch — no QShortcut objects:
-- G/R/S: transform modes (Alignment stage only)
-- X/Y/Z: axis constraints (when transform mode active)
-- [/]: brush radius ±10% (TouchUp stage only) — emits BrushRadiusChanged
-- Escape: cancel transform or deselect point
-- Delete: remove selected point (PointReference stage) — emits PointDeleteRequested
-- Home: camera reset
-- 1/3/5/7: ortho views (MAIN ROW numbers, not numpad — critical GLFW distinction)
-- 5: toggle perspective/ortho
-- F: focus on mesh bounds
-
-### QPoint member variable coupling
-QPoint lastMousePos_ and QPoint transformStartPos_ (h:180–181) come transitively from QMouseEvent.
-ApplyTransform(const QPoint& delta) (cpp:1436) takes QPoint. Must replace with plain struct { int x, y; } or glm::ivec2 when QMouseEvent is removed.
-
-### Signals emitted by ViewportWidget (h:107–127)
-TransformModeChanged, TargetTransformChanged, CameraChanged, PointPlaced, PointSelected,
-PointDeleteRequested, BrushRadiusChanged, TransformApplied, SculptStrokeCompleted, MaskStrokeCompleted.
-SculptStrokeCompleted, MaskStrokeCompleted, BrushRadiusChanged, TransformApplied are NOT connected
-inside the viewport layer files — wired upstream in stage controllers or MainWindow.
-
-### Dead code in ViewportContainer
-OnLeftViewportClicked() and OnRightViewportClicked() are declared (h:50–51) and defined (container.cpp:162–168)
-but are never connected via connect() anywhere in these files. Safe to remove.
-
-### Camera orbit/pan/zoom
-- MMB → orbit; Shift+MMB → pan; scroll → zoom
-- Qt modifier check: event->modifiers() & Qt::ShiftModifier (line 1027)
-- GLFW: check GLFW_KEY_LEFT_SHIFT state at time of MMB press
-- Camera::Orbit/Pan/Zoom take plain floats — portable
-
-### Dual viewport camera sync (ViewportContainer)
-- CameraChanged signal → OnLeft/RightCameraChanged → SyncCameraFrom()
-- syncing_ bool prevents re-entrant loops (lines 134–160)
-- Cameras are COPIED, not shared pointer
-- Splitter sizes: setSizes({w/2, w/2}) — no QSettings persistence — becomes ImGui 50/50 default
-
-## Sprint 3.6 Regression Audit (as of 2026-04-23)
-
-### Issue 1 — Sidebar Dock (AppWindow.cpp:380–393, StageSidebar.cpp:60–61)
-DockingEnable is set and DockBuilder fires. Root cause: `io.IniFilename = nullptr` (line 122) means the corrected dock state is never persisted. `StageSidebar::Render` passes a fixed pixel size hint (`ImVec2(320, 520)`, `ImGuiCond_FirstUseEver`) which can override the proportional dock slot before dockspace geometry resolves, causing the window to land undocked and stay there.
-
-### Issue 2 — Transform Gizmo (Viewport.cpp:208–244, StageSidebar.cpp:156–170)
-G/R/S keys set `transformMode_` and the gizmo renders. LMB drag path is explicitly deferred — `isTransforming_` is never set true, `OnMouseButton` has no gizmo-hit logic (Viewport.cpp:226–227 comment). The sidebar DragFloat3 spinboxes (Position/Rotation/Scale) DO write to `project_->GetAlignmentData().targetMeshTransform` and work.
-
-### Issue 3 — Font Size (AppWindow.cpp:116–141)
-No `io.Fonts->AddFontFromFileTTF` call anywhere — falls back to ProggyClean 13px bitmap font. No `glfwGetWindowContentScale` / `io.FontGlobalScale` DPI scaling. Dark theme is correctly applied via `ApplyDarkTheme()`.
-
-### Issue 4 — Texture Preview (Modals.cpp, StageSidebar.cpp:130–150)
-`TexturePreviewDialog` was never ported. No `ImGui::Image`, no `ImTextureID`, no GL texture upload for preview in sidebar. Texture list renders as BulletText labels only.
-
-### Issue 5 — Shading Mode (AppWindow.cpp:447–452, Viewport.cpp:50–57)
-View > Shading Mode submenu exists but all items stubbed with `false, false` (display only). `Viewport::SetShadingMode()` and renderer plumbing are intact. Story 3.6.5 deferred — hook lands in `RenderMainMenuBar`.
-
-### Issue 6 — Status Bar Cut Off (AppWindow.cpp:370–400)
-`statusH` is correctly reserved from dockspace. However `ImGui::SetCursorPosY(ImGui::GetCursorPosY())` at line 398 is a no-op — cursor is not explicitly advanced to `avail.y - statusH` after `DockSpace()`, so `RenderStatusBar` renders at an incorrect Y position.
-
-### Issue 7 — Default Head Orientation (AppWindow.cpp:747–765, src/rendering/Renderer.cpp)
-`UseDefaultMorphMesh()` applies -90° X rotation to `MorphMesh.transform` (matching Qt era). Coordinate system did not change between sprints. Suspected cause: `Renderer::Render()` may not consume `MeshReference::transform` for the morph mesh's model matrix. Needs verification in Renderer.cpp.
-
-## Sprint 3.5 Completed State (as of 2026-04-21)
-
-**Live (new ImGui/GLFW shell):**
-- `src/ui/AppWindow.cpp` — owns GLFW window, GLEW init, ImGui context, render loop (Run/RenderFrame/Shutdown)
-- `src/ui/ViewportHost.cpp` — replaced ViewportContainer; dual-viewport layout via ImGui InvisibleButton regions
-- `src/ui/Viewport.cpp` — replaced ViewportWidget; plain C++ with GLFW/ImGui callbacks
-
-**Dead (still compile, never instantiated):**
-- `src/ui/MainWindow.cpp` — Qt QMainWindow; all stage orchestration/undo lived here
-- `src/ui/ViewportContainer.cpp` — Qt QSplitter dual-viewport
-- `src/ui/ViewportWidget.cpp` — Qt QOpenGLWidget
-
-**Key gaps entering Sprint 3.6:**
-- `ImGuiConfigFlags_DockingEnable` NOT set (AppWindow.cpp:72 — only NavEnableKeyboard)
-- No Project instance constructed in shell — ViewportHost::SetProject never called
-- No UndoStack instantiated anywhere (was owned by dead MainWindow)
-- No StageManager class exists — stage set directly via Project::SetCurrentStage()
-- No application-level shortcut handling (Ctrl+Z/S/O etc.) — only viewport shortcuts in Viewport::OnKey
-- Menu bar: clean slate — RenderFrame contains only debug HUD (AppWindow.cpp:221–233)
-- GLEW is used (not GLAD) — note for 3.6 implementation
-
-**3.6 scope** (next sprint):
-- SidebarWidget, ExportDialog, ShortcutsDialog, WelcomeDialog, TexturePreviewDialog
-- Menu bar, toolbar, status bar — extend AppWindow::RenderFrame
-- File dialogs (QFileDialog → NFD), QSettings, QDesktopServices
-- ErrorHelper (QMessageBox)
-
-**Why:** The category B portable layers (core, rendering, io, utils) all have hidden Qt coupling that was not originally intended. The rendering layer's QOpenGLFunctions inheritance is the largest structural risk.
-
-## Stage 1 (Alignment) UI Inventory — Qt Reference (for ImGui port)
-
-### Import group buttons (SidebarWidget.cpp:201–252)
-- "Import Morph Mesh (MetaHuman)" → emits ImportMorphMeshRequested
-- "Use Default MetaHuman Head" → emits UseDefaultMorphMeshRequested
-- "Import Target Mesh (Custom)" → emits ImportTargetMeshRequested
-
-### Default MetaHuman head — single preset, no picker
-- Hardcoded path: `<appDir>/assets/models/MetaHumanHeadLod0.obj`
-- File exists at: `assets/models/MetaHumanHeadLod0.obj`
-- After load, applies -90° X rotation: `Quaternion::FromAxisAngle({1,0,0}, -90.0f)` — MainWindow.cpp:651-653
-- Then calls `camera->FocusOnBounds(bounds)` and re-evaluates CanProceedToNextStage
-
-### Mesh Status group (SidebarWidget.cpp:255–268)
-- Two QLabel* with objectNames "morphStatus" and "targetStatus" — red when unloaded, green when loaded
-
-### Target Textures group (SidebarWidget.cpp:271–338)
-- Dynamic list populated by `RefreshTextureList(const TextureSet&)`
-- Preset slot names (offered in order, filtered if in use): "Albedo", "Normal Map", "Roughness", "AO", "Emissive", "Metallic"
-- "+ Add Texture" button opens name picker dialog, emits `ImportTextureRequested(name)`
-- Per-slot: emits `ImportTextureRequested(name)` and `RemoveTextureRequested(name)`
-- importAlbedoButton_ and importNormalMapButton_ are nullptr — legacy signals not active
-- project_->GetTargetTextures().textures is the backing store (vector of named TextureEntry)
-
-### Transform Tools group (SidebarWidget.cpp:341–359)
-- Static keybind hint label: "G - Move | R - Rotate | S - Scale / X/Y/Z - Constrain to axis / Esc - Cancel | Left-click + drag to apply"
-- transformModeLabel_ initialized "Mode: None", updated by OnTransformModeChanged(TransformMode, AxisConstraint)
-
-### Target Transform group (SidebarWidget.cpp:361–547)
-- Pos XYZ spinboxes: range ±1000, 2dp, step 0.01
-- Rot XYZ spinboxes: range ±360, 1dp, step 1, degree suffix
-- Scale XYZ spinboxes: range 0.001–100, 3dp, step 0.01
-- All 9 spinboxes → OnSpinBoxValueChanged() → emits TransformValuesChanged
-- Reset Transform button → emits ResetTransformRequested
-- NO axis lock checkboxes; NO snap; NO symmetry (symmetry is Stage 2 only)
-
-### FocusOnBounds (camera framing after import)
-- Qt path: camera->FocusOnBounds(bounds) after every successful Mesh::Load()
-- MainWindow.cpp:624-626 (morph import), :665-667 (default), :698-699 (target)
-- ImGui AppWindow::ImportMorphMeshFromDisk / ImportTargetMeshFromDisk are STUBS — only set filepath/isLoaded=false, no actual Mesh::Load() call, no FocusOnBounds. Must be fully implemented.
-
-### CanProceedToNextStage — Stage 1 → Stage 2 (Project.cpp:36-40)
-- Condition: morphMesh_.isLoaded && targetMesh_.isLoaded (both must be true)
-- isLoaded set to false in current ImGui stubs — "Next Stage" will never enable until load is real
-
-### Grid rendering
-- Owned by Renderer (src/rendering/Renderer.cpp)
-- Flag: showGrid_ (bool, defaults true in constructor)
-- API: Renderer::SetShowGrid(bool) / GetShowGrid() — Renderer.h:29-30
-- Fullscreen triangle approach: empty gridVAO_, gridVertexCount_=3, gl_VertexID driven
-- Shaders: assets/shaders/grid.vert + grid.frag
-- No Project or Config field gates it — purely runtime renderer flag
-
-## Qt-isms Remaining in UI-Adjacent Code (Post-3.5)
-
-- AppWindow.cpp:20 — #include <QString> for MV_LOG macros
-- Viewport.h:4,68,167 — QString for viewportLabel_ member and setter
-- ViewportHost.cpp:52–63 — QStringLiteral for viewport labels in SetDualMode (easy to convert to const char*)
-- Project.h:8–9 — QString + QDateTime throughout; all Save/Load paths use QString
-- UndoStack::UndoDescription/RedoDescription return QString
-- Logger entire API: QString, QFile, QMutex, QTextStream
+1. **DockSpace pins "Stage" window identity** — the string "Stage" at StageSidebar.cpp:67 and DockBuilderDockWindow("Stage") at AppWindow.cpp:749 must stay in sync. Renaming or wrapping that window breaks docking.
+2. **Hardcoded 28% sidebar split** — changing sidebar width requires touching AppWindow.cpp:733.
+3. **ImDrawList overlay colors are not themed** — all four overlay drawing functions use hardcoded PackColor() values (active border blue=52,152,219; selected point orange=230,126,34; axis colors; label backgrounds). These will not respond to ImGuiStyle changes.
+4. **Gizmo colors live in the renderer** — transform gizmo axis colors are set by GizmoRenderer, not ImGui, and are OpenGL-rendered meshes, not ImGui widgets.
+5. **GL viewport clear color** — Viewport.cpp:662 hardcodes the 3D background grey; must be changed separately from ImGuiStyle.
+6. **Shading combo is a freestanding ImGui window** with hardcoded position offset (x+8, y+8) and BgAlpha=0.55 — custom positioning logic would need updating for any new chrome around the viewport.
+7. **No font infrastructure** — adding Saira/Inter/JetBrains Mono requires: (a) adding TTF files to assets/fonts/, (b) adding font load calls in AppWindow::Initialize() after ImGui::CreateContext(), (c) updating Paths::ExecutableDir() asset resolution, (d) wiring multiple ImFont* handles for per-context PushFont/PopFont. Every text site in Viewport.cpp passes `ImGui::GetFont()` directly to AddText — those all need to become named font handles.
+8. **FrameBorderSize=0 default** — ExportModal manually pushes FrameBorderSize=1 as a one-off fix (Modals.cpp:197). The new theme will want a consistent FrameBorderSize policy across all modals.
+9. **No existing blueprint grid or glow** — zero ImDrawList-based background grid or shadow/glow primitives exist today; all must be net-new.
+10. **CollapsingHeader in RenderMorph** — the "Advanced" collapsing header (StageSidebar.cpp:269) uses ImGui default header styling. The new spec's custom panel chrome will need to decide whether to replace this.

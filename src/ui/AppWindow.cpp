@@ -1,5 +1,19 @@
+// NOMINMAX must land before any header that could transitively include
+// <windows.h> — otherwise its `min` / `max` macros shadow std::min /
+// std::max wherever AppWindow.cpp uses them (e.g. the sculpt-stroke undo
+// builder). Hoisted here even before the project headers because GLFW's
+// imgui_impl_* and the Win32 native helper both pull windows.h in.
+#ifdef _WIN32
+#define NOMINMAX
+#define WIN32_LEAN_AND_MEAN
+#endif
+
 #include "ui/AppWindow.h"
 #include "ui/FileDialogs.h"
+#include "ui/LoginScreen.h"
+#include "ui/MvStyle.h"
+#include "ui/StageStepper.h"
+#include "ui/ToolRail.h"
 #include "ui/Viewport.h"
 #include "ui/ViewportHost.h"
 #include "core/Camera.h"
@@ -36,6 +50,20 @@
 #include <format>
 #include <string>
 
+// Sprint 3.8 follow-up — frameless OS window + custom title bar. We expose
+// the Win32 HWND so our WM_NCHITTEST handler can tell Windows where the
+// drag-able title bar / resize edges are, which buys us back native Aero
+// Snap, edge-resize cursors, and the right-click system menu without the
+// double title bar redundancy of the previous decorated-window approach.
+#ifdef _WIN32
+#define GLFW_EXPOSE_NATIVE_WIN32
+#include <GLFW/glfw3native.h>
+// NOMINMAX / WIN32_LEAN_AND_MEAN are defined at the very top of this file
+// (before any header that could transitively pull windows.h in).
+#include <windows.h>
+#include <windowsx.h>
+#endif
+
 namespace MetaVisage {
 
 namespace {
@@ -44,6 +72,118 @@ void GlfwErrorCallback(int error, const char* description) {
     std::fprintf(stderr, "GLFW error %d: %s\n", error, description);
     MV_LOG_ERROR(std::format("GLFW error {}: {}", error, description));
 }
+
+#ifdef _WIN32
+// =============================================================================
+// Frameless-window hit-test hook
+//
+// GLFW's GLFW_DECORATED=false strips the OS chrome but also strips the
+// native edge-resize / title-bar-drag / Aero Snap behaviour. We get those
+// back by subclassing the GLFW window's WndProc and answering the OS's
+// WM_NCHITTEST query: "given this cursor position, which non-client zone
+// is it in?"
+//
+// Layout we tell Windows about:
+//
+//   ┌─────────────────────────────────────────────────────────┐
+//   │ ▲ resize-top                            ▲ caption btns ▲│
+//   │ ◀ resize-left  HTCAPTION  (drag-zone)   ▶  HTCLIENT     │
+//   ├─────────────────────────────────────────────────────────┤  ← y = TitleBarH
+//   │                                                         │
+//   │                  HTCLIENT  (ImGui)                      │
+//   │                                                         │
+//   └─────────────────────────────────────────────────────────┘
+//
+// HTCAPTION makes the OS handle drag, double-click-maximize, drag-to-snap.
+// HTCLIENT lets ImGui's invisible buttons receive the click for our
+// custom min/max/close caption buttons. The 4 px resize border on each
+// edge gives the user the standard resize cursor + drag.
+// =============================================================================
+
+// Constants must match RenderTitleBar's layout in this same file.
+constexpr int kTitleBarH        = 36;
+constexpr int kCaptionBtnW      = 46;
+constexpr int kCaptionClusterW  = 3 * kCaptionBtnW;   // min + max + close
+constexpr int kResizeBorder     = 4;
+
+WNDPROC g_originalWndProc = nullptr;
+
+LRESULT CALLBACK MvFramelessWndProc(HWND hwnd, UINT msg,
+                                    WPARAM wp, LPARAM lp) {
+    switch (msg) {
+        // Tell Windows the entire window rect is client area — no
+        // automatic non-client frame inset that would otherwise put a
+        // few-pixel border between the actual window edge and our
+        // GL/ImGui surface.
+        case WM_NCCALCSIZE:
+            if (wp == TRUE) return 0;
+            break;
+
+        // Pre-empt the default DWM rendering of a fake border on
+        // top of borderless windows by reporting size changes early.
+        case WM_NCHITTEST: {
+            POINT pt = { GET_X_LPARAM(lp), GET_Y_LPARAM(lp) };
+            ::ScreenToClient(hwnd, &pt);
+
+            RECT rc;
+            ::GetClientRect(hwnd, &rc);
+            const int cw = rc.right - rc.left;
+            const int ch = rc.bottom - rc.top;
+
+            const bool maximized = ::IsZoomed(hwnd);
+            // Resize edges are suppressed when maximized — the window is
+            // already pinned to the work area, and a stray edge-drag
+            // would un-maximize at the cursor.
+            if (!maximized) {
+                const bool top    = pt.y < kResizeBorder;
+                const bool bottom = pt.y > ch - kResizeBorder;
+                const bool left   = pt.x < kResizeBorder;
+                const bool right  = pt.x > cw - kResizeBorder;
+                if (top    && left)  return HTTOPLEFT;
+                if (top    && right) return HTTOPRIGHT;
+                if (bottom && left)  return HTBOTTOMLEFT;
+                if (bottom && right) return HTBOTTOMRIGHT;
+                if (top)    return HTTOP;
+                if (bottom) return HTBOTTOM;
+                if (left)   return HTLEFT;
+                if (right)  return HTRIGHT;
+            }
+
+            // Custom title bar zone.
+            if (pt.y < kTitleBarH) {
+                // The right-most cluster is our min/max/close caption
+                // buttons; pass clicks through to ImGui so InvisibleButton
+                // can fire its glfwIconify / Maximize / SetWindowShouldClose
+                // callbacks.
+                if (pt.x > cw - kCaptionClusterW) {
+                    return HTCLIENT;
+                }
+                return HTCAPTION;
+            }
+
+            return HTCLIENT;
+        }
+    }
+    return ::CallWindowProc(g_originalWndProc, hwnd, msg, wp, lp);
+}
+
+void InstallFramelessHook(GLFWwindow* glfwWindow) {
+    HWND hwnd = ::glfwGetWin32Window(glfwWindow);
+    if (!hwnd) {
+        MV_LOG_WARNING("InstallFramelessHook: glfwGetWin32Window returned null");
+        return;
+    }
+    g_originalWndProc = reinterpret_cast<WNDPROC>(
+        ::SetWindowLongPtr(hwnd, GWLP_WNDPROC,
+                           reinterpret_cast<LONG_PTR>(MvFramelessWndProc)));
+    // Force the OS to recompute the non-client area now that we own
+    // WM_NCCALCSIZE — without this nudge the pre-existing frame inset
+    // sticks until the user resizes.
+    ::SetWindowPos(hwnd, nullptr, 0, 0, 0, 0,
+                   SWP_FRAMECHANGED | SWP_NOMOVE | SWP_NOSIZE |
+                   SWP_NOZORDER | SWP_NOACTIVATE);
+}
+#endif // _WIN32
 
 // Case-insensitive suffix check used in path-extension comparisons.
 bool EndsWithICase(const std::string& s, const std::string& suffix) {
@@ -117,6 +257,12 @@ bool AppWindow::Initialize(int width, int height, const char* title) {
     glfwWindowHint(GLFW_DEPTH_BITS, 24);
     glfwWindowHint(GLFW_STENCIL_BITS, 8);
     glfwWindowHint(GLFW_SAMPLES, 4); // 4x MSAA
+    // Sprint 3.8 follow-up — frameless mode. Sprint 3.8.2's plan kept the
+    // OS native title bar and added our custom one inside the client area,
+    // which produced two title bars stacked. With DECORATED=false the OS
+    // chrome disappears entirely; the InstallFramelessHook below restores
+    // native drag / resize / Aero Snap by answering WM_NCHITTEST.
+    glfwWindowHint(GLFW_DECORATED, GLFW_FALSE);
 
     window_ = glfwCreateWindow(width, height, title, nullptr, nullptr);
     if (!window_) {
@@ -124,6 +270,10 @@ bool AppWindow::Initialize(int width, int height, const char* title) {
         glfwTerminate();
         return false;
     }
+
+#ifdef _WIN32
+    InstallFramelessHook(window_);
+#endif
 
     glfwMakeContextCurrent(window_);
     glfwSwapInterval(1); // vsync
@@ -147,7 +297,13 @@ bool AppWindow::Initialize(int width, int height, const char* title) {
     io.ConfigFlags |= ImGuiConfigFlags_DockingEnable;
     io.IniFilename = nullptr; // don't persist imgui.ini in cwd
 
-    ApplyDarkTheme();
+    // Sprint 3.8.1 — load TTF fonts (Inter / Saira / JetBrains Mono) into the
+    // atlas before the GL backend uploads it during ImGui_ImplOpenGL3_Init,
+    // then apply the design-token color palette. Missing TTFs are non-fatal:
+    // MvStyle::LoadFonts falls back to ProggyClean and logs a warning so a
+    // dev who pulls the repo without assets/fonts/ still gets a usable build.
+    MvStyle::LoadFonts();
+    MvStyle::Apply();
 
     // install_callbacks=false — we install our own GLFW callbacks below and
     // forward to ImGui_ImplGlfw_* inside them so we can gate viewport input on
@@ -166,10 +322,19 @@ bool AppWindow::Initialize(int width, int height, const char* title) {
     }
     imguiOpenGLInitialized_ = true;
 
-    MV_LOG_INFO(std::format("AppWindow initialized: {}x{}, GL {}, GLSL {}",
+    // PNG / GL-texture assets — must run after ImGui_ImplOpenGL3_Init so the
+    // GL context is current and the logo upload succeeds.
+    MvStyle::LoadAssets();
+
+    {
+        const char* renderer = reinterpret_cast<const char*>(glGetString(GL_RENDERER));
+        gpuRenderer_ = renderer ? renderer : "GPU";
+    }
+    MV_LOG_INFO(std::format("AppWindow initialized: {}x{}, GL {}, GLSL {}, GPU {}",
         width, height,
         reinterpret_cast<const char*>(glGetString(GL_VERSION)),
-        reinterpret_cast<const char*>(glGetString(GL_SHADING_LANGUAGE_VERSION))));
+        reinterpret_cast<const char*>(glGetString(GL_SHADING_LANGUAGE_VERSION)),
+        gpuRenderer_));
 
     viewportHost_ = std::make_unique<ViewportHost>();
     if (!viewportHost_->Initialize()) {
@@ -312,26 +477,21 @@ bool AppWindow::Initialize(int width, int height, const char* title) {
 
     // Stage 2 delete: Delete key on the active viewport fires this. Removes
     // the currently-selected correspondence and its symmetric pair if any.
-    auto onPointDelete = [this]() {
+    // Index-aware deletion helper — used by both the Delete-key path (which
+    // reads the currently-selected index from the viewport) and the
+    // sidebar's per-row X click (which passes its row index directly).
+    deletePointAt_ = [this](int index) {
         if (!project_ || !viewportHost_) return;
-        auto* vp = viewportHost_->GetPrimaryViewport();
-        int primaryIdx = vp ? vp->GetSelectedPointIndex() : -1;
-        int secondaryIdx = viewportHost_->GetSecondaryViewport()
-            ? viewportHost_->GetSecondaryViewport()->GetSelectedPointIndex()
-            : -1;
-        int selected = (primaryIdx >= 0) ? primaryIdx : secondaryIdx;
-        if (selected < 0) return;
-
         auto& correspondences = project_->GetPointReferenceData().correspondences;
-        if (selected >= static_cast<int>(correspondences.size())) return;
+        if (index < 0 || index >= static_cast<int>(correspondences.size())) return;
 
         const std::vector<PointCorrespondence> beforeSnapshot = correspondences;
 
         int pairID = -1;
-        if (correspondences[selected].isSymmetric) {
-            pairID = correspondences[selected].symmetricPairID;
+        if (correspondences[index].isSymmetric) {
+            pairID = correspondences[index].symmetricPairID;
         }
-        correspondences.erase(correspondences.begin() + selected);
+        correspondences.erase(correspondences.begin() + index);
         if (pairID >= 0) {
             for (auto it = correspondences.begin(); it != correspondences.end(); ++it) {
                 if (it->pointID == pairID) { correspondences.erase(it); break; }
@@ -343,6 +503,20 @@ bool AppWindow::Initialize(int width, int height, const char* title) {
             undoStack_->Push(std::make_unique<PointPlacementUndoAction>(
                 project_.get(), beforeSnapshot, correspondences, "Delete Point"));
         }
+    };
+
+    // Delete-key path — figure out which side has the selection and forward
+    // to the index-aware helper.
+    auto onPointDelete = [this]() {
+        if (!viewportHost_) return;
+        auto* vp = viewportHost_->GetPrimaryViewport();
+        int primaryIdx = vp ? vp->GetSelectedPointIndex() : -1;
+        int secondaryIdx = viewportHost_->GetSecondaryViewport()
+            ? viewportHost_->GetSecondaryViewport()->GetSelectedPointIndex()
+            : -1;
+        int selected = (primaryIdx >= 0) ? primaryIdx : secondaryIdx;
+        if (selected < 0) return;
+        deletePointAt_(selected);
     };
 
     // Stage 1 gizmo drag: Viewport fires OnTransformApplied on LMB release with
@@ -468,42 +642,6 @@ bool AppWindow::Initialize(int width, int height, const char* title) {
     return true;
 }
 
-void AppWindow::ApplyDarkTheme() {
-    // Mirror the v1.0 Qt Fusion dark palette so ImGui doesn't flash a lighter
-    // theme. Exact colors match src/main.cpp's pre-migration palette.
-    ImGui::StyleColorsDark();
-
-    ImGuiStyle& s = ImGui::GetStyle();
-    s.WindowRounding = 4.0f;
-    s.FrameRounding = 3.0f;
-    s.GrabRounding = 3.0f;
-
-    auto rgb = [](int r, int g, int b, float a = 1.0f) {
-        return ImVec4(r / 255.0f, g / 255.0f, b / 255.0f, a);
-    };
-
-    s.Colors[ImGuiCol_WindowBg]       = rgb(30, 30, 30);
-    s.Colors[ImGuiCol_ChildBg]        = rgb(30, 30, 30);
-    s.Colors[ImGuiCol_PopupBg]        = rgb(44, 62, 80);
-    s.Colors[ImGuiCol_FrameBg]        = rgb(44, 62, 80);
-    s.Colors[ImGuiCol_FrameBgHovered] = rgb(52, 73, 94);
-    s.Colors[ImGuiCol_FrameBgActive]  = rgb(52, 152, 219);
-    s.Colors[ImGuiCol_TitleBg]        = rgb(30, 30, 30);
-    s.Colors[ImGuiCol_TitleBgActive]  = rgb(44, 62, 80);
-    s.Colors[ImGuiCol_MenuBarBg]      = rgb(35, 40, 45);
-    s.Colors[ImGuiCol_Button]         = rgb(44, 62, 80);
-    s.Colors[ImGuiCol_ButtonHovered]  = rgb(52, 73, 94);
-    s.Colors[ImGuiCol_ButtonActive]   = rgb(52, 152, 219);
-    s.Colors[ImGuiCol_Header]         = rgb(44, 62, 80);
-    s.Colors[ImGuiCol_HeaderHovered]  = rgb(52, 73, 94);
-    s.Colors[ImGuiCol_HeaderActive]   = rgb(52, 152, 219);
-    s.Colors[ImGuiCol_CheckMark]      = rgb(52, 152, 219);
-    s.Colors[ImGuiCol_SliderGrab]     = rgb(52, 152, 219);
-    s.Colors[ImGuiCol_SliderGrabActive] = rgb(41, 128, 185);
-    s.Colors[ImGuiCol_Text]           = rgb(255, 255, 255);
-    s.Colors[ImGuiCol_TextDisabled]   = rgb(127, 140, 141);
-}
-
 void AppWindow::Run() {
     if (!window_) return;
 
@@ -517,6 +655,55 @@ void AppWindow::Run() {
         ImGui_ImplGlfw_NewFrame();
         ImGui::NewFrame();
 
+        // Story 3.8.12 — when the login screen is showing, it must fully
+        // replace every other UI surface. Otherwise the foreground-drawlist
+        // primitives in Viewport::DrawOverlays (orientation gizmo, point
+        // labels, active-pane border) bleed through, and the GL 3D pass
+        // keeps writing pixels behind the login card. Short-circuit the
+        // entire frame body — render only the login surface and skip the
+        // app shell, viewports, sidebar, and modals.
+        if (showLoginScreen_) {
+            // Render login first so the title bar (Begin'd second below)
+            // sits on top of it in ImGui's draw order — drag, minimize,
+            // maximize, close need to work even while the user hasn't
+            // signed in. The title bar's breadcrumb collapses to
+            // "MetaVisage · Sign in" since no project is loaded yet
+            // (RenderTitleBar branches on showLoginScreen_).
+            const auto loginResult = LoginScreen::Render(loginState_,
+                                                          ImGui::GetTime());
+
+            SyncOSWindowTitle();
+            RenderTitleBar();
+            if (loginResult.signInRequested) {
+                loginState_ = LoginScreen::State::Waiting;
+            }
+            if (loginResult.cancelRequested || loginResult.retryRequested) {
+                // Both reset back to Idle — Retry implies "browser didn't
+                // open, take me back to the Sign in button" until the auth
+                // backend differentiates them.
+                loginState_ = LoginScreen::State::Idle;
+            }
+            if (loginResult.closeRequested) {
+                showLoginScreen_ = false;
+            }
+
+            // Still poll worker thread state in case a morph started
+            // pre-login. Doesn't render anything; cleans up the thread
+            // when it finishes so closing the login resumes a coherent app.
+            PollMorphCompletion();
+
+            ImGui::Render();
+            // Solid MvBg0 fill for the OS-window letterbox area outside the
+            // login card. The login screen itself is opaque and covers
+            // every pixel inside the viewport.
+            glViewport(0, 0, fbWidth, fbHeight);
+            glClearColor(MvStyle::MvBg0.x, MvStyle::MvBg0.y, MvStyle::MvBg0.z, 1.0f);
+            glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT);
+            ImGui_ImplOpenGL3_RenderDrawData(ImGui::GetDrawData());
+            glfwSwapBuffers(window_);
+            continue;
+        }
+
         // App shell (dockspace + menu bar + status bar) goes first so that
         // docked windows — the future sidebar and the viewport — can reserve
         // their dock slots before BuildLayout runs.
@@ -527,6 +714,24 @@ void AppWindow::Run() {
                 fbWidth, fbHeight,
                 centralRectPos_.x, centralRectPos_.y,
                 centralRectSize_.x, centralRectSize_.y);
+            // Story 3.8.5 — Stage 3 viewport toolbar shows a 3-state status
+            // pill driven by the morph worker + project state. Mirror it
+            // into each viewport so the overlay can read without locking.
+            //   Processing → worker is running
+            //   Complete   → not running, but morph has been processed
+            //   Ready      → no morph done yet (or isProcessed false)
+            const bool processing = morphRunning_.load();
+            const bool processed  = project_ && project_->GetMorphData().isProcessed;
+            const Viewport::MorphStatus status =
+                processing ? Viewport::MorphStatus::Processing
+              : processed  ? Viewport::MorphStatus::Complete
+                           : Viewport::MorphStatus::Ready;
+            if (Viewport* vp = viewportHost_->GetPrimaryViewport()) {
+                vp->SetMorphStatus(status);
+            }
+            if (Viewport* vp = viewportHost_->GetSecondaryViewport()) {
+                vp->SetMorphStatus(status);
+            }
         }
         RenderFrame(fbWidth, fbHeight);
 
@@ -539,9 +744,25 @@ void AppWindow::Run() {
         // the dockspace is declared (inside RenderAppShell) and before modal
         // rendering so per-frame writes to Project state propagate this frame.
         {
+            // Story 3.8.8 — Stage 2 point list highlights whichever
+            // correspondence is selected in the viewport. Read from the
+            // primary viewport (selection is mirrored across panes by
+            // ViewportHost::SetSelectedPointIndex).
+            const int selectedPointIdx =
+                (viewportHost_ && viewportHost_->GetPrimaryViewport())
+                    ? viewportHost_->GetPrimaryViewport()->GetSelectedPointIndex()
+                    : -1;
             auto actions = stageSidebar_.Render(project_.get(),
                                                 morphRunning_.load(),
-                                                morphProgress_.load());
+                                                morphProgress_.load(),
+                                                selectedPointIdx);
+
+            if (actions.selectPointIndex && viewportHost_) {
+                viewportHost_->SetSelectedPointIndex(*actions.selectPointIndex);
+            }
+            if (actions.deletePointIndex && deletePointAt_) {
+                deletePointAt_(*actions.deletePointIndex);
+            }
 
             if (actions.nextStageRequested && project_) {
                 const int cur = static_cast<int>(project_->GetCurrentStage());
@@ -662,10 +883,21 @@ void AppWindow::Run() {
         DispatchPendingAction();
         RenderModals();
 
+        // Story 3.8.12 — login screen takes over the entire frame at the
+        // top of this loop (see early-continue branch above). When that
+        // branch fires we never reach this point.
+
         ImGui::Render();
 
         glViewport(0, 0, fbWidth, fbHeight);
-        glClearColor(30.0f / 255.0f, 30.0f / 255.0f, 30.0f / 255.0f, 1.0f);
+        // OS framebuffer clear matches MvBg0 (deep navy). Anywhere ImGui
+        // doesn't paint and the viewport's GL pass doesn't cover (1-2 px
+        // gaps between the host window's NoBackground area and adjacent
+        // docked windows) used to leak the legacy 30/255 ImGui dark-grey
+        // through, which read as "#1e1e1e gray bars" between the stepper /
+        // dockspace / status bar. Clearing to MvBg0 makes those gaps
+        // invisible against the design palette.
+        glClearColor(MvStyle::MvBg0.x, MvStyle::MvBg0.y, MvStyle::MvBg0.z, 1.0f);
         glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT);
 
         if (viewportHost_) viewportHost_->RenderGL(fbHeight);
@@ -677,13 +909,28 @@ void AppWindow::Run() {
 }
 
 void AppWindow::RenderAppShell() {
-    // Master host-window pattern: a single borderless window spans the main
-    // viewport, contains the menu bar, reserves a status-bar strip at the
-    // bottom, and hosts an ImGui DockSpace in between. Sidebar/viewport/etc.
-    // dock into that space by matching the dock ID on Begin().
+    // Story 3.8.2 — chrome layout:
+    //   ┌─────────────────────────────────────────┐  ← OS native title bar
+    //   │ ◇ MetaVisage · file.mmproj > STAGE 01 … │ 36 px ##MvTitleBar window
+    //   ├─────────────────────────────────────────┤
+    //   │ File Edit View Mesh Help …  Saved · LL │ ~26 px BeginMenuBar
+    //   ├─────────────────────────────────────────┤
+    //   │  DockSpace (sidebar + viewport)         │
+    //   ├─────────────────────────────────────────┤
+    //   │ ● Ready · Stage 01 ALIGN · …            │ 28 px status bar
+    //   └─────────────────────────────────────────┘
+    //
+    // The title bar lives in its own borderless window pinned to the top of
+    // the main viewport; the host window starts 36 px below it. Keeping the
+    // title bar separate avoids fighting ImGui's BeginMenuBar layout (which
+    // owns the top of any window with WindowFlags_MenuBar).
+    constexpr float TitleBarH = 36.0f;
+    SyncOSWindowTitle();
+    RenderTitleBar();
+
     ImGuiViewport* vp = ImGui::GetMainViewport();
-    ImGui::SetNextWindowPos(vp->Pos);
-    ImGui::SetNextWindowSize(vp->Size);
+    ImGui::SetNextWindowPos(ImVec2(vp->Pos.x, vp->Pos.y + TitleBarH));
+    ImGui::SetNextWindowSize(ImVec2(vp->Size.x, vp->Size.y - TitleBarH));
     ImGui::SetNextWindowViewport(vp->ID);
 
     ImGuiWindowFlags hostFlags =
@@ -695,6 +942,15 @@ void AppWindow::RenderAppShell() {
         ImGuiWindowFlags_NoMove |
         ImGuiWindowFlags_NoBringToFrontOnFocus |
         ImGuiWindowFlags_NoNavFocus |
+        // NoScrollbar / NoScrollWithMouse — the host window must never
+        // scroll. ImGui's ItemSpacing.y between the menu bar / stepper
+        // child / dockspace / status bar can push total content a few
+        // pixels over the host's size, which triggered a vertical
+        // scrollbar on the entire app and let users drag chrome out of
+        // alignment with the design hairlines. Inner BeginChild regions
+        // (stage body, point list, etc.) still scroll on their own.
+        ImGuiWindowFlags_NoScrollbar |
+        ImGuiWindowFlags_NoScrollWithMouse |
         // NoBackground is essential — combined with PassthruCentralNode on the
         // dockspace below, the central (viewport) area becomes transparent so
         // the 3D GL pass shows through. Without this the host's grey fill hid
@@ -707,12 +963,71 @@ void AppWindow::RenderAppShell() {
     ImGui::Begin("##AppHostWindow", nullptr, hostFlags);
     ImGui::PopStyleVar(3);
 
+    // Push ItemSpacing.y = 0 for the host's direct children (menu bar,
+    // stepper child, dockspace, status bar). The default ItemSpacing.y
+    // of 6 px inserted hairline gaps between those layout blocks where
+    // the host's NoBackground transparency leaked the framebuffer
+    // colour through, reading as "spacer bars" between the chrome
+    // sections. Popping before End() keeps the per-stage sidebar's own
+    // Begin scope on the un-pushed default spacing.
+    const ImVec2 prevSpacing = ImGui::GetStyle().ItemSpacing;
+    ImGui::PushStyleVar(ImGuiStyleVar_ItemSpacing,
+                        ImVec2(prevSpacing.x, 0.0f));
+
     RenderMainMenuBar();
 
-    // Reserve a row for the status bar at the bottom of the host window.
-    const float statusH = ImGui::GetFrameHeight();
+    // Story 3.8.3 — full-width stage stepper between the menu bar and the
+    // dockspace. Returns the 0-based stage index the user clicked, or
+    // nullopt. Forward-jump validation lives inside StageStepper::Render
+    // (mirroring StageSidebar's `Next >` gate); we re-validate the result
+    // here as a belt-and-braces guard before mutating Project state.
+    if (auto clicked = StageStepper::Render(project_.get(),
+                                            ImGui::GetContentRegionAvail().x)) {
+        if (project_) {
+            const int target  = *clicked;
+            const int current = static_cast<int>(project_->GetCurrentStage());
+            const bool allowed =
+                (target != current) &&
+                (target < current ||
+                 (target == current + 1 && project_->CanProceedToNextStage()));
+            if (allowed) {
+                project_->SetCurrentStage(static_cast<WorkflowStage>(target));
+                ApplyStageViewportMode();
+            }
+        }
+    }
+
+    // Reserve a 28 px row for the status bar at the bottom of the host window.
+    // Spec value (Sprint 3.8 design); the previous GetFrameHeight() reservation
+    // was font-size-dependent, which would flicker the dockspace size on font
+    // changes between frames during font-atlas reloads.
+    constexpr float statusH = 28.0f;
     ImVec2 avail = ImGui::GetContentRegionAvail();
-    ImVec2 dockSize(avail.x, avail.y - statusH);
+    const float bodyH = avail.y - statusH;
+
+    // Story 3.8.4 — left tool rail for Stage 1 (transforms) and Stage 4
+    // (sculpt brushes). Rendered as a 56 px-wide BeginChild to the left of
+    // the dockspace; SameLine then docks the dockspace flush against it.
+    // Stages 2 (Point Reference) and 3 (Morph) hide the rail entirely so
+    // the dockspace claims the full body width.
+    const WorkflowStage curStage =
+        project_ ? project_->GetCurrentStage() : WorkflowStage::Alignment;
+    const bool railVisible = (curStage == WorkflowStage::Alignment ||
+                              curStage == WorkflowStage::TouchUp);
+    float railW = 0.0f;
+    if (railVisible) {
+        Viewport* primaryViewport =
+            viewportHost_ ? viewportHost_->GetPrimaryViewport() : nullptr;
+        ToolRail::Result railResult =
+            ToolRail::Render(curStage, project_.get(), primaryViewport, bodyH);
+        if (railResult.helpRequested) {
+            pendingAction_ = PendingAction::ShowKeyboardShortcuts;
+        }
+        railW = ToolRail::WidthPx;
+        ImGui::SameLine(0.0f, 0.0f);
+    }
+
+    ImVec2 dockSize(avail.x - railW, bodyH);
 
     ImGuiID dockId = ImGui::GetID("AppDockSpace");
     ImGui::DockSpace(dockId, dockSize, ImGuiDockNodeFlags_PassthruCentralNode);
@@ -767,14 +1082,260 @@ void AppWindow::RenderAppShell() {
     ImGui::SetCursorPosY(ImGui::GetCursorPosY());
     RenderStatusBar();
 
+    ImGui::PopStyleVar(); // ItemSpacing pushed at top of host body
+    ImGui::End();
+}
+
+// =============================================================================
+// Story 3.8.2 — chrome rendering
+// =============================================================================
+
+namespace {
+
+// Compose breadcrumb text used in both the title bar and the OS taskbar.
+// Returns "Stage N / 4 · STAGENAME" — caller decides upper/lower casing.
+std::string StageBreadcrumb(WorkflowStage s) {
+    return std::format("Stage {} / 4 · {}",
+                       static_cast<int>(s) + 1,
+                       StageDisplayName(s));
+}
+
+std::string ProjectFileLabel(const std::string& projectPath) {
+    if (projectPath.empty()) return "Untitled Project";
+    return std::filesystem::path(projectPath).filename().string();
+}
+
+// "Saved 12s ago" / "Saved 3m ago" / "Saved <1h ago" / "Unsaved".
+std::string SavedAgoLabel(const std::optional<std::chrono::steady_clock::time_point>& at) {
+    if (!at) return "Unsaved";
+    using namespace std::chrono;
+    const auto delta = duration_cast<seconds>(steady_clock::now() - *at).count();
+    if (delta < 5)    return "Saved just now";
+    if (delta < 60)   return std::format("Saved {}s ago",  delta);
+    if (delta < 3600) return std::format("Saved {}m ago",  delta / 60);
+    return std::format("Saved {}h ago", delta / 3600);
+}
+
+// Convert an ImVec4 to ImGui packed RGBA32 — used heavily by the title bar
+// drawlist commands.
+ImU32 Col(const ImVec4& v) { return ImGui::ColorConvertFloat4ToU32(v); }
+
+// Caption-button hit area on the right of the title bar. Renders the icon
+// glyph (min/max/close) via ImDrawList primitives and dispatches the GLFW
+// action on click. Hover background is MvBg2 except for close which uses
+// the Windows red.
+void CaptionButton(GLFWwindow* win, ImDrawList* dl, ImVec2 pmin, ImVec2 pmax,
+                   int kind /*0=min, 1=max, 2=close*/) {
+    ImGui::SetCursorScreenPos(pmin);
+    ImGui::PushID(kind);
+    const bool clicked = ImGui::InvisibleButton(
+        "##cap", ImVec2(pmax.x - pmin.x, pmax.y - pmin.y));
+    const bool hovered = ImGui::IsItemHovered();
+    ImGui::PopID();
+
+    if (hovered) {
+        const ImU32 bg = (kind == 2)
+            ? IM_COL32(0xE8, 0x11, 0x23, 0xFF)            // Windows close-red
+            : Col(MetaVisage::MvStyle::MvBg2);
+        dl->AddRectFilled(pmin, pmax, bg);
+    }
+
+    const ImU32 iconCol = (kind == 2 && hovered)
+        ? IM_COL32_WHITE
+        : Col(MetaVisage::MvStyle::MvFg2);
+    const float cx = (pmin.x + pmax.x) * 0.5f;
+    const float cy = (pmin.y + pmax.y) * 0.5f;
+    const float halfIcon = 5.0f;
+
+    if (kind == 0) {
+        dl->AddLine(ImVec2(cx - halfIcon, cy + halfIcon * 0.5f),
+                    ImVec2(cx + halfIcon, cy + halfIcon * 0.5f),
+                    iconCol, 1.6f);
+    } else if (kind == 1) {
+        const bool isMaxed = win && glfwGetWindowAttrib(win, GLFW_MAXIMIZED);
+        if (isMaxed) {
+            // Two stacked rects suggesting "restore"
+            dl->AddRect(ImVec2(cx - halfIcon + 1, cy - halfIcon),
+                        ImVec2(cx + halfIcon,     cy + halfIcon - 1),
+                        iconCol, 0.0f, 0, 1.4f);
+            dl->AddRect(ImVec2(cx - halfIcon,     cy - halfIcon + 1),
+                        ImVec2(cx + halfIcon - 1, cy + halfIcon),
+                        iconCol, 0.0f, 0, 1.4f);
+        } else {
+            dl->AddRect(ImVec2(cx - halfIcon, cy - halfIcon),
+                        ImVec2(cx + halfIcon, cy + halfIcon),
+                        iconCol, 0.0f, 0, 1.4f);
+        }
+    } else { // close
+        const float h = halfIcon - 0.5f;
+        dl->AddLine(ImVec2(cx - h, cy - h), ImVec2(cx + h, cy + h), iconCol, 1.6f);
+        dl->AddLine(ImVec2(cx + h, cy - h), ImVec2(cx - h, cy + h), iconCol, 1.6f);
+    }
+
+    if (clicked && win) {
+        if (kind == 0) {
+            glfwIconifyWindow(win);
+        } else if (kind == 1) {
+            if (glfwGetWindowAttrib(win, GLFW_MAXIMIZED)) glfwRestoreWindow(win);
+            else                                          glfwMaximizeWindow(win);
+        } else {
+            glfwSetWindowShouldClose(win, GLFW_TRUE);
+        }
+    }
+}
+
+} // namespace
+
+void AppWindow::SyncOSWindowTitle() {
+    if (!window_) return;
+    const WorkflowStage stage = project_ ? project_->GetCurrentStage() : WorkflowStage::Alignment;
+    std::string title = std::format("MetaVisage — {} — Stage {} / 4 · {}",
+                                    ProjectFileLabel(projectPath_),
+                                    static_cast<int>(stage) + 1,
+                                    StageDisplayName(stage));
+    if (title != lastOSTitle_) {
+        glfwSetWindowTitle(window_, title.c_str());
+        lastOSTitle_ = std::move(title);
+    }
+}
+
+void AppWindow::RenderTitleBar() {
+    constexpr float TitleBarH = 36.0f;
+    constexpr float CaptionW  = 46.0f;
+
+    ImGuiViewport* vp = ImGui::GetMainViewport();
+    ImGui::SetNextWindowPos(vp->Pos);
+    ImGui::SetNextWindowSize(ImVec2(vp->Size.x, TitleBarH));
+    ImGui::SetNextWindowViewport(vp->ID);
+
+    constexpr ImGuiWindowFlags flags =
+        ImGuiWindowFlags_NoTitleBar | ImGuiWindowFlags_NoResize |
+        ImGuiWindowFlags_NoMove     | ImGuiWindowFlags_NoScrollbar |
+        ImGuiWindowFlags_NoCollapse | ImGuiWindowFlags_NoSavedSettings |
+        ImGuiWindowFlags_NoBringToFrontOnFocus | ImGuiWindowFlags_NoNavFocus |
+        ImGuiWindowFlags_NoDocking;
+
+    ImGui::PushStyleVar(ImGuiStyleVar_WindowRounding, 0.0f);
+    ImGui::PushStyleVar(ImGuiStyleVar_WindowBorderSize, 0.0f);
+    ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding, ImVec2(0.0f, 0.0f));
+    ImGui::PushStyleColor(ImGuiCol_WindowBg, MvStyle::MvBg0);
+
+    ImGui::Begin("##MvTitleBar", nullptr, flags);
+    ImGui::PopStyleColor();
+    ImGui::PopStyleVar(3);
+
+    ImDrawList* dl = ImGui::GetWindowDrawList();
+    const ImVec2 wp = ImGui::GetWindowPos();
+    const ImVec2 ws = ImGui::GetWindowSize();
+
+    // 1 px hairline divider between the title bar and whatever sits below
+    // (currently the menu bar in the host window).
+    dl->AddLine(ImVec2(wp.x,         wp.y + ws.y - 1.0f),
+                ImVec2(wp.x + ws.x,  wp.y + ws.y - 1.0f),
+                Col(MvStyle::MvLine2));
+
+    // ---- Caption buttons (right edge) -----------------------------------
+    // Drawn first so we know how much horizontal room remains for the
+    // breadcrumb. Buttons stack right-to-left: close, max, min.
+    const float captionRight = ws.x;
+    for (int i = 0; i < 3; ++i) {
+        const float x1 = captionRight - i * CaptionW;
+        const float x0 = x1 - CaptionW;
+        // i=0 → close (rightmost), i=1 → max, i=2 → min
+        const int kind = (i == 0) ? 2 : (i == 1) ? 1 : 0;
+        CaptionButton(window_, dl,
+                      ImVec2(wp.x + x0, wp.y),
+                      ImVec2(wp.x + x1, wp.y + ws.y),
+                      kind);
+    }
+    const float breadcrumbMaxX = ws.x - 3.0f * CaptionW - 8.0f;
+
+    // ---- Logo -----------------------------------------------------------
+    constexpr float LeftPad = 12.0f;
+    constexpr float LogoSize = 18.0f;
+    const float logoY = (TitleBarH - LogoSize) * 0.5f;
+    if (MvStyle::Asset.LogoTextureId) {
+        ImGui::SetCursorPos(ImVec2(LeftPad, logoY));
+        // Standard ImGui-OpenGL-backend pattern: pass the GL texture name
+        // through ImTextureID via an intptr_t round-trip. Modern ImGui
+        // defines ImTextureID as ImU64; reinterpret_cast across the int↔ptr
+        // boundary is rejected by MSVC, so a C-style cast is canonical here.
+        ImGui::Image((ImTextureID)(intptr_t)MvStyle::Asset.LogoTextureId,
+                     ImVec2(LogoSize, LogoSize));
+    }
+
+    // ---- Breadcrumb text ------------------------------------------------
+    // Vertically center against the body font's height; if the design fonts
+    // aren't loaded the fallback is ProggyClean which is shorter, so we use
+    // the live font size rather than a hardcoded 14 px.
+    const float textH = ImGui::GetFontSize();
+    const float textY = (TitleBarH - textH) * 0.5f;
+    float cx = LeftPad + LogoSize + 10.0f;
+
+    auto drawSegment = [&](const std::string& s, ImFont* font, const ImVec4& color) {
+        if (cx > breadcrumbMaxX) return;
+        ImGui::SetCursorPos(ImVec2(cx, textY));
+        MvStyle::ScopedFont f(font);
+        ImGui::PushStyleColor(ImGuiCol_Text, color);
+        // Manually clip if the segment would overflow into the caption-button
+        // region. Easier than dynamic ellipsing for a chrome row that rarely
+        // overflows on real-world filenames.
+        const float available = breadcrumbMaxX - cx;
+        const float width = ImGui::CalcTextSize(s.c_str()).x;
+        if (width > available) {
+            ImGui::PushClipRect(ImVec2(ImGui::GetCursorScreenPos().x,
+                                       ImGui::GetCursorScreenPos().y - 4),
+                                ImVec2(ImGui::GetCursorScreenPos().x + available,
+                                       ImGui::GetCursorScreenPos().y + textH + 4),
+                                true);
+            ImGui::TextUnformatted(s.c_str());
+            ImGui::PopClipRect();
+            cx = breadcrumbMaxX + 1.0f;
+        } else {
+            ImGui::TextUnformatted(s.c_str());
+            cx += width;
+        }
+        ImGui::PopStyleColor();
+    };
+
+    drawSegment("MetaVisage", MvStyle::Font.BodyMd, MvStyle::MvFg1);
+    cx += 10.0f;
+    drawSegment("\xC2\xB7", MvStyle::Font.Body, MvStyle::MvLine3);   // U+00B7 middot
+    cx += 10.0f;
+
+    // Story 3.8.12 follow-up — during login, the breadcrumb is just
+    // "MetaVisage · Sign in". No project is loaded yet and there's no
+    // active stage to surface, so we mirror the design's login.jsx
+    // title bar shorthand. The drag/close/min/max plumbing in
+    // RenderTitleBar (caption buttons + WM_NCHITTEST hook) keeps
+    // working unchanged.
+    if (showLoginScreen_) {
+        drawSegment("Sign in", MvStyle::Font.Body, MvStyle::MvFg2);
+        // Caption buttons drawn below; skip the rest of the breadcrumb.
+        ImGui::End();
+        return;
+    }
+
+    const WorkflowStage stage = project_ ? project_->GetCurrentStage() : WorkflowStage::Alignment;
+
+    drawSegment(ProjectFileLabel(projectPath_), MvStyle::Font.Body, MvStyle::MvFg2);
+    cx += 10.0f;
+    drawSegment(">", MvStyle::Font.Body, MvStyle::MvLine3);
+    cx += 10.0f;
+
+    // STAGE NN / 4 · STAGENAME — uppercased mono in MvBlue400
+    std::string stageLabel = std::format("STAGE {:02d} / 4 \xC2\xB7 ",
+                                         static_cast<int>(stage) + 1);
+    const std::string stageName = StageDisplayName(stage);
+    for (char c : stageName) stageLabel.push_back(static_cast<char>(std::toupper(static_cast<unsigned char>(c))));
+    drawSegment(stageLabel, MvStyle::Font.Mono, MvStyle::MvBlue400);
+
     ImGui::End();
 }
 
 void AppWindow::RenderMainMenuBar() {
     if (!ImGui::BeginMenuBar()) return;
 
-    const WorkflowStage stage = project_ ? project_->GetCurrentStage() : WorkflowStage::Alignment;
-    const bool inTouchUp = (stage == WorkflowStage::TouchUp);
     const bool canUndo = undoStack_ && undoStack_->CanUndo();
     const bool canRedo = undoStack_ && undoStack_->CanRedo();
 
@@ -782,15 +1343,12 @@ void AppWindow::RenderMainMenuBar() {
         if (ImGui::MenuItem("New Project", "Ctrl+N")) OnFileNewProject();
         if (ImGui::MenuItem("Open Project...", "Ctrl+O")) pendingAction_ = PendingAction::OpenProject;
         ImGui::Separator();
-        // Save becomes Save As until we persist a project path (Sprint 3.6.4).
         if (ImGui::MenuItem("Save Project", "Ctrl+S")) pendingAction_ = PendingAction::SaveProject;
         if (ImGui::MenuItem("Save Project As...", "Ctrl+Shift+S")) pendingAction_ = PendingAction::SaveProjectAs;
         ImGui::Separator();
-        // Import Morph Mesh / Import Target Mesh / Export Mesh are stage-gated
-        // workflows — the sidebar surfaces them in the stages where they make
-        // sense (Stage 1 for imports, Stage 4 for export). Mirroring them in
-        // the File menu duplicated entry points and confused users about when
-        // they apply, so the menu entries were removed.
+        // Import Morph Mesh / Import Target Mesh / Export Mesh remain
+        // stage-gated in the sidebar — duplicating them here confused users
+        // about when they apply. Decision kept in Sprint 3.6.
         if (ImGui::MenuItem("Exit", "Alt+F4")) OnFileExit();
         ImGui::EndMenu();
     }
@@ -806,16 +1364,28 @@ void AppWindow::RenderMainMenuBar() {
     }
 
     if (ImGui::BeginMenu("View")) {
-        // Shading mode lives on the viewport overlay (top-right combo) where
-        // it's adjusted directly while looking at the model — duplicating it
-        // in the menu just gave users two places to set the same thing.
-        // Grid toggle and camera-view presets remain stubbed for 3.6.5.
+        // Shading mode lives on the viewport overlay (Stage-3 Story 3.8.5
+        // moves it into the new top-centre toolbar). The grid and camera
+        // presets remain stubbed for a future story.
         ImGui::MenuItem("Show Grid", nullptr, false, false);
         ImGui::Separator();
         ImGui::MenuItem("Front View (Numpad 1)", nullptr, false, false);
         ImGui::MenuItem("Right View (Numpad 3)", nullptr, false, false);
         ImGui::MenuItem("Top View (Numpad 7)", nullptr, false, false);
         ImGui::MenuItem("Perspective (Home)", nullptr, false, false);
+        ImGui::EndMenu();
+    }
+
+    // Story 3.8.2 — new "Mesh" menu, scaffolded with the entries the design
+    // file shows. All items are stubbed disabled until the corresponding
+    // backend lands; surfacing them now matches the design and lets keyboard
+    // users discover the planned commands.
+    if (ImGui::BeginMenu("Mesh")) {
+        ImGui::MenuItem("Recompute Normals",   nullptr, false, false);
+        ImGui::MenuItem("Validate Topology",   nullptr, false, false);
+        ImGui::Separator();
+        ImGui::MenuItem("Center on Origin",    nullptr, false, false);
+        ImGui::MenuItem("Snap to Floor",       nullptr, false, false);
         ImGui::EndMenu();
     }
 
@@ -826,36 +1396,147 @@ void AppWindow::RenderMainMenuBar() {
         ImGui::Separator();
         if (ImGui::MenuItem("Keyboard Shortcuts")) pendingAction_ = PendingAction::ShowKeyboardShortcuts;
         if (ImGui::MenuItem("About MetaVisage")) pendingAction_ = PendingAction::ShowAbout;
+        ImGui::Separator();
+        // Sprint 3.8.5 dev aid — browse the Lucide icon font's loaded glyphs
+        // and copy codepoints into MvIcons.h. Will move behind a debug build
+        // flag once the icon constants are stable.
+        ImGui::MenuItem("Icon Glyph Explorer (Dev)", nullptr, &showIconExplorer_);
+        // Sprint 3.8.12 — preview the login screen ahead of the Sprint 6.1
+        // auth backend. Toggling resets the state machine so the preview
+        // always opens in Idle.
+        if (ImGui::MenuItem("Login Screen (Dev)", nullptr, showLoginScreen_)) {
+            showLoginScreen_ = !showLoginScreen_;
+            loginState_ = LoginScreen::State::Idle;
+        }
         ImGui::EndMenu();
     }
 
-    // Right-side stage indicator — mirrors the sidebar's `N / 4` element but
-    // is always visible even before the sidebar is docked. Removed once the
-    // sidebar panel lands in 3.6.2.
-    const char* stageName = StageDisplayName(stage);
-    char buf[64];
-    std::snprintf(buf, sizeof(buf), "Stage %d / 4 — %s",
-                  static_cast<int>(stage) + 1, stageName);
-    float textW = ImGui::CalcTextSize(buf).x;
-    float available = ImGui::GetContentRegionAvail().x;
-    if (available > textW + 16.0f) {
-        ImGui::SameLine(ImGui::GetCursorPosX() + available - textW - 8.0f);
-        ImGui::TextUnformatted(buf);
+    // ---- Right-side cluster ---------------------------------------------
+    // Save indicator (mono, MvFg3). The Story 3.8.2 "UE 5.4 · LIVE LINK"
+    // pill that previously sat to the right of the save label has been
+    // dropped — Live Link is far-future scope and the green pill confused
+    // users into thinking the connection was real. The previous stage-
+    // indicator from Sprint 3.6 already moved into the title bar.
+    const std::string savedLabel = SavedAgoLabel(lastSavedAt_);
+
+    float savedW = 0.0f;
+    {
+        MvStyle::ScopedFont f(MvStyle::Font.Mono);
+        savedW = ImGui::CalcTextSize(savedLabel.c_str()).x;
+    }
+    const float wantW = savedW + 10.0f;
+    const float available = ImGui::GetContentRegionAvail().x;
+    if (available < wantW) {
+        ImGui::EndMenuBar();
+        return;
+    }
+
+    ImGui::SameLine(ImGui::GetCursorPosX() + (available - wantW));
+    {
+        MvStyle::ScopedFont f(MvStyle::Font.Mono);
+        ImGui::PushStyleColor(ImGuiCol_Text, MvStyle::MvFg3);
+        ImGui::TextUnformatted(savedLabel.c_str());
+        ImGui::PopStyleColor();
     }
 
     ImGui::EndMenuBar();
 }
 
 void AppWindow::RenderStatusBar() {
-    // Status bar is the final row of the host window. Keep it single-line and
-    // subdued — detailed tool / hint / tier-badge rendering lands as the
-    // sidebar and licensing subsystems come online.
-    ImGui::Separator();
+    constexpr float StatusH = 28.0f;
+    const ImVec2 startCursor = ImGui::GetCursorPos();
+    const ImVec2 origin = ImGui::GetCursorScreenPos();
+
+    // Background fill: MvBg1 — same as the sidebar's WindowBg so the
+    // footer reads as one continuous surface with the sidebar's body
+    // when the eye scans down the right side. Earlier MvBg0 produced
+    // a visible colour transition between the sidebar (MvBg1) and the
+    // status bar (MvBg0). Drawn via the host window's drawlist rather
+    // than a child window so the status bar inherits the host's clipping
+    // and doesn't introduce a separate scroll region.
+    ImDrawList* dl = ImGui::GetWindowDrawList();
+    const float fullW = ImGui::GetContentRegionAvail().x;
+    dl->AddRectFilled(origin,
+                      ImVec2(origin.x + fullW, origin.y + StatusH),
+                      Col(MvStyle::MvBg1));
+
     const WorkflowStage stage = project_ ? project_->GetCurrentStage() : WorkflowStage::Alignment;
-    ImGui::Text("Stage %d / 4 — %s  |  %s",
-                static_cast<int>(stage) + 1,
-                StageDisplayName(stage),
-                statusMessage_.c_str());
+
+    // Pad in horizontally and centre vertically.
+    constexpr float SidePad = 14.0f;
+    MvStyle::ScopedFont monoFont(MvStyle::Font.Mono);
+    const float textH = ImGui::GetFontSize();
+    const float textY = startCursor.y + (StatusH - textH) * 0.5f;
+
+    // Helper: draw "label value" with custom colors and advance cursor.
+    float cx = startCursor.x + SidePad;
+    auto drawSection = [&](const std::string& text, const ImVec4& color) {
+        ImGui::SetCursorPos(ImVec2(cx, textY));
+        ImGui::PushStyleColor(ImGuiCol_Text, color);
+        ImGui::TextUnformatted(text.c_str());
+        ImGui::PopStyleColor();
+        cx += ImGui::CalcTextSize(text.c_str()).x;
+    };
+    auto drawSep = [&]() {
+        ImGui::SetCursorPos(ImVec2(cx + 8.0f, textY));
+        ImGui::PushStyleColor(ImGuiCol_Text, MvStyle::MvLine3);
+        ImGui::TextUnformatted("\xC2\xB7"); // U+00B7 middot
+        ImGui::PopStyleColor();
+        cx += 8.0f + ImGui::CalcTextSize("\xC2\xB7").x + 8.0f;
+    };
+
+    // ● Ready (or current statusMessage_)
+    drawSection("\xE2\x97\x8F ", MvStyle::MvFg1);
+    drawSection(statusMessage_.empty() ? "Ready" : statusMessage_, MvStyle::MvFg2);
+    drawSep();
+
+    // Stage 0N STAGENAME
+    drawSection("Stage ", MvStyle::MvFg3);
+    {
+        std::string s = std::format("{:02d} ", static_cast<int>(stage) + 1);
+        for (char c : std::string(StageDisplayName(stage)))
+            s.push_back(static_cast<char>(std::toupper(static_cast<unsigned char>(c))));
+        drawSection(s, MvStyle::MvBlue400);
+    }
+    drawSep();
+
+    // Source filename (or em dash placeholder)
+    drawSection("Source ", MvStyle::MvFg3);
+    {
+        const std::string src = (project_ && !project_->GetMorphMesh().filepath.empty())
+            ? std::filesystem::path(project_->GetMorphMesh().filepath).filename().string()
+            : "\xE2\x80\x94"; // em dash
+        drawSection(src, MvStyle::MvFg1);
+    }
+    drawSep();
+
+    // Target filename (or em dash placeholder)
+    drawSection("Target ", MvStyle::MvFg3);
+    {
+        const std::string tgt = (project_ && !project_->GetTargetMesh().filepath.empty())
+            ? std::filesystem::path(project_->GetTargetMesh().filepath).filename().string()
+            : "\xE2\x80\x94";
+        drawSection(tgt, MvStyle::MvFg1);
+    }
+
+    // ---- Right-aligned cluster: GPU readout ------------------------------
+    // No FPS counter — Sprint 1.4 decision retained per Sprint 3.8 plan.
+    // The Story 3.8.2 "Live link UE 5.4 ●" segment that previously followed
+    // the GPU label has been dropped — Live Link is far-future scope and
+    // the green dot read as a real connection status.
+    const std::string rightGpuLabel = std::format("GPU {}", gpuRenderer_);
+    const float gpuW = ImGui::CalcTextSize(rightGpuLabel.c_str()).x;
+    const float rightCluster = gpuW + SidePad;
+    const float rightStartX  = startCursor.x + fullW - rightCluster;
+    if (rightStartX > cx + 16.0f) {
+        cx = rightStartX;
+        drawSection(rightGpuLabel, MvStyle::MvFg2);
+    }
+
+    // Reserve the bar's height so the host's content cursor advances past
+    // the manually-positioned text (otherwise End() leaves stale layout).
+    ImGui::SetCursorPos(startCursor);
+    ImGui::Dummy(ImVec2(fullW, StatusH));
 }
 
 void AppWindow::DispatchPendingAction() {
@@ -944,6 +1625,136 @@ void AppWindow::DispatchPendingAction() {
     }
 }
 
+// Sprint 3.8.5 dev tool — Lucide icon glyph explorer. Lists every PUA glyph
+// the Lucide font actually rasterized, lets the user click any glyph to copy
+// its codepoint to the clipboard. Used to populate MvIcons.h once the
+// project's Lucide build is identified. Toggle via Help > Icon Glyph
+// Explorer (Dev).
+//
+// Design notes:
+// - We walk U+E000..U+F8FF and use ImFont::FindGlyphNoFallback so we don't
+//   accidentally enumerate every codepoint in the range (which would then
+//   fall back to the missing-glyph rect).
+// - Glyph buttons are 40 px square in the icon font; codepoint label below
+//   uses MonoSm so the hex is readable without dwarfing the glyph.
+// - A text filter narrows by hex prefix (e.g. "EA" jumps to that block).
+void AppWindow::RenderIconExplorer() {
+    if (!showIconExplorer_) return;
+
+    if (!ImGui::Begin("Lucide Icon Glyph Explorer", &showIconExplorer_,
+                      ImGuiWindowFlags_NoDocking)) {
+        ImGui::End();
+        return;
+    }
+
+    if (!MvStyle::Font.Icon) {
+        ImGui::TextWrapped(
+            "Lucide font not loaded. Drop assets/fonts/lucide.ttf and rebuild.");
+        ImGui::End();
+        return;
+    }
+
+    static char filter[16] = "";
+    ImGui::TextUnformatted("Filter (hex prefix, e.g. \"EA\"):");
+    ImGui::SameLine();
+    ImGui::SetNextItemWidth(120.0f);
+    ImGui::InputText("##filter", filter, sizeof(filter));
+    ImGui::SameLine();
+    if (ImGui::Button("Clear")) filter[0] = '\0';
+    ImGui::SameLine();
+    ImGui::TextDisabled("(click any glyph to copy codepoint)");
+    ImGui::Separator();
+
+    ImGui::BeginChild("##iconscroll", ImVec2(0, 0), false);
+
+    ImFont* font = MvStyle::Font.Icon;
+    constexpr int Cols = 12;
+    int col = 0;
+
+    auto encodeUtf8 = [](unsigned int cp, char* out) -> int {
+        if (cp < 0x80) {
+            out[0] = static_cast<char>(cp);
+            out[1] = '\0';
+            return 1;
+        }
+        if (cp < 0x800) {
+            out[0] = static_cast<char>(0xC0 | (cp >> 6));
+            out[1] = static_cast<char>(0x80 | (cp & 0x3F));
+            out[2] = '\0';
+            return 2;
+        }
+        out[0] = static_cast<char>(0xE0 | (cp >> 12));
+        out[1] = static_cast<char>(0x80 | ((cp >> 6) & 0x3F));
+        out[2] = static_cast<char>(0x80 | (cp & 0x3F));
+        out[3] = '\0';
+        return 3;
+    };
+
+    // ImGui 1.92+ uses dynamic font baking — ImFont no longer exposes a
+    // Glyphs vector. IsGlyphInFont() is the canonical "does this codepoint
+    // exist in this font" check; we walk the full PUA range (6.4k codepoints,
+    // O(1) per check) and skip everything that's missing. Acceptable for a
+    // dev-only inspector.
+    for (unsigned int cp = 0xE000; cp <= 0xF8FF; ++cp) {
+        if (!font->IsGlyphInFont(static_cast<ImWchar>(cp))) continue;
+
+        char hex[8];
+        std::snprintf(hex, sizeof(hex), "%04X", cp);
+        if (filter[0]) {
+            // Case-insensitive prefix match
+            bool match = true;
+            for (int i = 0; filter[i] && match; ++i) {
+                const char a = static_cast<char>(std::toupper(static_cast<unsigned char>(filter[i])));
+                const char b = static_cast<char>(std::toupper(static_cast<unsigned char>(hex[i])));
+                if (a != b) match = false;
+            }
+            if (!match) continue;
+        }
+
+        if (col > 0 && (col % Cols) != 0) ImGui::SameLine();
+        ++col;
+
+        ImGui::BeginGroup();
+        ImGui::PushID(static_cast<int>(cp));
+
+        char utf8[5];
+        encodeUtf8(cp, utf8);
+
+        ImGui::PushFont(font);
+        if (ImGui::Button(utf8, ImVec2(40.0f, 40.0f))) {
+            char clip[16];
+            std::snprintf(clip, sizeof(clip), "0x%04X", cp);
+            ImGui::SetClipboardText(clip);
+        }
+        ImGui::PopFont();
+
+        if (ImGui::IsItemHovered()) {
+            ImGui::SetTooltip("U+%04X — click to copy 0x%04X", cp, cp);
+        }
+
+        {
+            MvStyle::ScopedFont f(MvStyle::Font.MonoSm);
+            ImGui::PushStyleColor(ImGuiCol_Text, MvStyle::MvFg3);
+            const ImVec2 ts = ImGui::CalcTextSize(hex);
+            const float pad = (40.0f - ts.x) * 0.5f;
+            ImGui::Dummy(ImVec2(pad, 0.0f));
+            ImGui::SameLine(0.0f, 0.0f);
+            ImGui::TextUnformatted(hex);
+            ImGui::PopStyleColor();
+        }
+
+        ImGui::PopID();
+        ImGui::EndGroup();
+    }
+
+    if (col == 0) {
+        ImGui::TextDisabled("No glyphs match the filter.");
+    }
+
+    ImGui::EndChild();
+    ImGui::End();
+}
+
 void AppWindow::RenderAboutModal() {
     if (showAbout_) {
         ImGui::OpenPopup("About MetaVisage");
@@ -962,6 +1773,7 @@ void AppWindow::RenderAboutModal() {
 
 void AppWindow::RenderModals() {
     RenderAboutModal();
+    RenderIconExplorer();
     RenderConfirmModal(confirmModal_);
     RenderErrorModal(errorModal_);
     RenderShortcutsModal(shortcutsModal_);
@@ -1136,6 +1948,10 @@ void AppWindow::SaveProjectToDisk(const std::string& path) {
     project_->SetPath(path);
     Config::Instance().AddRecentProject(path);
     statusMessage_ = std::format("Saved to {}", FileName(path));
+    // Story 3.8.2 — drives the menu bar's "Saved Ns ago" indicator. Auto-save
+    // (backlog) will set this from the timer thread; manual save is the
+    // baseline source until then.
+    lastSavedAt_ = std::chrono::steady_clock::now();
     MV_LOG_INFO(std::format("Saved project {}", path));
 }
 
@@ -1393,6 +2209,9 @@ void AppWindow::Shutdown() {
     project_.reset();
     viewportHost_.reset();
     if (imguiOpenGLInitialized_) {
+        // Free GL textures owned by MvStyle (logo) before tearing down the
+        // OpenGL backend — the GL context is still current here.
+        MvStyle::Shutdown();
         ImGui_ImplOpenGL3_Shutdown();
         imguiOpenGLInitialized_ = false;
     }

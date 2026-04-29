@@ -1,14 +1,18 @@
 #ifndef APPWINDOW_H
 #define APPWINDOW_H
 
+#include "ui/LoginScreen.h"
 #include "ui/Modals.h"
 #include "ui/StageSidebar.h"
 
 #include <imgui.h>
 
 #include <atomic>
+#include <chrono>
+#include <functional>
 #include <memory>
 #include <mutex>
+#include <optional>
 #include <string>
 #include <thread>
 #include <vector>
@@ -55,12 +59,14 @@ public:
     UndoStack* GetUndoStack() { return undoStack_.get(); }
 
 private:
-    void ApplyDarkTheme();
     void RenderFrame(int fbWidth, int fbHeight);
 
     void RenderAppShell();
+    void RenderTitleBar();              // Story 3.8.2 — 36px chrome above the menu bar
     void RenderMainMenuBar();
     void RenderStatusBar();
+    void RenderIconExplorer();          // Dev tool — identifies Lucide glyph codepoints
+    void SyncOSWindowTitle();           // Mirror filename + stage breadcrumb to glfwSetWindowTitle
     void RenderAboutModal();
     void RenderModals();
     void DispatchPendingAction();
@@ -107,8 +113,30 @@ private:
     PendingAction pendingAction_ = PendingAction::None;
     std::string statusMessage_;
 
+    // Stage 2 — index-aware point delete, shared by the Delete-key path
+    // (reads the active viewport's selected index) and the sidebar's per-
+    // row X click (passes the row index directly).
+    std::function<void(int)> deletePointAt_;
+
+    // Story 3.8.2 — chrome state.
+    // lastSavedAt_ drives the menu bar's "Saved Ns ago" indicator. Set every
+    // time SaveProjectToDisk completes; nullopt means "no save this session".
+    std::optional<std::chrono::steady_clock::time_point> lastSavedAt_;
+    // GL_RENDERER captured once at startup for the status bar GPU readout.
+    std::string gpuRenderer_;
+    // Last value passed to glfwSetWindowTitle so SyncOSWindowTitle skips
+    // the syscall when nothing changed frame-to-frame.
+    std::string lastOSTitle_;
+
     // Modal state — every struct is inert until its Open() is called.
     bool showAbout_ = false;
+    bool showIconExplorer_ = false;        // Dev tool, gated by Help menu
+
+    // Story 3.8.12 — dev-only login screen preview. Sprint 6.1 will
+    // promote this to first-launch surface driven by the auth backend;
+    // for now the toggle lives behind Help → Login Screen (Dev).
+    bool showLoginScreen_ = false;
+    LoginScreen::State loginState_ = LoginScreen::State::Idle;
     ConfirmModalState confirmModal_;
     ErrorModalState errorModal_;
     WelcomeModalState welcomeModal_;

@@ -1,5 +1,7 @@
 #include "ui/Viewport.h"
 
+#include "ui/MvIcons.h"
+#include "ui/MvStyle.h"
 #include "rendering/Renderer.h"
 #include "core/Project.h"
 #include "core/TextureData.h"
@@ -24,6 +26,8 @@
 
 #include <cmath>
 #include <cstdio>
+#include <cstring>
+#include <string>
 
 namespace MetaVisage {
 
@@ -613,8 +617,8 @@ void Viewport::DrawOverlays(float x, float y, float w, float h) {
 
     // Clip draw-list overlays to the viewport rect so labels and gizmo axes
     // never bleed over the sidebar, the other pane, or the main menu bar.
-    // Floating ImGui windows (shading combo) are clipped separately via
-    // their own window rect — they don't need this scope.
+    // Floating ImGui windows (Sprint 3.8.5 toolbar / pills / HUD) are clipped
+    // separately via their own window rects — they don't need this scope.
     ImDrawList* fgDl = ImGui::GetForegroundDrawList(ImGui::GetMainViewport());
     fgDl->PushClipRect(ImVec2(x, y), ImVec2(x + w, y + h), true);
 
@@ -627,8 +631,15 @@ void Viewport::DrawOverlays(float x, float y, float w, float h) {
 
     fgDl->PopClipRect();
 
-    // Floating combo window — must be outside the draw-list clip scope.
-    DrawShadingModeOverlay(x, y, w);
+    // Sprint 3.8.5 — three floating chrome windows anchored to the viewport
+    // rect. Render last so they sit above the GL pass and the other overlays.
+    // Sprint 3.8.9 added the Stage 3 result-stats panel; when it's visible
+    // it replaces the bottom-left HUD (DrawBottomLeftHud has its own gate).
+    DrawTopCenterToolbar    (x, y, w, h);
+    DrawTopRightPills       (x, y, w, h);
+    DrawBottomLeftHud       (x, y, w, h);
+    DrawResultStatsOverlay  (x, y, w, h);  // Stage 3 — gated internally
+    DrawMeshStatsOverlay    (x, y, w, h);  // Stage 4 — gated internally
 }
 
 void Viewport::RenderGL(float x, float y, float w, float h, int fbHeight) {
@@ -659,7 +670,9 @@ void Viewport::RenderGL(float x, float y, float w, float h, int fbHeight) {
     glDisable(GL_CULL_FACE);
     glDisable(GL_BLEND);
 
-    glClearColor(0.2f, 0.2f, 0.2f, 1.0f);
+    // Sprint 3.8.5 — viewport bg matches MvBg0 (deep navy) so the chrome
+    // overlays sit on the same surface as the design's blueprint void.
+    glClearColor(MvStyle::MvBg0.x, MvStyle::MvBg0.y, MvStyle::MvBg0.z, 1.0f);
     glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT);
 
     if (renderer_) {
@@ -730,10 +743,15 @@ void Viewport::DrawOrientationGizmoOverlay(float x, float y, float w) {
 
     const float axisLen = 0.7f;
     struct AxisLabel { Vector3 tip; ImU32 color; const char* label; };
+    // Sprint 3.8.5 — axis colours pulled from MvStyle (MvAxisX/Y/Z) so they
+    // match the design's transform-input axis tint. RGB convention preserved.
+    auto packStyle = [](const ImVec4& v) {
+        return ImGui::ColorConvertFloat4ToU32(v);
+    };
     AxisLabel axes[3] = {
-        {Vector3(axisLen, 0, 0), PackColor(230, 50, 50),  "X"},
-        {Vector3(0, axisLen, 0), PackColor(50, 200, 50),  "Y"},
-        {Vector3(0, 0, axisLen), PackColor(75, 130, 230), "Z"},
+        {Vector3(axisLen, 0, 0), packStyle(MvStyle::MvAxisX), "X"},
+        {Vector3(0, axisLen, 0), packStyle(MvStyle::MvAxisY), "Y"},
+        {Vector3(0, 0, axisLen), packStyle(MvStyle::MvAxisZ), "Z"},
     };
 
     ImDrawList* dl = ImGui::GetForegroundDrawList(ImGui::GetMainViewport());
@@ -809,49 +827,794 @@ void Viewport::DrawPointLabelsOverlay(float x, float y, float w, float h) {
         ImVec2 tl(sx - textSize.x * 0.5f - 3.0f, sy - textSize.y * 0.5f - 2.0f);
         ImVec2 br(sx + textSize.x * 0.5f + 3.0f, sy + textSize.y * 0.5f + 2.0f);
 
-        ImU32 bgColor = isSelected ? PackColor(230, 126, 34, 200)
-                                   : PackColor(0, 0, 0, 160);
+        // Sprint 3.8.5 — selected = MvBlue500 fill (matches design's selection
+        // accent), unselected = MvBg0 with 70% alpha so it reads against the
+        // mesh underneath. Text uses MvFg1.
+        ImU32 bgColor;
+        if (isSelected) {
+            ImVec4 c = MvStyle::MvBlue500; c.w = 0.85f;
+            bgColor = ImGui::ColorConvertFloat4ToU32(c);
+        } else {
+            ImVec4 c = MvStyle::MvBg0; c.w = 0.70f;
+            bgColor = ImGui::ColorConvertFloat4ToU32(c);
+        }
+        const ImU32 textColor = ImGui::ColorConvertFloat4ToU32(MvStyle::MvFg1);
         dl->AddRectFilled(tl, br, bgColor, 3.0f);
         dl->AddText(font, fontSize,
                     ImVec2(tl.x + 3.0f, tl.y + 2.0f),
-                    PackColor(255, 255, 255, 230), buf);
+                    textColor, buf);
     }
 }
 
 void Viewport::DrawActiveBorderOverlay(float x, float y, float w, float h) {
     if (!isActive_) return;
     ImDrawList* dl = ImGui::GetForegroundDrawList(ImGui::GetMainViewport());
-    dl->AddRect(ImVec2(x, y), ImVec2(x + w, y + h),
-                PackColor(52, 152, 219), 0.0f, 0, 2.0f);
+    const ImU32 borderCol = ImGui::ColorConvertFloat4ToU32(MvStyle::MvBlue500);
+    dl->AddRect(ImVec2(x, y), ImVec2(x + w, y + h), borderCol, 0.0f, 0, 2.0f);
 }
 
-void Viewport::DrawShadingModeOverlay(float x, float y, float w) {
-    // Small floating combo at the top-left of each viewport, tucked below
-    // where the main menu bar sits. ID is suffixed with the address so the
-    // two viewports (dual mode) have independent state even though they
-    // share the overlay code.
-    (void)w;
-    static const char* kItems[] = { "Solid", "Wireframe", "Solid+Wire", "Textured" };
-    char windowId[64];
-    std::snprintf(windowId, sizeof(windowId), "##ShadingMode_%p", (void*)this);
+// =============================================================================
+// Story 3.8.5 — viewport chrome: top-centre toolbar, top-right pills, and
+// bottom-left instruction HUD. Each is a borderless ImGui window pinned to
+// the viewport rect by SetNextWindowPos. The dual-viewport scenario (Stage 2)
+// renders these per pane; the per-pane window IDs include `(void*)this` so
+// the primary and secondary viewports never share state.
+// =============================================================================
 
-    ImGui::SetNextWindowPos(ImVec2(x + 8.0f, y + 8.0f), ImGuiCond_Always);
-    ImGui::SetNextWindowBgAlpha(0.55f);
-    ImGuiWindowFlags flags =
-        ImGuiWindowFlags_NoDecoration |
-        ImGuiWindowFlags_NoMove |
-        ImGuiWindowFlags_NoSavedSettings |
+namespace {
+
+// Convert an ImVec4 to packed RGBA32 — used heavily by the new chrome.
+inline ImU32 ColU(const ImVec4& v) { return ImGui::ColorConvertFloat4ToU32(v); }
+
+// Override the alpha of an MvStyle colour without mutating the source.
+inline ImVec4 WithAlpha(const ImVec4& v, float a) {
+    return ImVec4(v.x, v.y, v.z, a);
+}
+
+// 28×26 icon button — used by the top-centre toolbar. Returns true on click.
+// Active state fills MvBlue500 with dark icon; hover state fills MvBg3.
+bool ToolbarIconButton(const char* idGlyph, const char* glyph, bool active,
+                       const char* tooltip) {
+    constexpr float W = 28.0f;
+    constexpr float H = 26.0f;
+    const ImVec2 pos = ImGui::GetCursorScreenPos();
+    ImGui::PushID(idGlyph);
+    const bool clicked = ImGui::InvisibleButton("##b", ImVec2(W, H));
+    const bool hovered = ImGui::IsItemHovered();
+    ImGui::PopID();
+
+    ImDrawList* dl = ImGui::GetWindowDrawList();
+    const ImVec2 pmax(pos.x + W, pos.y + H);
+    if (active) {
+        dl->AddRectFilled(pos, pmax, ColU(MetaVisage::MvStyle::MvBlue500), 4.0f);
+    } else if (hovered) {
+        dl->AddRectFilled(pos, pmax, ColU(MetaVisage::MvStyle::MvBg3), 4.0f);
+    }
+
+    const ImU32 iconCol = active
+        ? IM_COL32(0x05, 0x13, 0x22, 0xFF)
+        : ColU(MetaVisage::MvStyle::MvFg2);
+    if (glyph && MetaVisage::MvStyle::Font.Icon) {
+        ImFont* font = MetaVisage::MvStyle::Font.Icon;
+        const float size = 14.0f;
+        const ImVec2 ts = font->CalcTextSizeA(size, FLT_MAX, 0.0f, glyph);
+        dl->AddText(font, size,
+                    ImVec2(pos.x + (W - ts.x) * 0.5f,
+                           pos.y + (H - ts.y) * 0.5f),
+                    iconCol, glyph);
+    }
+
+    if (hovered && tooltip) ImGui::SetTooltip("%s", tooltip);
+    return clicked;
+}
+
+// 1px MvLine2 vertical separator inside the toolbar. Advances the cursor by 9px.
+void ToolbarSeparator() {
+    ImDrawList* dl = ImGui::GetWindowDrawList();
+    const ImVec2 pos = ImGui::GetCursorScreenPos();
+    constexpr float gap = 9.0f;
+    constexpr float h = 18.0f;
+    const float yMid = pos.y + 13.0f;
+    dl->AddLine(ImVec2(pos.x + 4.0f, yMid - h * 0.5f),
+                ImVec2(pos.x + 4.0f, yMid + h * 0.5f),
+                ColU(MetaVisage::MvStyle::MvLine2), 1.0f);
+    ImGui::Dummy(ImVec2(gap, 26.0f));
+}
+
+// "PERSP" / "F · ⇧ axis" mono label, vertically centred on the 26 px button
+// row so it shares the toolbar's baseline. The earlier Dummy(0,yPad) +
+// SameLine pattern only advanced the cursor by yPad horizontally — it
+// didn't actually shift the text's Y position, leaving the label visually
+// floating above the row's mid-line. We now emit the glyph via ImDrawList
+// at the correct Y and reserve a 26 px-tall layout dummy so SameLine
+// continues to work for the next inline element.
+void ToolbarMonoLabel(const char* text, const ImVec4& color) {
+    MetaVisage::MvStyle::ScopedFont f(MetaVisage::MvStyle::Font.Mono);
+    const float fs = ImGui::GetFontSize();
+    const ImVec2 ts = ImGui::CalcTextSize(text);
+    const ImVec2 pos = ImGui::GetCursorScreenPos();
+
+    ImDrawList* dl = ImGui::GetWindowDrawList();
+    dl->AddText(ImVec2(pos.x, pos.y + (26.0f - fs) * 0.5f),
+                ColU(color), text);
+
+    ImGui::Dummy(ImVec2(ts.x, 26.0f));
+}
+
+} // namespace
+
+void Viewport::DrawTopCenterToolbar(float x, float y, float w, float h) {
+    (void)h;
+    if (w <= 0.0f) return;
+
+    const WorkflowStage stage = project_ ? project_->GetCurrentStage()
+                                         : WorkflowStage::Alignment;
+    const bool isStage3 = (stage == WorkflowStage::Morph);
+
+    char wid[64];
+    std::snprintf(wid, sizeof(wid), "##VpToolbar_%p", static_cast<void*>(this));
+
+    ImGui::SetNextWindowPos(ImVec2(x + w * 0.5f, y + 14.0f),
+                            ImGuiCond_Always, ImVec2(0.5f, 0.0f));
+    ImGui::SetNextWindowBgAlpha(0.85f);
+
+    constexpr ImGuiWindowFlags flags =
+        ImGuiWindowFlags_NoTitleBar | ImGuiWindowFlags_NoResize |
+        ImGuiWindowFlags_NoMove     | ImGuiWindowFlags_NoSavedSettings |
+        // NoFocusOnAppearing keeps the toolbar from grabbing keyboard focus
+        // on its first frame; we deliberately omit NoBringToFrontOnFocus so
+        // a click on a toolbar button raises the window above the host
+        // window's central dockspace node — otherwise the click passes
+        // through to the (transparent) viewport, never reaches the button,
+        // and the toggle appears to do nothing. The pre-3.8.5
+        // DrawShadingModeOverlay worked because it didn't set this flag.
         ImGuiWindowFlags_NoFocusOnAppearing |
-        ImGuiWindowFlags_AlwaysAutoResize;
+        ImGuiWindowFlags_NoScrollbar | ImGuiWindowFlags_NoCollapse |
+        ImGuiWindowFlags_NoDocking | ImGuiWindowFlags_AlwaysAutoResize;
 
-    if (ImGui::Begin(windowId, nullptr, flags)) {
-        int current = static_cast<int>(GetShadingMode());
-        ImGui::SetNextItemWidth(120.0f);
-        if (ImGui::Combo("##ShadingCombo", &current, kItems, IM_ARRAYSIZE(kItems))) {
-            SetShadingMode(static_cast<ShadingMode>(current));
+    ImGui::PushStyleVar(ImGuiStyleVar_WindowRounding, 6.0f);
+    ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding,  ImVec2(5.0f, 5.0f));
+    ImGui::PushStyleVar(ImGuiStyleVar_ItemSpacing,    ImVec2(2.0f, 0.0f));
+    ImGui::PushStyleColor(ImGuiCol_WindowBg, MvStyle::MvBg1);
+    ImGui::PushStyleColor(ImGuiCol_Border,   MvStyle::MvLine2);
+
+    if (ImGui::Begin(wid, nullptr, flags)) {
+        // PERSP label — projection mode indicator.
+        ImGui::Dummy(ImVec2(6.0f, 0.0f));
+        ImGui::SameLine(0.0f, 0.0f);
+        ToolbarMonoLabel("PERSP", MvStyle::MvBlue400);
+        ImGui::SameLine(0.0f, 4.0f);
+        ImGui::Dummy(ImVec2(2.0f, 0.0f));
+        ImGui::SameLine(0.0f, 0.0f);
+        ToolbarSeparator();
+
+        // Shading mode toggles — Solid / Wireframe / Textured. Reads/writes
+        // shadingMode_ directly. SolidWireframe enum value remains for legacy
+        // callers; the toolbar only surfaces three modes.
+        const ShadingMode sm = GetShadingMode();
+        ImGui::SameLine(0.0f, 0.0f);
+        if (ToolbarIconButton("solid", MV_ICON_CIRCLE,
+                              sm == ShadingMode::Solid, "Solid")) {
+            SetShadingMode(ShadingMode::Solid);
+        }
+        ImGui::SameLine(0.0f, 0.0f);
+        if (ToolbarIconButton("wire", MV_ICON_BOX,
+                              sm == ShadingMode::Wireframe, "Wireframe")) {
+            SetShadingMode(ShadingMode::Wireframe);
+        }
+        ImGui::SameLine(0.0f, 0.0f);
+        if (ToolbarIconButton("tex", MV_ICON_IMAGE,
+                              sm == ShadingMode::Textured, "Textured")) {
+            SetShadingMode(ShadingMode::Textured);
+        }
+        ImGui::SameLine(0.0f, 0.0f);
+        ToolbarSeparator();
+
+        if (isStage3) {
+            // Stage 3 — Source / Target / Deformed view-mode toggles. The
+            // canonical preview state lives in Project::MorphData::previewMode
+            // (the sidebar combo writes there too); AppWindow's per-frame
+            // mirror at AppWindow.cpp:597 pushes that into the renderer. So
+            // we WRITE to project state, not directly to the renderer —
+            // otherwise next frame's mirror clobbers the renderer back to
+            // the stale project value and the toggle appears to do nothing.
+            // We expose 3 of the 4 enum values; HeatMap stays in the
+            // sidebar's Compare panel.
+            //   Source   → Original
+            //   Target   → Overlay      (deformed + semi-transparent target)
+            //   Deformed → Deformed
+            const MorphPreviewMode pm = project_ ? project_->GetMorphData().previewMode
+                                                  : MorphPreviewMode::Deformed;
+            auto setPreview = [&](MorphPreviewMode mode) {
+                if (project_) project_->GetMorphData().previewMode = mode;
+                SetMorphPreviewMode(mode);  // immediate, avoids 1-frame lag
+            };
+            ImGui::SameLine(0.0f, 0.0f);
+            if (ToolbarIconButton("vmSrc", MV_ICON_CIRCLE_DASHED,
+                                  pm == MorphPreviewMode::Original, "Source")) {
+                setPreview(MorphPreviewMode::Original);
+            }
+            ImGui::SameLine(0.0f, 0.0f);
+            if (ToolbarIconButton("vmTgt", MV_ICON_TARGET,
+                                  pm == MorphPreviewMode::Overlay, "Target overlay")) {
+                setPreview(MorphPreviewMode::Overlay);
+            }
+            ImGui::SameLine(0.0f, 0.0f);
+            if (ToolbarIconButton("vmDef", MV_ICON_SPARKLES,
+                                  pm == MorphPreviewMode::Deformed, "Deformed result")) {
+                setPreview(MorphPreviewMode::Deformed);
+            }
+            ImGui::SameLine(0.0f, 0.0f);
+            ToolbarSeparator();
+
+            // Process-status pill — three states driven by AppWindow's
+            // per-frame Viewport::SetMorphStatus call:
+            //   Ready      blue   — no morph yet
+            //   Processing amber  — worker running
+            //   Complete   green  — morph isProcessed
+            ImVec4 dotCol;
+            const char* statusText;
+            switch (morphStatus_) {
+                case MorphStatus::Processing:
+                    dotCol = MvStyle::MvWarning; statusText = "PROCESSING"; break;
+                case MorphStatus::Complete:
+                    dotCol = MvStyle::MvSuccess; statusText = "COMPLETE";   break;
+                case MorphStatus::Ready:
+                default:
+                    dotCol = MvStyle::MvBlue400; statusText = "READY";      break;
+            }
+            ImDrawList* dl = ImGui::GetWindowDrawList();
+            const ImVec2 dotPos = ImGui::GetCursorScreenPos();
+            dl->AddCircleFilled(ImVec2(dotPos.x + 8.0f, dotPos.y + 13.0f),
+                                3.5f, ColU(dotCol));
+            ImGui::Dummy(ImVec2(16.0f, 26.0f));
+            ImGui::SameLine(0.0f, 0.0f);
+            ToolbarMonoLabel(statusText, dotCol);
+            ImGui::SameLine(0.0f, 6.0f);
+        } else {
+            // Stages 1, 2, 4 — Source / Target eye-toggle visibility. The
+            // RenderFilter enum is mutually exclusive (All / MorphOnly /
+            // TargetOnly), so we derive two booleans, flip the relevant one,
+            // and recompose. Never let both go off — fall back to All.
+            //
+            // Stage 2 (Point Reference) skips visibility toggles: the per-
+            // pane Source/Target labels coming in Story 3.8.8 own that
+            // state, and exposing both controls would let the user click
+            // them out of sync. PERSP + shading still render.
+            if (stage != WorkflowStage::PointReference) {
+                const RenderFilter rf = renderFilter_;
+                const bool srcVis = (rf != RenderFilter::TargetOnly);
+                const bool tgtVis = (rf != RenderFilter::MorphOnly);
+
+                ImGui::SameLine(0.0f, 0.0f);
+                if (ToolbarIconButton("vSrc",
+                                      srcVis ? MV_ICON_EYE : MV_ICON_EYE_OFF,
+                                      srcVis, "Show source")) {
+                    bool ns = !srcVis;
+                    bool nt = tgtVis;
+                    if (!ns && !nt) ns = true;
+                    RenderFilter newF = RenderFilter::All;
+                    if (ns && !nt)      newF = RenderFilter::MorphOnly;
+                    else if (!ns && nt) newF = RenderFilter::TargetOnly;
+                    SetRenderFilter(newF);
+                }
+                ImGui::SameLine(0.0f, 0.0f);
+                if (ToolbarIconButton("vTgt",
+                                      tgtVis ? MV_ICON_EYE : MV_ICON_EYE_OFF,
+                                      tgtVis, "Show target")) {
+                    bool ns = srcVis;
+                    bool nt = !tgtVis;
+                    if (!ns && !nt) nt = true;
+                    RenderFilter newF = RenderFilter::All;
+                    if (ns && !nt)      newF = RenderFilter::MorphOnly;
+                    else if (!ns && nt) newF = RenderFilter::TargetOnly;
+                    SetRenderFilter(newF);
+                }
+                ImGui::SameLine(0.0f, 0.0f);
+                ToolbarSeparator();
+            }
+
+            // Hotkey strip — tiny mono mnemonic. Stage-specific text.
+            const char* hotkeyStrip;
+            switch (stage) {
+                case WorkflowStage::PointReference: hotkeyStrip = "M mirror \xC2\xB7 DEL clear"; break;
+                case WorkflowStage::TouchUp:        hotkeyStrip = "[ ] radius \xC2\xB7 SHIFT smooth"; break;
+                case WorkflowStage::Alignment:
+                default:                            hotkeyStrip = "F focus \xC2\xB7 \xE2\x87\xA7 axis"; break;
+            }
+            ImGui::SameLine(0.0f, 0.0f);
+            ImGui::Dummy(ImVec2(6.0f, 0.0f));
+            ImGui::SameLine(0.0f, 0.0f);
+            ToolbarMonoLabel(hotkeyStrip, MvStyle::MvFg3);
+            ImGui::SameLine(0.0f, 6.0f);
         }
     }
     ImGui::End();
+    ImGui::PopStyleColor(2);
+    ImGui::PopStyleVar(3);
+}
+
+void Viewport::DrawTopRightPills(float x, float y, float w, float h) {
+    (void)h;
+    if (w <= 0.0f) return;
+
+    const WorkflowStage stage = project_ ? project_->GetCurrentStage()
+                                         : WorkflowStage::Alignment;
+
+    // Story 3.8.5 follow-up — the LIVE pill was misleading scaffolding (no
+    // UE Live Link backend in v2.0) and has been removed. The function
+    // currently renders only the Stage 4 strength pill; bail out for any
+    // other stage so we don't paint an empty 1×1 background-less window.
+    if (stage != WorkflowStage::TouchUp || !project_) return;
+
+    char wid[64];
+    std::snprintf(wid, sizeof(wid), "##VpPills_%p", static_cast<void*>(this));
+
+    // Anchored top-right of the viewport, offset inward by the orientation
+    // gizmo's footprint (~96 px) so it doesn't collide with it.
+    constexpr float GizmoFootprint = 96.0f;
+    ImGui::SetNextWindowPos(ImVec2(x + w - GizmoFootprint, y + 14.0f),
+                            ImGuiCond_Always, ImVec2(1.0f, 0.0f));
+    ImGui::SetNextWindowBgAlpha(0.0f);
+
+    constexpr ImGuiWindowFlags flags =
+        ImGuiWindowFlags_NoTitleBar | ImGuiWindowFlags_NoResize |
+        ImGuiWindowFlags_NoMove     | ImGuiWindowFlags_NoSavedSettings |
+        // NoFocusOnAppearing keeps the pill from grabbing keyboard focus on
+        // its first frame; we deliberately omit NoBringToFrontOnFocus so
+        // future interactive pills can be clicked (the strength pill is
+        // currently display-only, but the same flag policy keeps other
+        // overlays consistent).
+        ImGuiWindowFlags_NoFocusOnAppearing |
+        ImGuiWindowFlags_NoScrollbar | ImGuiWindowFlags_NoCollapse |
+        ImGuiWindowFlags_NoDocking | ImGuiWindowFlags_AlwaysAutoResize |
+        ImGuiWindowFlags_NoBackground;
+
+    ImGui::PushStyleVar(ImGuiStyleVar_ItemSpacing, ImVec2(6.0f, 0.0f));
+
+    if (ImGui::Begin(wid, nullptr, flags)) {
+        ImDrawList* dl = ImGui::GetWindowDrawList();
+
+        // Single-pill draw helper — frosted dark MvBg1 fill, MvLine2 border.
+        // The Story 3.8.5 dot-prefixed variant has been retired with the
+        // LIVE pill; this version just renders centred mono text.
+        auto drawPill = [&](const char* text) {
+            MvStyle::ScopedFont f(MvStyle::Font.Mono);
+            const ImVec2 ts = ImGui::CalcTextSize(text);
+            const float pillW = ts.x + 14.0f;
+            constexpr float pillH = 22.0f;
+
+            const ImVec2 pos = ImGui::GetCursorScreenPos();
+            const ImVec2 pmax(pos.x + pillW, pos.y + pillH);
+            ImVec4 bg = MvStyle::MvBg1; bg.w = 0.85f;
+            dl->AddRectFilled(pos, pmax, ColU(bg), 4.0f);
+            dl->AddRect      (pos, pmax, ColU(MvStyle::MvLine2), 4.0f, 0, 1.0f);
+
+            const float textY = pos.y + (pillH - ImGui::GetFontSize()) * 0.5f;
+            dl->AddText(ImVec2(pos.x + 7.0f, textY),
+                        ColU(MvStyle::MvFg2), text);
+
+            ImGui::Dummy(ImVec2(pillW, pillH));
+        };
+
+        const float strength = project_->GetSculptState().brushStrength;
+        char buf[32];
+        std::snprintf(buf, sizeof(buf), "STRENGTH %d%%",
+                      static_cast<int>(strength * 100.0f + 0.5f));
+        drawPill(buf);
+    }
+    ImGui::End();
+    ImGui::PopStyleVar();
+}
+
+void Viewport::DrawBottomLeftHud(float x, float y, float w, float h) {
+    if (w <= 0.0f || h <= 0.0f) return;
+
+    const WorkflowStage stage = project_ ? project_->GetCurrentStage()
+                                         : WorkflowStage::Alignment;
+
+    // Story 3.8.9 — Stage 3 swaps the instruction HUD for the result stats
+    // overlay once a morph has been processed; bail out so the two panels
+    // never stack at the same anchor.
+    if (stage == WorkflowStage::Morph && project_ &&
+        project_->GetMorphData().isProcessed) {
+        return;
+    }
+
+    // Story 3.8.10 — Stage 4 always shows the mesh stats overlay (the
+    // sculpt mesh always exists at this point), so the HUD steps aside
+    // there too.
+    if (stage == WorkflowStage::TouchUp) {
+        return;
+    }
+
+    // Stage-specific copy. Kept terse so the HUD stays compact at 320 px.
+    struct StageHud {
+        const char* label;
+        const char* instruction;
+        const char* kbds[4];   // each "Key,Action"; nullptr-terminated entry stops
+    };
+    // MSVC C4701: the switch covers every WorkflowStage value but the
+    // compiler can't prove enum exhaustivity at this site. Initialise to
+    // Stage 1's copy as the safe default, then overwrite per case.
+    StageHud hud = { "/ Stage 1 \xC2\xB7 Alignment",
+                     "Position the source roughly over the MetaHuman target. "
+                     "Hit F to focus, drag the gizmo handles to translate.",
+                     {"W,move", "E,rotate", "R,scale", nullptr} };
+    switch (stage) {
+        case WorkflowStage::Alignment:
+            // Already in default initializer.
+            break;
+        case WorkflowStage::PointReference:
+            hud = { "/ Stage 2 \xC2\xB7 Point reference",
+                    "Click each mesh at matching landmarks. Place at least one "
+                    "matched pair before continuing.",
+                    {"M,mirror", "DEL,remove", "F,focus", nullptr} };
+            break;
+        case WorkflowStage::Morph:
+            hud = { "/ Stage 3 \xC2\xB7 Morph",
+                    "Tune parameters and process the wrap. Compare Source / "
+                    "Target / Deformed to verify the result.",
+                    {"P,process", "ESC,cancel", nullptr, nullptr} };
+            break;
+        case WorkflowStage::TouchUp:
+            hud = { "/ Stage 4 \xC2\xB7 Touch up",
+                    "Pick a brush and scrub the mesh to refine the wrap. "
+                    "Bracket keys adjust radius; Shift smooths.",
+                    {"[,radius -", "],radius +", "SHIFT,smooth", nullptr} };
+            break;
+    }
+
+    char wid[64];
+    std::snprintf(wid, sizeof(wid), "##VpHud_%p", static_cast<void*>(this));
+
+    constexpr float HudW = 320.0f;
+    ImGui::SetNextWindowPos(ImVec2(x + 16.0f, y + h - 16.0f),
+                            ImGuiCond_Always, ImVec2(0.0f, 1.0f));
+    ImGui::SetNextWindowSize(ImVec2(HudW, 0.0f));
+    ImGui::SetNextWindowBgAlpha(0.88f);
+
+    constexpr ImGuiWindowFlags flags =
+        ImGuiWindowFlags_NoTitleBar | ImGuiWindowFlags_NoResize |
+        ImGuiWindowFlags_NoMove     | ImGuiWindowFlags_NoSavedSettings |
+        // NoFocusOnAppearing keeps the toolbar from grabbing keyboard focus
+        // on its first frame; we deliberately omit NoBringToFrontOnFocus so
+        // a click on a toolbar button raises the window above the host
+        // window's central dockspace node — otherwise the click passes
+        // through to the (transparent) viewport, never reaches the button,
+        // and the toggle appears to do nothing. The pre-3.8.5
+        // DrawShadingModeOverlay worked because it didn't set this flag.
+        ImGuiWindowFlags_NoFocusOnAppearing |
+        ImGuiWindowFlags_NoScrollbar | ImGuiWindowFlags_NoCollapse |
+        ImGuiWindowFlags_NoDocking | ImGuiWindowFlags_AlwaysAutoResize;
+
+    ImGui::PushStyleVar(ImGuiStyleVar_WindowRounding, 6.0f);
+    ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding,  ImVec2(14.0f, 12.0f));
+    ImGui::PushStyleColor(ImGuiCol_WindowBg, MvStyle::MvBg1);
+    ImGui::PushStyleColor(ImGuiCol_Border,   MvStyle::MvLine2);
+
+    if (ImGui::Begin(wid, nullptr, flags)) {
+        // Header — mono stage label on the left, "HINT" tag on the right.
+        {
+            MvStyle::ScopedFont f(MvStyle::Font.MonoSm);
+            ImGui::PushStyleColor(ImGuiCol_Text, MvStyle::MvFg3);
+            ImGui::TextUnformatted(hud.label);
+            ImGui::PopStyleColor();
+
+            const ImVec2 ts = ImGui::CalcTextSize("HINT");
+            ImGui::SameLine(0.0f, ImGui::GetContentRegionAvail().x - ts.x - 2.0f);
+            ImGui::PushStyleColor(ImGuiCol_Text, MvStyle::MvBlue400);
+            ImGui::TextUnformatted("HINT");
+            ImGui::PopStyleColor();
+        }
+        ImGui::Spacing();
+
+        // Instruction — body text wrapped to the HUD width.
+        {
+            MvStyle::ScopedFont f(MvStyle::Font.BodySm);
+            ImGui::PushStyleColor(ImGuiCol_Text, MvStyle::MvFg1);
+            ImGui::TextWrapped("%s", hud.instruction);
+            ImGui::PopStyleColor();
+        }
+
+        // Hotkey strip — Kbd-style rounded chips. Each chip is "KEY label".
+        ImGui::Spacing();
+        ImDrawList* dl = ImGui::GetWindowDrawList();
+        ImGui::PushStyleVar(ImGuiStyleVar_ItemSpacing, ImVec2(6.0f, 4.0f));
+        for (int i = 0; i < 4 && hud.kbds[i]; ++i) {
+            const char* entry = hud.kbds[i];
+            const char* comma = std::strchr(entry, ',');
+            const std::string keyText = comma ? std::string(entry, comma) : std::string(entry);
+            const std::string label   = comma ? std::string(comma + 1) : std::string();
+
+            MvStyle::ScopedFont f(MvStyle::Font.MonoSm);
+            const float kFontH = ImGui::GetFontSize();
+
+            const ImVec2 keySize = ImGui::CalcTextSize(keyText.c_str());
+            constexpr float chipPadX = 6.0f;
+            constexpr float chipPadY = 2.0f;
+            const float chipW = keySize.x + chipPadX * 2.0f;
+            const float chipH = kFontH + chipPadY * 2.0f;
+
+            const ImVec2 pos = ImGui::GetCursorScreenPos();
+            const ImVec2 pmax(pos.x + chipW, pos.y + chipH);
+            dl->AddRectFilled(pos, pmax, ColU(MvStyle::MvBg3), 3.0f);
+            dl->AddRect      (pos, pmax, ColU(MvStyle::MvLine2), 3.0f, 0, 1.0f);
+            dl->AddText(ImVec2(pos.x + chipPadX, pos.y + chipPadY),
+                        ColU(MvStyle::MvFg1), keyText.c_str());
+
+            ImGui::Dummy(ImVec2(chipW, chipH));
+            if (!label.empty()) {
+                ImGui::SameLine(0.0f, 4.0f);
+                ImGui::PushStyleColor(ImGuiCol_Text, MvStyle::MvFg3);
+                ImGui::TextUnformatted(label.c_str());
+                ImGui::PopStyleColor();
+            }
+            if (i + 1 < 4 && hud.kbds[i + 1]) {
+                ImGui::SameLine(0.0f, 10.0f);
+            }
+        }
+        ImGui::PopStyleVar();
+    }
+    ImGui::End();
+    ImGui::PopStyleColor(2);
+    ImGui::PopStyleVar(2);
+}
+
+// =============================================================================
+// Story 3.8.9 — Stage 3 result stats overlay. Bottom-left frosted panel that
+// reports the morph worker's output (max/avg displacement) plus a live
+// status indicator. Hidden until a process attempt has produced a result;
+// suppressed in every other stage. The bottom-left HUD bails out for
+// Stage 3 once isProcessed is true so the two panels never stack.
+// =============================================================================
+void Viewport::DrawResultStatsOverlay(float x, float y, float w, float h) {
+    if (w <= 0.0f || h <= 0.0f) return;
+    if (!project_) return;
+    if (project_->GetCurrentStage() != WorkflowStage::Morph) return;
+
+    const auto& morph = project_->GetMorphData();
+    if (!morph.isProcessed && morphStatus_ != MorphStatus::Processing) return;
+
+    char wid[64];
+    std::snprintf(wid, sizeof(wid), "##VpResultStats_%p",
+                  static_cast<void*>(this));
+
+    constexpr float PanelW = 240.0f;
+    ImGui::SetNextWindowPos(ImVec2(x + 16.0f, y + h - 16.0f),
+                            ImGuiCond_Always, ImVec2(0.0f, 1.0f));
+    ImGui::SetNextWindowSize(ImVec2(PanelW, 0.0f));
+    ImGui::SetNextWindowBgAlpha(0.88f);
+
+    constexpr ImGuiWindowFlags flags =
+        ImGuiWindowFlags_NoTitleBar | ImGuiWindowFlags_NoResize |
+        ImGuiWindowFlags_NoMove     | ImGuiWindowFlags_NoSavedSettings |
+        ImGuiWindowFlags_NoFocusOnAppearing |
+        ImGuiWindowFlags_NoScrollbar | ImGuiWindowFlags_NoCollapse |
+        ImGuiWindowFlags_NoDocking | ImGuiWindowFlags_AlwaysAutoResize;
+
+    ImGui::PushStyleVar(ImGuiStyleVar_WindowRounding, 6.0f);
+    ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding,  ImVec2(14.0f, 12.0f));
+    ImGui::PushStyleColor(ImGuiCol_WindowBg, MvStyle::MvBg1);
+    ImGui::PushStyleColor(ImGuiCol_Border,   MvStyle::MvLine2);
+
+    if (ImGui::Begin(wid, nullptr, flags)) {
+        ImDrawList* dl = ImGui::GetWindowDrawList();
+
+        // Header row — "/ RESULT" eyebrow on the left, status pill on the
+        // right. Status follows Viewport::morphStatus_ which AppWindow
+        // mirrors each frame (Processing → amber, Complete → green, Ready
+        // → blue but we don't show it here per the early-return above).
+        {
+            MvStyle::ScopedFont f(MvStyle::Font.MonoSm);
+            ImGui::PushStyleColor(ImGuiCol_Text, MvStyle::MvFg3);
+            ImGui::TextUnformatted("/ RESULT");
+            ImGui::PopStyleColor();
+        }
+
+        // Status pill — same dot+label idiom as the top-centre toolbar's
+        // Stage 3 indicator, drawn here via the window drawlist.
+        {
+            ImVec4 dotCol;
+            const char* statusText;
+            switch (morphStatus_) {
+                case MorphStatus::Processing:
+                    dotCol = MvStyle::MvWarning; statusText = "PROCESSING"; break;
+                case MorphStatus::Complete:
+                    dotCol = MvStyle::MvSuccess; statusText = "COMPLETE";   break;
+                case MorphStatus::Ready:
+                default:
+                    dotCol = MvStyle::MvBlue400; statusText = "READY";      break;
+            }
+            MvStyle::ScopedFont f(MvStyle::Font.MonoSm);
+            const ImVec2 ts = ImGui::CalcTextSize(statusText);
+            const float availW = ImGui::GetContentRegionAvail().x;
+            ImGui::SameLine();
+            const ImVec2 pos = ImGui::GetCursorScreenPos();
+            const float dotR = 3.0f;
+            const float clusterW = dotR * 2.0f + 6.0f + ts.x;
+            const float startX = pos.x + (availW - clusterW);
+            const float yMid = pos.y + ts.y * 0.5f;
+            dl->AddCircleFilled(ImVec2(startX + dotR, yMid),
+                                dotR, ColU(dotCol));
+            ImGui::SetCursorScreenPos(ImVec2(startX + dotR * 2.0f + 6.0f, pos.y));
+            ImGui::PushStyleColor(ImGuiCol_Text, dotCol);
+            ImGui::TextUnformatted(statusText);
+            ImGui::PopStyleColor();
+        }
+
+        // Hairline rule between the header and the data rows.
+        {
+            const ImVec2 cur = ImGui::GetCursorScreenPos();
+            const float lineW = ImGui::GetContentRegionAvail().x;
+            dl->AddLine(ImVec2(cur.x, cur.y + 6.0f),
+                        ImVec2(cur.x + lineW, cur.y + 6.0f),
+                        ColU(MvStyle::MvLine2), 1.0f);
+        }
+        ImGui::Dummy(ImVec2(0.0f, 10.0f));
+
+        // Stat rows — label left in BodySm MvFg3, value right in mono MvFg1.
+        // Iterations / elapsed are not stored on MorphData yet; we surface
+        // only the metrics that have real values until a future story
+        // expands the data model.
+        auto drawStatRow = [&](const char* label, const char* value) {
+            const ImVec2 rowStart = ImGui::GetCursorScreenPos();
+            const float availW = ImGui::GetContentRegionAvail().x;
+            constexpr float RowH = 18.0f;
+            {
+                MvStyle::ScopedFont f(MvStyle::Font.BodySm);
+                const float fs = ImGui::GetFontSize();
+                dl->AddText(ImVec2(rowStart.x,
+                                   rowStart.y + (RowH - fs) * 0.5f),
+                            ColU(MvStyle::MvFg3), label);
+            }
+            {
+                MvStyle::ScopedFont f(MvStyle::Font.Mono);
+                const ImVec2 ts = ImGui::CalcTextSize(value);
+                const float fs = ImGui::GetFontSize();
+                dl->AddText(ImVec2(rowStart.x + availW - ts.x,
+                                   rowStart.y + (RowH - fs) * 0.5f),
+                            ColU(MvStyle::MvFg1), value);
+            }
+            ImGui::Dummy(ImVec2(availW, RowH));
+        };
+
+        char buf[32];
+        std::snprintf(buf, sizeof(buf), "%.3f mm", morph.maxDisplacement);
+        drawStatRow("Max disp.", buf);
+        std::snprintf(buf, sizeof(buf), "%.3f mm", morph.avgDisplacement);
+        drawStatRow("Avg disp.", buf);
+    }
+    ImGui::End();
+    ImGui::PopStyleColor(2);
+    ImGui::PopStyleVar(2);
+}
+
+// =============================================================================
+// Story 3.8.10 — Stage 4 mesh stats overlay. Bottom-left frosted panel that
+// reports the active sculpt mesh's vert / triangle / UV-set counts plus a
+// "READY TO EXPORT" status indicator. The bottom-left HUD steps aside in
+// Stage 4 so the panels don't stack. Render gated to TouchUp + a non-null
+// sculpt mesh; bails out otherwise.
+// =============================================================================
+void Viewport::DrawMeshStatsOverlay(float x, float y, float w, float h) {
+    if (w <= 0.0f || h <= 0.0f) return;
+    if (!project_) return;
+    if (project_->GetCurrentStage() != WorkflowStage::TouchUp) return;
+
+    // Find the active sculpt mesh — prefer the morph's deformed result
+    // (what Stage 4 actually edits) and fall back to the source mesh
+    // before processing has run.
+    const auto& morph = project_->GetMorphData();
+    const Mesh* mesh = morph.deformedMorphMesh
+        ? morph.deformedMorphMesh.get()
+        : (project_->GetMorphMesh().mesh
+              ? project_->GetMorphMesh().mesh.get()
+              : nullptr);
+    if (!mesh) return;
+
+    char wid[64];
+    std::snprintf(wid, sizeof(wid), "##VpMeshStats_%p",
+                  static_cast<void*>(this));
+
+    constexpr float PanelW = 240.0f;
+    ImGui::SetNextWindowPos(ImVec2(x + 16.0f, y + h - 16.0f),
+                            ImGuiCond_Always, ImVec2(0.0f, 1.0f));
+    ImGui::SetNextWindowSize(ImVec2(PanelW, 0.0f));
+    ImGui::SetNextWindowBgAlpha(0.88f);
+
+    constexpr ImGuiWindowFlags flags =
+        ImGuiWindowFlags_NoTitleBar | ImGuiWindowFlags_NoResize |
+        ImGuiWindowFlags_NoMove     | ImGuiWindowFlags_NoSavedSettings |
+        ImGuiWindowFlags_NoFocusOnAppearing |
+        ImGuiWindowFlags_NoScrollbar | ImGuiWindowFlags_NoCollapse |
+        ImGuiWindowFlags_NoDocking | ImGuiWindowFlags_AlwaysAutoResize;
+
+    ImGui::PushStyleVar(ImGuiStyleVar_WindowRounding, 6.0f);
+    ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding,  ImVec2(14.0f, 12.0f));
+    ImGui::PushStyleColor(ImGuiCol_WindowBg, MvStyle::MvBg1);
+    ImGui::PushStyleColor(ImGuiCol_Border,   MvStyle::MvLine2);
+
+    if (ImGui::Begin(wid, nullptr, flags)) {
+        ImDrawList* dl = ImGui::GetWindowDrawList();
+
+        // "/ MESH" eyebrow + "● READY TO EXPORT" status pill.
+        {
+            MvStyle::ScopedFont f(MvStyle::Font.MonoSm);
+            ImGui::PushStyleColor(ImGuiCol_Text, MvStyle::MvFg3);
+            ImGui::TextUnformatted("/ MESH");
+            ImGui::PopStyleColor();
+        }
+        {
+            const ImVec4 dotCol = MvStyle::MvSuccess;
+            const char* statusText = "READY";
+            MvStyle::ScopedFont f(MvStyle::Font.MonoSm);
+            const ImVec2 ts = ImGui::CalcTextSize(statusText);
+            const float availW = ImGui::GetContentRegionAvail().x;
+            ImGui::SameLine();
+            const ImVec2 pos = ImGui::GetCursorScreenPos();
+            const float dotR = 3.0f;
+            const float clusterW = dotR * 2.0f + 6.0f + ts.x;
+            const float startX = pos.x + (availW - clusterW);
+            const float yMid = pos.y + ts.y * 0.5f;
+            dl->AddCircleFilled(ImVec2(startX + dotR, yMid),
+                                dotR, ColU(dotCol));
+            ImGui::SetCursorScreenPos(ImVec2(startX + dotR * 2.0f + 6.0f, pos.y));
+            ImGui::PushStyleColor(ImGuiCol_Text, dotCol);
+            ImGui::TextUnformatted(statusText);
+            ImGui::PopStyleColor();
+        }
+
+        // Hairline rule between header and rows.
+        {
+            const ImVec2 cur = ImGui::GetCursorScreenPos();
+            const float lineW = ImGui::GetContentRegionAvail().x;
+            dl->AddLine(ImVec2(cur.x, cur.y + 6.0f),
+                        ImVec2(cur.x + lineW, cur.y + 6.0f),
+                        ColU(MvStyle::MvLine2), 1.0f);
+        }
+        ImGui::Dummy(ImVec2(0.0f, 10.0f));
+
+        auto drawStatRow = [&](const char* label, const char* value) {
+            const ImVec2 rowStart = ImGui::GetCursorScreenPos();
+            const float availW = ImGui::GetContentRegionAvail().x;
+            constexpr float RowH = 18.0f;
+            {
+                MvStyle::ScopedFont f(MvStyle::Font.BodySm);
+                const float fs = ImGui::GetFontSize();
+                dl->AddText(ImVec2(rowStart.x,
+                                   rowStart.y + (RowH - fs) * 0.5f),
+                            ColU(MvStyle::MvFg3), label);
+            }
+            {
+                MvStyle::ScopedFont f(MvStyle::Font.Mono);
+                const ImVec2 ts = ImGui::CalcTextSize(value);
+                const float fs = ImGui::GetFontSize();
+                dl->AddText(ImVec2(rowStart.x + availW - ts.x,
+                                   rowStart.y + (RowH - fs) * 0.5f),
+                            ColU(MvStyle::MvFg1), value);
+            }
+            ImGui::Dummy(ImVec2(availW, RowH));
+        };
+
+        const size_t vertexCount   = mesh->GetVertices().size();
+        const size_t triangleCount = mesh->GetFaceCount();
+        // UV-map count: the engine currently stores a single UV set on
+        // the mesh — non-empty UVs == 1, empty == 0. Multi-UV support
+        // would surface here unchanged.
+        const size_t uvSetCount = mesh->GetUVs().empty() ? 0u : 1u;
+
+        char buf[32];
+        std::snprintf(buf, sizeof(buf), "%zu", vertexCount);
+        drawStatRow("Vertices",  buf);
+        std::snprintf(buf, sizeof(buf), "%zu", triangleCount);
+        drawStatRow("Triangles", buf);
+        std::snprintf(buf, sizeof(buf), "%zu", uvSetCount);
+        drawStatRow("UV maps",   buf);
+    }
+    ImGui::End();
+    ImGui::PopStyleColor(2);
+    ImGui::PopStyleVar(2);
 }
 
 // --- Stage 2 point placement (ported from Qt ViewportWidget::HandlePointClick) ---

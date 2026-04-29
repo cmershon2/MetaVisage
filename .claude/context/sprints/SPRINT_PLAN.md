@@ -365,6 +365,166 @@ This sprint plan covers the v2.0 release of MetaVisage. It addresses all v1.0.0 
 
 ---
 
+## Sprint 3.8: UI/UX Redesign Implementation
+ 
+**Duration:** 2 weeks  
+**Goals:** Implement the full visual redesign delivered by the UI/UX team (`MetaVisage_Desktop_Application_Redesign.zip`) across every surface of the application — design tokens, typography, window chrome, the stage stepper, the left tool rail, all four stage inspector panels, all modals, the login screen, and the welcome screen. The goal is maximum fidelity to the design files within the constraints of Dear ImGui's rendering model. Where CSS effects have no direct ImGui equivalent (box-shadow, backdrop blur, gradient backgrounds), the closest practical approximation is used and noted below.
+ 
+**Design System Reference:**
+- **Colour palette**: `colors_and_type.css` defines all tokens. The full set must be translated to named `ImVec4` constants in a new `MvStyle.h` header and applied to `ImGui::GetStyle()` and `ImGui::GetStyleColorVec4()` at startup
+- **Fonts**: Three families required — Saira Bold Italic (`Saira_800_italic.ttf`) for display headings, Inter Regular/Medium/SemiBold for body text, JetBrains Mono Regular/Medium for technical readouts and labels. All variants loaded via `ImGui::GetIO().Fonts->AddFontFromFileTTF()` and bundled in `assets/fonts/`
+- **ImGui constraints**: No CSS `box-shadow`, `backdrop-filter: blur`, or gradient fills on arbitrary shapes. Approximate as: coloured borders for glow/shadow effects, solid dark overlay backgrounds for blur surfaces, `ImDrawList` gradient rectangles where gradients are structurally important (e.g. the login card top accent bar)
+**One open question for the team:** The v1.0.0 feedback (Sprint 1.4) called for removing the FPS counter. The redesign files show "FPS 120" in the Stage 3 and Stage 4 viewport toolbars. Please confirm the desired behaviour before Sprint 3.8 begins — this sprint plan assumes the FPS counter is **not** re-introduced and the pill shows only the READY/processing status, matching the Sprint 1.4 decision. If the team wants to reverse that decision, this story should be updated accordingly.
+ 
+### Stories
+ 
+#### Story 3.8.1: Design Token System & Font Loading
+**Background:** All colour values and spacing constants currently hardcoded in the post-migration ImGui style pass must be replaced with a unified token system that mirrors `colors_and_type.css` exactly, making future theme changes a single-file edit.
+ 
+**Tasks:**
+- [ ] Create `include/ui/MvStyle.h` defining all colour tokens as named `ImVec4` constants mirroring the CSS variable names: `MvBg0` through `MvBg4`, `MvBlue300` through `MvBlue900`, `MvFg1` through `MvFg4`, `MvLine1` through `MvLine4`, `MvSuccess`, `MvWarning`, `MvDanger`, and all semantic variants
+- [ ] Create `MvStyle::Apply()` function that sets `ImGui::GetStyle()` colours, sizes, and rounding values: `WindowRounding = 6`, `FrameRounding = 4`, `PopupRounding = 8`, `ScrollbarRounding = 6`, `GrabRounding = 4`, `WindowBorderSize = 1`, `FrameBorderSize = 1` — all border and background colours mapped from the token set
+- [ ] Call `MvStyle::Apply()` in `AppWindow` after `ImGui::CreateContext()` — this replaces the temporary dark theme applied in Sprint 3.5
+- [ ] Bundle font files in `assets/fonts/`: `Saira-ExtraBoldItalic.ttf`, `Inter-Regular.ttf`, `Inter-Medium.ttf`, `Inter-SemiBold.ttf`, `JetBrainsMono-Regular.ttf`, `JetBrainsMono-Medium.ttf`. Source from Google Fonts (open licence, safe to bundle)
+- [ ] Load all font variants into the ImGui font atlas at application startup with appropriate sizes: display (28px), heading (20px), body (14px/13px), mono-label (11px/10px). Store font pointers as globals in `MvStyle.h` (`MvFont::Display`, `MvFont::Body`, `MvFont::BodySm`, `MvFont::Mono`, `MvFont::MonoSm`)
+- [ ] Add spacing scale constants to `MvStyle.h`: `MvSpacing::S1` (4px) through `MvSpacing::S6` (32px) — use these throughout the codebase instead of hardcoded pixel values
+#### Story 3.8.2: Window Chrome — Title Bar, Menu Bar & Status Bar
+**Background:** The redesign introduces a custom frameless-style title bar (`TitleBar` in `app.jsx`) showing the logo mark, filename, and stage breadcrumb. The menu bar gains an autosave indicator and a "UE 5.4 · LIVE LINK" status pill on the right. The status bar gains more structured mono readouts.
+ 
+**Tasks:**
+- [ ] **Title bar**: Replace the current plain `ImGui::BeginMainMenuBar` title with a custom-height (36px) top bar rendered using `ImGui::GetWindowDrawList()`. Draw: the MetaVisage logo mark image (18×18px, from `assets/metavisage-logo-mark.png` loaded as a GL texture), "MetaVisage" in `MvFont::Body` SemiBold at `MvFg1`, a `MvLine3` separator dot, the current filename in `MvFg2`, a `›` separator, and "Stage N / 4 · STAGE NAME" in `MvBlue400` mono uppercase. Right-align the three standard Windows caption buttons (minimize, maximize, close) — close button background turns `#E81123` on hover. Use `glfwSetWindowTitle` to keep the OS taskbar title in sync
+- [ ] **Menu bar**: Implement as a 32px bar below the title bar. Left side: `File | Edit | View | Mesh | Help` menu items in `MvFg2` at 13px, highlight to `MvFg1` with `MvBg3` background on hover. Right side: autosave indicator ("Autosaved 12s ago" in `MvFg3` mono) and the LIVE LINK pill (green dot + "UE 5.4 · LIVE LINK" in `MvSuccess` mono, `rgba(63,214,158,0.06)` background, green border) — the Live Link indicator is display-only for now (always shows connected state); real Live Link integration is out of scope for v2.0
+- [ ] **Status bar**: Redesign as a 28px bottom bar in `MvBg0` with `MvLine2` top border. Sections separated by `MvLine3` dot dividers: `● Ready` (status dot + state), `Stage 01 ALIGN` (stage in `MvBlue400` mono), `Source filename`, `Target MetaHuman`, then right-aligned: `FPS nnn` (removed per Sprint 1.4 decision — replace with `GPU model · n%` readout), and `Live link UE 5.4 ●` in `MvSuccess`
+- [ ] Replace the `"Mesh"` menu label for the existing `"Tools"` entry (the design file uses `File | Edit | View | Mesh | Help` — rename to match)
+#### Story 3.8.3: Stage Stepper
+**Background:** The most visually prominent new element in the redesign. The stage stepper replaces the old compact stage indicator with a full-width 64px horizontal bar showing all four stages simultaneously, each with a numbered disc, status label, and stage name.
+ 
+**Tasks:**
+- [ ] Implement `StageStepper` as a 64px fixed-height `ImGui` window spanning the full application width, positioned below the menu bar
+- [ ] For each of the four stages, render using `ImGui::GetWindowDrawList()`:
+  - **Numbered disc** (36×36px, `border-radius` approximated with `ImDrawList::AddRectFilled` + `ImDrawList::AddRect` using `rounding=6`): filled `MvBlue500` with `MvBlue300` border when active; filled `rgba(63,214,158,0.12)` with green border when complete; filled `MvBg2` with `MvLine2` border when upcoming. Shows a checkmark icon when complete, mono "0N" number text otherwise
+  - **Status label** (10px mono uppercase, 0.16em tracking): "IN PROGRESS" in `MvBlue500` when active, "COMPLETE" in `MvSuccess` when done, "UPCOMING" in `MvFg4` otherwise
+  - **Stage name** (14px, SemiBold): `MvFg1` when active, `MvFg2` when done, `MvFg3` when upcoming
+  - **Active underline**: 2px `MvBlue500` line along the bottom of the active step button
+  - **Chevron separators** between steps in `MvFg4`
+- [ ] The entire step button is clickable and calls `StageManager::SetStage(n)` — apply the same validation guards that currently gate the Next Stage button (cannot jump forward past an incomplete stage)
+- [ ] Hover state: non-active steps get `MvBg2` background fill on hover
+#### Story 3.8.4: Left Tool Rail
+**Background:** The redesign adds a 56px-wide vertical tool rail on the left of the work area (visible in Stage 1, hidden in Stages 2–4 where it is not applicable). It contains Move/Rotate/Scale tool buttons with hotkey badges, symmetry and pivot snap toggles, and a help button.
+ 
+**Tasks:**
+- [ ] Implement `ToolRail` as a 56px-wide `ImGui` child window docked to the left of the work area in Stage 1 only — not rendered in Stages 2, 3, or 4
+- [ ] Render a mono uppercase "XFORM" label at the top (9px, `MvFg4`, 0.18em tracking)
+- [ ] Three tool buttons (40×40px each, `rounding=6`): Move (W), Rotate (E), Scale (R). Active button: `MvBlue500` fill, dark icon color, glow border. Inactive: transparent fill, `MvFg2` icon. Each button has a hotkey badge in the bottom-right corner (8px mono, `MvBg1` background with `MvLine2` border when inactive; hidden when active)
+- [ ] Thin `MvLine2` horizontal divider below the transform tools
+- [ ] Two secondary buttons: symmetry toggle (X-axis mirror icon) and pivot snap toggle — these are visual scaffolding for now; wire to existing symmetry state from Stage 1 where available
+- [ ] Help button anchored to the bottom of the rail (`IconHelp`)
+- [ ] Tool rail button clicks update the active transform mode — this replaces the G/R/S keyboard shortcut as the primary visual affordance (keyboard shortcuts remain functional)
+- [ ] The work area `gridTemplateColumns` updates from `"1fr 360px"` to `"56px 1fr 360px"` for Stage 1 only
+#### Story 3.8.5: Viewport Toolbar & HUD Overlays
+**Background:** The redesign moves shading controls from the viewport overlay (Sprint 2.1) into a centred floating toolbar, adds visibility toggles and a hotkey hint strip, replaces the plain overlay style with a frosted dark background, and adds a bottom-left instruction HUD.
+ 
+**Tasks:**
+- [ ] **Top-centre toolbar**: Render as a `ImGui::SetNextWindowPos`-anchored window at the top-centre of the viewport. Dark background (`rgba(11,22,34,0.85)` → `MvBg1` at 85% alpha), 1px `MvLine2` border, `rounding=6`. Contents left-to-right: perspective mode label ("PERSP" in `MvBlue400` mono), `MvLine2` separator, Solid/Wireframe/Textured shading toggle buttons (28×26px each, active state `MvBlue500` fill), separator, Source/Target visibility eye-icon toggles, separator, hotkey hint strip ("F · ⇧ axis" in `MvFg3` mono 11px). For Stage 3 specifically, add Source/Target/Deformed view mode buttons and a READY/PROCESSING status indicator in place of the visibility toggles
+- [ ] **Top-right meta pills**: Two small pills anchored top-right of the viewport: a LIVE status indicator pill and, for Stage 4 only, a strength percentage pill. Rendered as `ImDrawList` rounded rectangles with the badge styling from the design system
+- [ ] **Bottom-left instruction HUD**: Render a 320px-wide overlay box anchored to the bottom-left of the viewport (`MvBg1` at 88% alpha, `MvLine2` border, `rounding=6`). Contains: a mono stage label ("/ Stage N · STAGE NAME"), a contextual instruction line, and a hotkey reference strip of `Kbd` badges. Content is stage-specific and updates as the active stage changes. This is the existing status bar hint concept elevated to a proper in-viewport HUD
+- [ ] The existing shading mode overlay (Sprint 2.1 top-left dropdown) is removed — shading mode is now controlled exclusively via the top-centre toolbar
+#### Story 3.8.6: Inspector Panel — Shared Primitives
+**Background:** Every stage's right sidebar uses the same set of primitive components defined in `app.jsx`. These must be implemented as reusable ImGui helper functions before the per-stage panels are built.
+ 
+**Tasks:**
+- [ ] **Stage header block**: `MvDrawStageHeader(eyebrow, title, accentWord, description)` — renders the mono eyebrow ("STAGE 01 / 04" in `MvBlue400`), the bold italic display heading with one word or syllable in `MvBlue500` (e.g. "Align**ment**"), and a 13px description line in `MvFg2`
+- [ ] **Section label**: `MvDrawSectionLabel(title)` — 10px mono uppercase, `MvFg3`, 0.16em tracking, with a 6×6px `MvBlue500` square dot prefix. Renders a hairline `MvLine2` rule above it to visually group sections
+- [ ] **File slot**: `MvDrawFileSlot(filename, placeholder, isLoaded, isPrimary)` — renders the dark `MvBg1` container with a folder icon, filename in `MvFontMono` (or placeholder in `MvFg3`), file type + size line below when loaded, and an Import button beneath (primary blue style if `isPrimary`, ghost otherwise)
+- [ ] **Coloured axis numeric input**: `MvDrawAxisInput(axis, value, axisColor, &outValue)` — renders the drag-to-edit numeric field with the axis letter (X=`#FF6B6B`, Y=`#3FD69E`, Z=`#3DA5F5`) in the left corner, value right-aligned in `MvFontMono`, drag behaviour via `ImGui::DragFloat` with zero label width
+- [ ] **Transform group**: `MvDrawTransformGroup(label, unit, values[3], uniform, onChange)` — renders a label+unit row followed by three `MvDrawAxisInput` fields in a 3-column grid
+- [ ] **Validation row**: `MvDrawValidationRow(label, value, status)` — renders a 14px circle badge (✓ green / ! amber / × red), label in `MvFg2`, and value in `MvFontMono` right-aligned
+- [ ] **Inspector footer**: `MvDrawInspectorFooter(stepLabel, onPrevious, onContinue, continueLabel)` — renders the 3-column Previous / step counter / Continue(or Accept/Finish) footer with `MvBg1` background and `MvLine2` top border. Continue button uses primary blue style in Stages 1–3, green `MvSuccess` fill for Stage 4's Finish button
+#### Story 3.8.7: Stage 1 Inspector Panel
+**Tasks:**
+- [ ] Apply `MvDrawStageHeader("STAGE 01 / 04", "Alignment", "ment", "Position the target mesh to roughly align with the source mesh.")` at the top
+- [ ] **Source mesh section**: `MvDrawSectionLabel("Source mesh")`, hint text, `MvDrawFileSlot` for the morph mesh (primary button style)
+- [ ] **Target mesh section**: `MvDrawSectionLabel("Target mesh")`, `MvDrawFileSlot` for the target mesh (ghost button), "Use Default Head" ghost button below
+- [ ] **Target textures section**: Scrollable list of texture slots using the existing dynamic texture model from Sprint 3.3. Each row: 48×48px thumbnail (`ImGui::Image`), filename in mono, remove button. "Add Texture" button at the bottom
+- [ ] **Target transform section**: Three `MvDrawTransformGroup` calls for Position (cm), Rotation (°), Scale (× uniform). "Reset" and "Auto-align" ghost buttons in a 2-column grid below — Auto-align is currently a stub that resets to a neutral near-zero transform
+- [ ] **Validation section**: Four `MvDrawValidationRow` entries: Source loaded (vertex count), Target loaded (MetaHuman version), Bounds intersect (% overlap), Pivot offset (quality hint). These read from the `Project` data model each frame
+- [ ] `MvDrawInspectorFooter("STEP 01 OF 04", ...)` — Previous is disabled on Step 1; Continue enabled only when both meshes are loaded
+#### Story 3.8.8: Stage 2 Inspector Panel & Viewport Bar
+**Background:** Stage 2 has a unique source/target info bar above the dual viewports (not part of the sidebar) in addition to its inspector panel.
+ 
+**Tasks:**
+- [ ] **Viewport info bar**: Render a 36px bar spanning both viewports (between the stepper and the viewports). Left side: SOURCE pill badge + filename + vertex count + point count in mono. Right side: TARGET pill badge + filename + vertex count + point count. Separated by a centred point-count indicator showing "N pts". Background `MvBg1`, `MvLine2` bottom border
+- [ ] **Inspector panel**: `MvDrawStageHeader("STAGE 02 / 04", "Point reference", "reference", "Place matching landmarks on each mesh...")`
+- [ ] **Stats row**: Three equal-width stat cards side by side: PAIRED (count in `MvBlue500`), SOURCE ONLY (count in `MvWarning`), TARGET ONLY (count in `MvWarning` or `MvSuccess` when 0). Each card is a `MvBg1` box with a `MvLine2` border and mono uppercase label
+- [ ] **Placement tools section**: `MvDrawSectionLabel("Placement tools")`. Two ghost buttons side-by-side: "Auto-detect" (stub, disabled with tooltip "Coming in a future update") and "Load preset" (stub, same). These are scaffolded here per the design file; functional implementation is not in scope for v2.0
+- [ ] The existing scrollable point list, symmetry controls, point size slider, and Clear All button from Sprint 3.6 are retained; restyle to match the design token system
+- [ ] `MvDrawInspectorFooter("STEP 02 OF 04", ...)` — Continue enabled only when paired point count > 0 and SOURCE ONLY + TARGET ONLY are both 0
+#### Story 3.8.9: Stage 3 Inspector Panel & Viewport Stats
+**Background:** Stage 3 has a results stats panel in the bottom-left of the viewport and a preset card row at the top of the inspector.**
+ 
+**Tasks:**
+- [ ] **Viewport result stats panel**: After processing completes, render a bottom-left overlay panel in the viewport (same frosted style as the HUD). Contains a `/ RESULT` header with a `● CONVERGED` / `● PROCESSING` / `● FAILED` status indicator, and four mono data rows: Max disp. (mm), Avg disp. (mm), Iterations, Elapsed (s). Values sourced from `DeformationResult`. Hidden until a process attempt has been made
+- [ ] **Viewport toolbar additions for Stage 3**: Extend the top-centre toolbar with Source / Target / Deformed view mode toggle buttons (replacing the visibility toggles used in other stages). Active mode uses the primary button style
+- [ ] **Preset card row**: Horizontal scrollable area at the top of the inspector (below the stage header). Each card is ~140×72px: a `MvBg1` background with `MvLine2` border (active: `MvBlue500` border + `rgba(61,165,245,0.08)` fill), a `PresetIcon` SVG (32×32px, rendered via `ImDrawList` line primitives matching the design file icons — tight-wrap radial lines for Quick Wrap, loose flowing lines for Fantasy Wrap, star for Custom), preset name in 14px SemiBold, and a sub-label in 11px `MvFg3`. The `+ Save preset` card uses a dashed `MvLine3` border and a `+` icon. Clicking a preset card applies its parameters to the parameter controls — this is the same preset system from Sprint 4/5, now with the correct visual treatment
+- [ ] **Inspector parameter sections**: The collapsible General and Advanced sections from Sprint 5.1 are retained and restyled using `MvDrawSectionLabel` and the design token colours. Collapsible section headers use `ImGui::CollapsingHeader` with a custom `MvLine2` background fill
+- [ ] `MvDrawInspectorFooter("STEP 03 OF 04", ...)` with "Accept" as the continue label — enabled only after a successful process result is available
+#### Story 3.8.10: Stage 4 Inspector Panel & Viewport Stats
+**Tasks:**
+- [ ] **Viewport top bar for Stage 4**: A 36px bar above the viewport (below the stepper): left side has SOLID shading mode label + "Debug HUD" ghost button; right side shows a `● COMPLETE` / `● PROCESSING` status pill and a "N% strength" indicator
+- [ ] **Viewport mesh stats panel**: Bottom-left overlay panel with `/ MESH` header and a `● READY TO EXPORT` / `● PROCESSING` status indicator. Three data rows: Vertices (count), Triangles (count), UV maps (count). Sourced from the current deformed mesh
+- [ ] **Brush selector**: 2×2 grid of brush cards (full width of inspector, two per row). Each card: `MvBg1` background, `MvLine2` border (active: `MvBlue500` border + blue fill tint), a `BrushIcon` SVG drawn via `ImDrawList` primitives (smooth wave line, grab hand outline, push/pull arrows, inflate radial lines), brush name in 14px SemiBold, sub-label in 11px `MvFg3`. The four brushes are Smooth, Grab, Push/Pull, Inflate — active brush has the selected card highlighted
+- [ ] **Radius and Strength sliders**: Rendered using `ImGui::SliderFloat` with a custom draw override using `ImDrawList` to match the design's gradient track (`MvBlue600` → `MvBlue400`) and circular thumb with `MvBlue500` border
+- [ ] **Export mesh button**: Full-width primary green button (`MvSuccess` fill) labelled "Export Mesh…" at the bottom of the inspector above the footer. Opens the export modal on click
+- [ ] `MvDrawInspectorFooter("STEP 04 OF 04", ...)` with a green "Finish" button style — triggers the finalize and export flow
+
+#### Story 3.8.11: Welcome Modal Redesign
+**Background:** The welcome modal from Sprint 3.6 must be updated to match the redesign in `welcome.jsx` and the preview screenshot.
+ 
+**Tasks:**
+- [ ] Render as a centred `ImGui::BeginPopupModal` of 560px width with a dark scrim overlay behind it (`MvBg0` at 55% alpha drawn via `ImGui::GetBackgroundDrawList()`)
+- [ ] **Header section**: `MvBg2` background with a `MvLine2` bottom border. Left: 56×56px app mark icon (gradient blue square with the head SVG icon, approximated with a solid `MvBlue500` fill rounded rect + the logo mark image). Right: version eyebrow ("V 2.0.0 · EARLY ACCESS" in `MvBlue400` mono), "Welcome to **MetaVisage**" heading (Saira Bold Italic, "MetaVisage" in `MvBlue400`), and tagline in `MvFg2`. Close `×` button top-right
+- [ ] **Actions row**: 2-column grid of `BigAction` buttons. New Project (primary blue border + fill tint, Import icon) and Open Project... (ghost, Folder icon). Each button: icon in a 36×36 rounded container, label in 14px SemiBold, sub-label in 11px `MvFg3`, right-arrow chevron
+- [ ] **Recent projects list**: Mono uppercase "RECENT PROJECTS" section label + file count. Scrollable list in a `MvBg1` `MvLine2`-bordered container. Each row: 28×28 file icon in `MvBg2`, filename in `MvFontMono` 12px, "N hours ago · N MB" in 11px `MvFg3`, right chevron. Hover state: `rgba(61,165,245,0.06)` background tint on the row
+- [ ] **Footer**: "Show this on startup" checkbox + Close ghost button
+
+#### Story 3.8.12: Login Screen Redesign
+**Background:** The login screen from Sprint 6.1 must match the redesign in `login.jsx`. It has two states — idle (Sign In button) and waiting (browser open, spinner active).
+ 
+**Tasks:**
+- [ ] Render as a full-screen `ImGui` window covering the entire application surface (`MvBg0` background with the fine blueprint grid drawn via `ImGui::GetWindowDrawList()` repeated pattern)
+- [ ] **Corner bracket decorations**: Four decorative L-shaped corner marks drawn via `ImDrawList::AddLine` in `MvLine3` at the four corners of the content area
+- [ ] **Auth card** (480px wide, centred): `MvBg2` background, `MvLine3` border, `rounding=8`. Top accent bar: 2px gradient line (`ImDrawList::AddRectFilledMultiColor` from transparent → `MvBlue500` → `MvBlue300` → `MvBlue500` → transparent)
+- [ ] **Card hero**: 64×64px app mark (same as welcome modal but larger), version + state eyebrow in `MvBlue400` mono, display heading ("Sign in to **MetaVisage**" or "Awaiting **browser**"), description text in `MvFg2`. When waiting, a spinning animation ring is drawn around the app mark via `ImDrawList::AddArc` with a rotating offset updated each frame via the render tick
+- [ ] **Step divider**: Mono label "STEP 01 / 02 — AUTHENTICATION" or "STEP 02 / 02 — BROWSER HANDOFF" with `MvLine2` rules either side
+- [ ] **Idle state body**: Full-width primary blue "Sign in with browser" button (48px height). Three numbered step explanation rows (01/02/03) with square `MvBg1` number badges and explanation text in `MvFg2` 13px
+- [ ] **Waiting state body**: A status block showing the Named Pipe listener address, a countdown timer ("Will time out in M:SS"), and a green "LIVE" badge. Below it: a "Callback URI" display with the `metavisage://` URI in mono and a Copy button. Below that: an amber warning box ("Browser didn't open? Open link manually or retry")
+- [ ] **Card footer**: Mono security label ("SSO · OAuth 2.1 · PKCE") on the left with a lock icon; Cancel (waiting) or "Use offline" (idle) ghost button on the right
+- [ ] **Bottom metadata strip**: Four mono items centred at the bottom of the screen: BUILD version, NODE identifier, HELP link, PRIVACY link
+
+### Acceptance Criteria
+- [ ] All CSS colour tokens from `colors_and_type.css` are present in `MvStyle.h` and applied to the ImGui style
+- [ ] Saira Bold Italic, Inter, and JetBrains Mono fonts load and render correctly at all required sizes
+- [ ] Custom title bar renders the logo, filename, and stage breadcrumb; caption buttons function; close button turns red on hover
+- [ ] Menu bar shows `File | Edit | View | Mesh | Help` with autosave indicator and Live Link pill on the right
+- [ ] Status bar renders in the new structured mono layout with all data fields
+- [ ] Stage stepper renders all four stages with correct active/complete/upcoming states, disc icons, and underline indicator; clicking a completed stage navigates back
+- [ ] Left tool rail appears in Stage 1 only with Move/Rotate/Scale buttons, hotkey badges, and correct active state
+- [ ] Viewport top-centre toolbar shows correct controls per stage (shading in Stages 1/2/4; view mode in Stage 3)
+- [ ] Bottom-left instruction HUD shows stage-appropriate instruction text and hotkey badges
+- [ ] All six inspector panel primitives (`MvDrawStageHeader`, `MvDrawSectionLabel`, `MvDrawFileSlot`, `MvDrawAxisInput`, `MvDrawTransformGroup`, `MvDrawValidationRow`, `MvDrawInspectorFooter`) render correctly and are used consistently across all stage panels
+- [ ] Stage 2 viewport info bar shows source/target filename, vertex counts, and point counts
+- [ ] Stage 2 PAIRED / SOURCE ONLY / TARGET ONLY stat cards update in real time as points are placed
+- [ ] Stage 3 result stats panel appears after processing with correct deformation statistics
+- [ ] Stage 3 preset cards render with icons and the correct active border highlight
+- [ ] Stage 4 brush selector renders as a 2×2 grid with icons, labels, and active highlight
+- [ ] Stage 4 mesh stats panel shows vertex/triangle/UV counts
+- [ ] Welcome modal matches the redesign with scrollable recent projects, action cards, and footer checkbox
+- [ ] Login screen renders correctly in both idle and waiting states; spinner animates; countdown timer ticks
+- [ ] No Qt style or default Dear ImGui grey theme is visible anywhere in the application
+- [ ] Full workflow (Stage 1 → Stage 4 → Export) completes without crashes
+
+---
+
 ## Sprint 4: Stage 3 — Wrap Engine Redesign (Algorithm & Preset System)
 
 **Duration:** 2 weeks  

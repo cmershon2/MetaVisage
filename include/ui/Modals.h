@@ -64,6 +64,13 @@ struct WelcomeModalState {
     WelcomeAction action = WelcomeAction::None;
     std::string selectedRecent;
 
+    // Story 3.8.11 — footer checkbox. Default true mirrors the v1.0
+    // behaviour where the welcome dialog appeared on every launch; the
+    // user toggles it off to skip the modal next time. Persisted state
+    // is the AppWindow's responsibility (Config or similar) — this struct
+    // only holds the live UI value.
+    bool showOnStartup = true;
+
     void Open();
 };
 void RenderWelcomeModal(WelcomeModalState& state);

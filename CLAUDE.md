@@ -8,7 +8,7 @@ See @.claude/context/product-vision.md for strategic goals and current state.
 
 ## Technical Stack
 
-- **UI Framework**: Dear ImGui + GLFW + GLEW. Sprint 3.5 cut Qt Gui/Widgets/OpenGL/OpenGLWidgets; Sprint 3.6 rebuilt the menus, sidebars, modals, viewport host, and system services on the new stack; **Sprint 3.7 removed `Qt6::Core` entirely** (QString/QFile/QJson/QDateTime → `std::string` / `std::filesystem` / `std::fstream` / `nlohmann::ordered_json` / `std::chrono`). The codebase is fully self-hosted on `std::format` (C++20), `nlohmann::json`, and Win32 APIs. A configure-time CMake guard fails the build if any Qt target is reintroduced.
+- **UI Framework**: Dear ImGui + GLFW + GLEW. Sprint 3.5 cut Qt Gui/Widgets/OpenGL/OpenGLWidgets; Sprint 3.6 rebuilt the menus, sidebars, modals, viewport host, and system services on the new stack; **Sprint 3.7 removed `Qt6::Core` entirely** (QString/QFile/QJson/QDateTime → `std::string` / `std::filesystem` / `std::fstream` / `nlohmann::ordered_json` / `std::chrono`). **Sprint 3.8** layered the design system on top: `MvStyle` (palette, spacing, radii, shadows, eight font handles), `MvIcons` (Lucide TTF glyph constants in PUA), and `MvInspectorPrimitives` (shared section/row/drag helpers with `DragEditResult` for one-undo-per-gesture). The window is fully **frameless** — GLFW creates an undecorated OS window, and a Win32 `WM_NCHITTEST`/`WM_NCCALCSIZE` subclass restores native drag, edge resize, Aero Snap, and the system menu while a custom title bar is drawn in ImGui. The codebase is fully self-hosted on `std::format` (C++20), `nlohmann::json`, and Win32 APIs. A configure-time CMake guard fails the build if any Qt target is reintroduced.
 - **Graphics API**: OpenGL 4.3+
 - **Mesh I/O**: Assimp (FBX, OBJ, GLTF)
 - **Mesh Processing**: libigl / OpenMesh / CGAL
@@ -36,21 +36,30 @@ Key components: Mesh Engine (load/validate/optimize/export), Deformation Algorit
 
 **Per-frame state model**: `Project` is the single source of truth that the ImGui sidebars read and write each frame — no signal/slot bus. Sidebars surface action requests via the `StageSidebar::Actions` struct, which `AppWindow` consumes per frame and dispatches to the appropriate command, worker, or modal.
 
+**Design system**: `MvStyle` owns every color, spacing unit, radius, and shadow used across the shell — never hardcode `IM_COL32` or pixel literals in widgets, look up an `MvStyle::Colors::*` / `MvStyle::Spacing::*` token instead. Iconography goes through `MvIcons::*` (Lucide TTF, PUA codepoints) — never hand-draw glyphs with `ImDrawList` if a Lucide equivalent exists. Inspector rows go through `MvInspectorPrimitives` (`Section`, `Row`, `DragFloatRow`, etc.) so undo grouping stays consistent.
+
 ## Repository Structure
 
 ```
 MetaVisage/
-├── assets/             # Shaders, gizmo models, default MetaHuman head, app icons
+├── assets/
+│   ├── fonts/          # Inter (Regular/Medium/SemiBold), JetBrains Mono, Saira ExtraBoldItalic, Lucide
+│   ├── icons/          # App icons (Windows/macOS sets)
+│   ├── models/         # Default MetaHuman head + Move/Rotate/Scale gizmo OBJs
+│   ├── shaders/        # GLSL — basic, gizmo, grid, heatmap, matcap, point, overlay, textured
+│   └── metavisage-logo-mark.png
 ├── docs/               # Banner, KNOWN_ISSUES.md
 ├── include/            # Public headers, mirrored by src/ layout below
-│   ├── baking/         # Texture baking + writer (PNG/TGA via stb)
-│   ├── core/           # Mesh, Project, Camera, Transform, Types, UndoStack
+│   ├── baking/         # TextureBaker, TextureWriter (PNG/TGA via stb)
+│   ├── core/           # Mesh, Project, Camera, Transform, Types, UndoStack, UndoActions
 │   ├── deformation/    # MeshDeformer, NRICPDeformer, RBFInterpolator
 │   ├── io/             # MeshExporter, ProjectSerializer
 │   ├── rendering/      # Renderer, MeshRenderer, GizmoRenderer, PointRenderer, ShaderManager
 │   ├── sculpting/      # Brush base + Smooth/Grab/PushPull/Inflate/Mask brushes
 │   ├── thirdparty/     # stb_image, stb_image_write
-│   ├── ui/             # AppWindow, StageSidebar, Modals, Viewport, ViewportHost, FileDialogs
+│   ├── ui/             # Shell — AppWindow, StageSidebar, StageStepper, ToolRail,
+│   │                   #   Viewport, ViewportHost, Modals, FileDialogs, LoginScreen
+│   │                   # Design system — MvStyle, MvIcons, MvInspectorPrimitives
 │   └── utils/          # Config, HttpClient, SingleInstance, OpenUrl, Paths,
 │                       # SecureStorage, BVH, Logger, RayCaster, SpatialHash
 ├── src/                # Implementation, mirroring include/ structure
@@ -63,7 +72,7 @@ MetaVisage/
 └── vcpkg.json          # Pinned dependency manifest
 ```
 
-All UI lives under the ImGui hosts (`AppWindow`, `Viewport`, `ViewportHost`, `StageSidebar`, `Modals`, `FileDialogs`). The Qt-era UI files were deleted at the end of Sprint 3.7 once the migration was verified — earlier sprint plans, retros, and commits still reference `MainWindow.cpp` / `SidebarWidget.cpp` / `ViewportWidget.cpp` / `ExportDialog.cpp` / etc. as the historical equivalents.
+All UI lives under the ImGui hosts (`AppWindow`, `Viewport`, `ViewportHost`, `StageSidebar`, `StageStepper`, `ToolRail`, `Modals`, `FileDialogs`, `LoginScreen`) and shares the design-system primitives (`MvStyle`, `MvIcons`, `MvInspectorPrimitives`). The Qt-era UI files were deleted at the end of Sprint 3.7 once the migration was verified — earlier sprint plans, retros, and commits still reference `MainWindow.cpp` / `SidebarWidget.cpp` / `ViewportWidget.cpp` / `ExportDialog.cpp` / etc. as the historical equivalents.
 
 ## Four-Stage Workflow
 

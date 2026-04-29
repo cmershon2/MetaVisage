@@ -107,8 +107,13 @@ set(CORE_SOURCES
     src/ui/Viewport.cpp
     src/ui/ViewportHost.cpp
     src/ui/FileDialogs.cpp
+    src/ui/LoginScreen.cpp
     src/ui/Modals.cpp
+    src/ui/MvInspectorPrimitives.cpp
+    src/ui/MvStyle.cpp
     src/ui/StageSidebar.cpp
+    src/ui/StageStepper.cpp
+    src/ui/ToolRail.cpp
     src/utils/RayCaster.cpp
     src/utils/Logger.cpp
     src/utils/BVH.cpp
@@ -139,8 +144,13 @@ set(CORE_HEADERS
     include/ui/Viewport.h
     include/ui/ViewportHost.h
     include/ui/FileDialogs.h
+    include/ui/LoginScreen.h
     include/ui/Modals.h
+    include/ui/MvInspectorPrimitives.h
+    include/ui/MvStyle.h
     include/ui/StageSidebar.h
+    include/ui/StageStepper.h
+    include/ui/ToolRail.h
     include/core/Mesh.h
     include/core/Transform.h
     include/core/Project.h

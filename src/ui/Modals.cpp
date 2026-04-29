@@ -1,9 +1,13 @@
 #include "ui/Modals.h"
+#include "ui/MvIcons.h"
+#include "ui/MvStyle.h"
 #include "utils/Config.h"
 
 #include <imgui.h>
 
 #include <array>
+#include <chrono>
+#include <cstdio>
 #include <filesystem>
 
 namespace MetaVisage {
@@ -110,65 +114,487 @@ void WelcomeModalState::Open() {
     selectedRecent.clear();
 }
 
+namespace {
+
+// Format a filesystem::last_write_time as "N hours ago" / "yesterday" /
+// "N days ago" — relative-time string for the recent-projects list.
+std::string FormatRelativeTime(const std::filesystem::path& path) {
+    std::error_code ec;
+    auto ftime = std::filesystem::last_write_time(path, ec);
+    if (ec) return "unknown";
+
+    using namespace std::chrono;
+    // file_clock to system_clock conversion is C++20; fall back to a
+    // direct cast through duration_cast for the elapsed window we care
+    // about (relative seconds, not absolute wall time).
+    auto sftime = std::chrono::clock_cast<std::chrono::system_clock>(ftime);
+    auto now = system_clock::now();
+    auto delta = duration_cast<seconds>(now - sftime).count();
+
+    if (delta < 60)            return "just now";
+    if (delta < 60 * 60)       { char b[32]; std::snprintf(b, sizeof(b), "%lld min ago", static_cast<long long>(delta / 60)); return b; }
+    if (delta < 60 * 60 * 24)  { char b[32]; std::snprintf(b, sizeof(b), "%lld hr ago",  static_cast<long long>(delta / 3600)); return b; }
+    if (delta < 60 * 60 * 48)  return "yesterday";
+    if (delta < 60 * 60 * 24 * 7) {
+        char b[32]; std::snprintf(b, sizeof(b), "%lld days ago",
+                                  static_cast<long long>(delta / (60 * 60 * 24)));
+        return b;
+    }
+    char b[32]; std::snprintf(b, sizeof(b), "%lld weeks ago",
+                              static_cast<long long>(delta / (60 * 60 * 24 * 7)));
+    return b;
+}
+
+// "184.2 MB" / "12 KB" / "1.4 GB" — size as a single mono span.
+std::string FormatFileSize(const std::filesystem::path& path) {
+    std::error_code ec;
+    const auto bytes = std::filesystem::file_size(path, ec);
+    if (ec) return "—";
+    constexpr double KB = 1024.0;
+    constexpr double MB = KB * 1024.0;
+    constexpr double GB = MB * 1024.0;
+    char buf[32];
+    if (bytes >= GB)      std::snprintf(buf, sizeof(buf), "%.1f GB", static_cast<double>(bytes) / GB);
+    else if (bytes >= MB) std::snprintf(buf, sizeof(buf), "%.1f MB", static_cast<double>(bytes) / MB);
+    else if (bytes >= KB) std::snprintf(buf, sizeof(buf), "%.0f KB", static_cast<double>(bytes) / KB);
+    else                  std::snprintf(buf, sizeof(buf), "%llu B",  static_cast<unsigned long long>(bytes));
+    return buf;
+}
+
+inline ImU32 ColU(const ImVec4& v) { return ImGui::ColorConvertFloat4ToU32(v); }
+inline ImVec4 WithAlpha(const ImVec4& v, float a) { return ImVec4(v.x, v.y, v.z, a); }
+
+// Big-action button used twice in the header: New Project (primary blue
+// tint) and Open Project... (ghost). Returns true on click. Owns its own
+// PushID so the two calls don't collide.
+bool DrawWelcomeAction(const char* idStr, const char* iconGlyph,
+                       const char* label, const char* sub,
+                       bool isPrimary) {
+    constexpr float CardH = 60.0f;
+    ImGui::PushID(idStr);
+    const ImVec2 pmin = ImGui::GetCursorScreenPos();
+    const float availW = ImGui::GetContentRegionAvail().x;
+    const ImVec2 pmax(pmin.x + availW, pmin.y + CardH);
+    const bool clicked = ImGui::InvisibleButton("##wact", ImVec2(availW, CardH));
+    const bool hovered = ImGui::IsItemHovered();
+    ImGui::PopID();
+
+    ImDrawList* dl = ImGui::GetWindowDrawList();
+
+    if (isPrimary) {
+        ImVec4 fill = MetaVisage::MvStyle::MvBlue500;
+        fill.w = hovered ? 0.18f : 0.10f;
+        dl->AddRectFilled(pmin, pmax, ColU(fill), 6.0f);
+        dl->AddRect(pmin, pmax,
+                    ColU(MetaVisage::MvStyle::MvBlue500),
+                    6.0f, 0, 1.0f);
+    } else {
+        const ImU32 bg = hovered
+            ? ColU(MetaVisage::MvStyle::MvBg3)
+            : ColU(MetaVisage::MvStyle::MvBg1);
+        dl->AddRectFilled(pmin, pmax, bg, 6.0f);
+        dl->AddRect(pmin, pmax,
+                    ColU(MetaVisage::MvStyle::MvLine2),
+                    6.0f, 0, 1.0f);
+    }
+
+    // 36×36 icon container on the left.
+    constexpr float IconBoxSize = 36.0f;
+    const ImVec2 iconMin(pmin.x + 14.0f, pmin.y + (CardH - IconBoxSize) * 0.5f);
+    const ImVec2 iconMax(iconMin.x + IconBoxSize, iconMin.y + IconBoxSize);
+    const ImVec4 iconBg = isPrimary
+        ? WithAlpha(MetaVisage::MvStyle::MvBlue500, 0.18f)
+        : MetaVisage::MvStyle::MvBg2;
+    dl->AddRectFilled(iconMin, iconMax, ColU(iconBg), 6.0f);
+    dl->AddRect(iconMin, iconMax,
+                ColU(isPrimary ? MetaVisage::MvStyle::MvBlue400
+                               : MetaVisage::MvStyle::MvLine2),
+                6.0f, 0, 1.0f);
+    if (iconGlyph && MetaVisage::MvStyle::Font.Icon) {
+        ImFont* iconFont = MetaVisage::MvStyle::Font.Icon;
+        constexpr float iconSize = 18.0f;
+        const ImVec2 ts = iconFont->CalcTextSizeA(iconSize, FLT_MAX, 0.0f, iconGlyph);
+        const ImU32 iconCol = ColU(isPrimary
+            ? MetaVisage::MvStyle::MvBlue400
+            : MetaVisage::MvStyle::MvFg2);
+        dl->AddText(iconFont, iconSize,
+                    ImVec2((iconMin.x + iconMax.x - ts.x) * 0.5f,
+                           (iconMin.y + iconMax.y - ts.y) * 0.5f),
+                    iconCol, iconGlyph);
+    }
+
+    // Label + sub-label stack.
+    const float textX = iconMax.x + 12.0f;
+    {
+        MetaVisage::MvStyle::ScopedFont f(MetaVisage::MvStyle::Font.BodyMd);
+        const float fs = ImGui::GetFontSize();
+        dl->AddText(ImVec2(textX, pmin.y + (CardH * 0.5f) - fs - 1.0f),
+                    ColU(MetaVisage::MvStyle::MvFg1), label);
+    }
+    if (sub && sub[0]) {
+        MetaVisage::MvStyle::ScopedFont f(MetaVisage::MvStyle::Font.MonoSm);
+        dl->AddText(ImVec2(textX, pmin.y + (CardH * 0.5f) + 3.0f),
+                    ColU(MetaVisage::MvStyle::MvFg3), sub);
+    }
+
+    // Right chevron.
+    if (MetaVisage::MvStyle::Font.IconSm) {
+        ImFont* iconFont = MetaVisage::MvStyle::Font.IconSm;
+        constexpr float chevSize = 14.0f;
+        const ImVec2 ts = iconFont->CalcTextSizeA(chevSize, FLT_MAX, 0.0f,
+                                                  MV_ICON_CHEVRON_RIGHT);
+        const ImU32 chevCol = ColU(isPrimary
+            ? MetaVisage::MvStyle::MvBlue400
+            : MetaVisage::MvStyle::MvFg3);
+        dl->AddText(iconFont, chevSize,
+                    ImVec2(pmax.x - ts.x - 12.0f,
+                           pmin.y + (CardH - ts.y) * 0.5f),
+                    chevCol, MV_ICON_CHEVRON_RIGHT);
+    }
+
+    return clicked;
+}
+
+} // namespace
+
 void RenderWelcomeModal(WelcomeModalState& state) {
     HandlePendingOpen("Welcome to MetaVisage", state.pendingOpen);
 
     const auto center = ImGui::GetMainViewport()->GetCenter();
     ImGui::SetNextWindowPos(center, ImGuiCond_Appearing, ImVec2(0.5f, 0.5f));
-    ImGui::SetNextWindowSize(ImVec2(520, 420), ImGuiCond_Appearing);
+    ImGui::SetNextWindowSize(ImVec2(560.0f, 0.0f), ImGuiCond_Appearing);
+
+    ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding, ImVec2(0.0f, 0.0f));
+    ImGui::PushStyleColor(ImGuiCol_PopupBg, MvStyle::MvBg2);
+    ImGui::PushStyleColor(ImGuiCol_Border,  MvStyle::MvLine3);
 
     if (ImGui::BeginPopupModal("Welcome to MetaVisage", nullptr,
-                               ImGuiWindowFlags_NoSavedSettings)) {
+                               ImGuiWindowFlags_NoSavedSettings |
+                               ImGuiWindowFlags_AlwaysAutoResize |
+                               ImGuiWindowFlags_NoTitleBar |
+                               ImGuiWindowFlags_NoResize)) {
         state.isOpen = true;
-        ImGui::TextWrapped("MetaHuman mesh morphing for indie teams.");
-        ImGui::Spacing();
 
-        if (ImGui::Button("New Project", ImVec2(-FLT_MIN, 0))) {
-            state.action = WelcomeAction::NewProject;
-            ImGui::CloseCurrentPopup();
-        }
-        if (ImGui::Button("Open Project...", ImVec2(-FLT_MIN, 0))) {
-            state.action = WelcomeAction::OpenProject;
-            ImGui::CloseCurrentPopup();
-        }
+        ImDrawList* dl = ImGui::GetWindowDrawList();
+        constexpr float ModalW = 560.0f;
+        const ImVec2 wpos = ImGui::GetWindowPos();
 
-        ImGui::Spacing();
-        ImGui::Separator();
-        ImGui::TextUnformatted("Recent Projects");
-        ImGui::Spacing();
+        // ---- Header — sized to fit subtitle + tagline -------------------
+        // Bumped from 92 → 112 px to make room for the subtitle below the
+        // Saira heading per user feedback.
+        constexpr float HeaderH = 112.0f;
+        constexpr float SidePad = 28.0f;
+        {
+            const ImVec2 hMin = wpos;
+            const ImVec2 hMax(wpos.x + ModalW, wpos.y + HeaderH);
+            // Subtle radial-style highlight via two-tone fill — frosted dark
+            // navy at the bottom blending up into MvBg2.
+            dl->AddRectFilled(hMin, hMax, ColU(MvStyle::MvBg2));
+            dl->AddLine(ImVec2(hMin.x, hMax.y - 1.0f),
+                        ImVec2(hMax.x, hMax.y - 1.0f),
+                        ColU(MvStyle::MvLine2));
 
-        const auto& recent = Config::Instance().RecentProjects();
-        if (recent.empty()) {
-            ImGui::TextDisabled("(No recent projects)");
-        } else {
-            if (ImGui::BeginChild("##recent_projects", ImVec2(0, 180), true)) {
-                for (const auto& path : recent) {
-                    const std::string label = std::filesystem::path(path).filename().string();
-                    ImGui::PushID(path.c_str());
-                    if (ImGui::Selectable(label.c_str())) {
-                        state.action = WelcomeAction::OpenRecent;
-                        state.selectedRecent = path;
-                        ImGui::CloseCurrentPopup();
-                    }
-                    if (ImGui::IsItemHovered()) {
-                        ImGui::SetTooltip("%s", path.c_str());
-                    }
-                    ImGui::PopID();
-                }
+            // 56×56 app-mark backdrop. The bundled logo PNG is itself a
+            // blue silhouette, so the previous MvBlue500→MvBlue700 gradient
+            // made the mark disappear into the box. Use a dark navy
+            // backdrop (MvBg3 → MvBg4 diagonal) with a thin MvBlue400 hair
+            // border — the bright-blue logo pops against the dark surface.
+            constexpr float MarkSize = 56.0f;
+            const ImVec2 mMin(hMin.x + SidePad, hMin.y + (HeaderH - MarkSize) * 0.5f);
+            const ImVec2 mMax(mMin.x + MarkSize, mMin.y + MarkSize);
+            dl->AddRectFilledMultiColor(mMin, mMax,
+                ColU(MvStyle::MvBg3), ColU(MvStyle::MvBg3),
+                ColU(MvStyle::MvBg4), ColU(MvStyle::MvBg4));
+            dl->AddRect(mMin, mMax,
+                        ColU(MvStyle::MvBlue400),
+                        8.0f, 0, 1.0f);
+            if (MvStyle::Asset.LogoTextureId) {
+                constexpr float LogoSize = 36.0f;
+                const ImVec2 logoMin((mMin.x + mMax.x - LogoSize) * 0.5f,
+                                     (mMin.y + mMax.y - LogoSize) * 0.5f);
+                const ImVec2 logoMax(logoMin.x + LogoSize, logoMin.y + LogoSize);
+                dl->AddImage((ImTextureID)(intptr_t)MvStyle::Asset.LogoTextureId,
+                             logoMin, logoMax);
             }
-            ImGui::EndChild();
-        }
 
-        ImGui::Spacing();
-        if (ImGui::Button("Close", ImVec2(120, 0))) {
+            // Right side text block — eyebrow, heading, subtitle.
+            const float textX = mMax.x + 18.0f;
+            {
+                MvStyle::ScopedFont f(MvStyle::Font.MonoSm);
+                dl->AddText(ImVec2(textX, hMin.y + 24.0f),
+                            ColU(MvStyle::MvBlue400),
+                            "V 2.0.0 \xC2\xB7 EARLY ACCESS");
+            }
+            {
+                MvStyle::ScopedFont f(MvStyle::Font.Display);
+                // "Welcome to" in MvFg1 + "MetaVisage" in MvBlue400 — split
+                // span so the colour switch lands mid-sentence.
+                const char* prefix = "Welcome to ";
+                const ImVec2 ts1 = ImGui::CalcTextSize(prefix);
+                dl->AddText(ImVec2(textX, hMin.y + 40.0f),
+                            ColU(MvStyle::MvFg1), prefix);
+                dl->AddText(ImVec2(textX + ts1.x, hMin.y + 40.0f),
+                            ColU(MvStyle::MvBlue400), "MetaVisage");
+            }
+            {
+                // Subtitle — wraps below the Saira heading, BodySm MvFg2.
+                MvStyle::ScopedFont f(MvStyle::Font.BodySm);
+                dl->AddText(ImVec2(textX, hMin.y + 76.0f),
+                            ColU(MvStyle::MvFg2),
+                            "MetaHuman mesh morphing tool");
+            }
+
+            // Top-right close button.
+            constexpr float CloseW = 28.0f;
+            const ImVec2 closeMin(hMax.x - CloseW - 10.0f, hMin.y + 10.0f);
+            ImGui::SetCursorScreenPos(closeMin);
+            ImGui::PushID("##wcloseBtn");
+            if (ImGui::InvisibleButton("##c", ImVec2(CloseW, CloseW))) {
+                ImGui::CloseCurrentPopup();
+            }
+            const bool closeHovered = ImGui::IsItemHovered();
+            ImGui::PopID();
+            const ImU32 closeCol = closeHovered
+                ? ColU(MvStyle::MvFg1)
+                : ColU(MvStyle::MvFg3);
+            if (MvStyle::Font.IconSm) {
+                ImFont* iconFont = MvStyle::Font.IconSm;
+                constexpr float xSize = 14.0f;
+                const ImVec2 ts = iconFont->CalcTextSizeA(xSize, FLT_MAX, 0.0f, MV_ICON_X);
+                dl->AddText(iconFont, xSize,
+                            ImVec2(closeMin.x + (CloseW - ts.x) * 0.5f,
+                                   closeMin.y + (CloseW - ts.y) * 0.5f),
+                            closeCol, MV_ICON_X);
+            }
+        }
+        // Advance the cursor past the header so the rest of the body lands
+        // below it.
+        ImGui::SetCursorScreenPos(ImVec2(wpos.x, wpos.y + HeaderH));
+
+        // ---- Action row (2-column grid) ---------------------------------
+        ImGui::Dummy(ImVec2(0.0f, 18.0f));
+        ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding, ImVec2(SidePad, 0.0f));
+        ImGui::Indent(SidePad);
+        // Explicit outer_size with negative right offset = "available width
+        // minus SidePad" — keeps the right edge of the Open Project card
+        // from hitting the modal border (Indent only pads the left side).
+        if (ImGui::BeginTable("##welcomeActions", 2,
+                              ImGuiTableFlags_SizingStretchSame |
+                              ImGuiTableFlags_NoPadOuterX,
+                              ImVec2(-SidePad, 0.0f))) {
+            ImGui::TableNextRow();
+
+            ImGui::TableNextColumn();
+            if (DrawWelcomeAction("new", MV_ICON_FILE,
+                                  "New project",
+                                  "Start a fresh morph",
+                                  /*isPrimary=*/true)) {
+                state.action = WelcomeAction::NewProject;
+                ImGui::CloseCurrentPopup();
+            }
+
+            ImGui::TableNextColumn();
+            ImGui::Dummy(ImVec2(8.0f, 0.0f));
+            ImGui::SameLine();
+            if (DrawWelcomeAction("open", MV_ICON_FOLDER,
+                                  "Open project\xE2\x80\xA6",
+                                  "Continue from a .mmproj",
+                                  /*isPrimary=*/false)) {
+                state.action = WelcomeAction::OpenProject;
+                ImGui::CloseCurrentPopup();
+            }
+
+            ImGui::EndTable();
+        }
+        ImGui::Unindent(SidePad);
+        ImGui::PopStyleVar();
+
+        // ---- Recent projects --------------------------------------------
+        ImGui::Dummy(ImVec2(0.0f, 14.0f));
+        ImGui::Indent(SidePad);
+        {
+            const auto& recent = Config::Instance().RecentProjects();
+
+            // Section label row — mono uppercase + file count on the right.
+            const ImVec2 lblPos = ImGui::GetCursorScreenPos();
+            const float lblW = ImGui::GetContentRegionAvail().x - SidePad;
+            constexpr float DotSize = 6.0f;
+            {
+                MvStyle::ScopedFont f(MvStyle::Font.MonoSm);
+                const float fs = ImGui::GetFontSize();
+                // Blue square dot prefix.
+                const float dotY = lblPos.y + (fs - DotSize) * 0.5f + 1.0f;
+                dl->AddRectFilled(ImVec2(lblPos.x, dotY),
+                                  ImVec2(lblPos.x + DotSize, dotY + DotSize),
+                                  ColU(MvStyle::MvBlue500));
+                dl->AddText(ImVec2(lblPos.x + DotSize + 8.0f, lblPos.y),
+                            ColU(MvStyle::MvFg3), "RECENT PROJECTS");
+
+                char fileCount[32];
+                std::snprintf(fileCount, sizeof(fileCount), "%zu files",
+                              recent.size());
+                const ImVec2 fcSize = ImGui::CalcTextSize(fileCount);
+                dl->AddText(ImVec2(lblPos.x + lblW - fcSize.x, lblPos.y),
+                            ColU(MvStyle::MvFg3), fileCount);
+                ImGui::Dummy(ImVec2(lblW, fs));
+            }
+            ImGui::Dummy(ImVec2(0.0f, 8.0f));
+
+            if (recent.empty()) {
+                MvStyle::ScopedFont f(MvStyle::Font.BodySm);
+                ImGui::PushStyleColor(ImGuiCol_Text, MvStyle::MvFg4);
+                ImGui::TextWrapped("No recent projects yet — open or save "
+                                   "a project to populate this list.");
+                ImGui::PopStyleColor();
+            } else {
+                ImGui::PushStyleColor(ImGuiCol_ChildBg, MvStyle::MvBg1);
+                ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding, ImVec2(0.0f, 0.0f));
+                // Cap visible rows at ~5 (≈220 px) so the modal stays compact.
+                constexpr float RowH = 44.0f;
+                const float visibleRows = std::min<float>(5.0f,
+                    static_cast<float>(recent.size()));
+                const float listH = visibleRows * RowH + 4.0f;
+
+                if (ImGui::BeginChild("##recent_projects",
+                                      ImVec2(-SidePad, listH),
+                                      true,
+                                      ImGuiWindowFlags_None)) {
+                    ImDrawList* listDl = ImGui::GetWindowDrawList();
+                    for (size_t i = 0; i < recent.size(); ++i) {
+                        const std::filesystem::path p(recent[i]);
+                        const std::string filename = p.filename().string();
+                        const std::string when = FormatRelativeTime(p);
+                        const std::string sizeStr = FormatFileSize(p);
+
+                        ImGui::PushID(static_cast<int>(i));
+                        const ImVec2 rowMin = ImGui::GetCursorScreenPos();
+                        const float rowW = ImGui::GetContentRegionAvail().x;
+                        const ImVec2 rowMax(rowMin.x + rowW, rowMin.y + RowH);
+                        const bool clicked = ImGui::InvisibleButton(
+                            "##rrow", ImVec2(rowW, RowH));
+                        const bool hovered = ImGui::IsItemHovered();
+                        if (hovered) {
+                            ImGui::SetTooltip("%s", recent[i].c_str());
+                        }
+                        ImGui::PopID();
+
+                        if (i > 0) {
+                            listDl->AddLine(ImVec2(rowMin.x, rowMin.y),
+                                            ImVec2(rowMax.x, rowMin.y),
+                                            ColU(MvStyle::MvLine2));
+                        }
+                        if (hovered) {
+                            ImVec4 bg = MvStyle::MvBlue500; bg.w = 0.06f;
+                            listDl->AddRectFilled(rowMin, rowMax, ColU(bg));
+                        }
+
+                        // 28×28 file icon container.
+                        constexpr float IconSlot = 28.0f;
+                        const ImVec2 iconMin(rowMin.x + 12.0f,
+                                             rowMin.y + (RowH - IconSlot) * 0.5f);
+                        const ImVec2 iconMax(iconMin.x + IconSlot, iconMin.y + IconSlot);
+                        listDl->AddRectFilled(iconMin, iconMax,
+                                              ColU(hovered
+                                                  ? WithAlpha(MvStyle::MvBlue500, 0.12f)
+                                                  : MvStyle::MvBg2),
+                                              4.0f);
+                        listDl->AddRect(iconMin, iconMax,
+                                        ColU(MvStyle::MvLine2), 4.0f, 0, 1.0f);
+                        if (MvStyle::Font.IconSm) {
+                            ImFont* iconFont = MvStyle::Font.IconSm;
+                            constexpr float iconSize = 13.0f;
+                            const ImVec2 ts = iconFont->CalcTextSizeA(
+                                iconSize, FLT_MAX, 0.0f, MV_ICON_FILE_TEXT);
+                            const ImU32 iconCol = ColU(hovered
+                                ? MvStyle::MvBlue400
+                                : MvStyle::MvFg3);
+                            listDl->AddText(iconFont, iconSize,
+                                            ImVec2((iconMin.x + iconMax.x - ts.x) * 0.5f,
+                                                   (iconMin.y + iconMax.y - ts.y) * 0.5f),
+                                            iconCol, MV_ICON_FILE_TEXT);
+                        }
+
+                        // Filename + sub-line stack.
+                        const float textX = iconMax.x + 12.0f;
+                        {
+                            MvStyle::ScopedFont f(MvStyle::Font.Mono);
+                            const float fs = ImGui::GetFontSize();
+                            listDl->AddText(ImVec2(textX, rowMin.y + (RowH * 0.5f) - fs - 1.0f),
+                                            ColU(MvStyle::MvFg1),
+                                            filename.c_str());
+                        }
+                        {
+                            char metaBuf[128];
+                            std::snprintf(metaBuf, sizeof(metaBuf), "%s \xC2\xB7 %s",
+                                          when.c_str(), sizeStr.c_str());
+                            MvStyle::ScopedFont f(MvStyle::Font.MonoSm);
+                            listDl->AddText(ImVec2(textX, rowMin.y + (RowH * 0.5f) + 3.0f),
+                                            ColU(MvStyle::MvFg3),
+                                            metaBuf);
+                        }
+
+                        // Right chevron — MvFg3 dim until hovered.
+                        if (MvStyle::Font.IconSm) {
+                            ImFont* iconFont = MvStyle::Font.IconSm;
+                            constexpr float chevSize = 13.0f;
+                            const ImVec2 ts = iconFont->CalcTextSizeA(chevSize, FLT_MAX, 0.0f,
+                                                                     MV_ICON_CHEVRON_RIGHT);
+                            const ImU32 chevCol = hovered
+                                ? ColU(MvStyle::MvBlue400)
+                                : ColU(MvStyle::MvFg4);
+                            listDl->AddText(iconFont, chevSize,
+                                            ImVec2(rowMax.x - ts.x - 12.0f,
+                                                   rowMin.y + (RowH - ts.y) * 0.5f),
+                                            chevCol, MV_ICON_CHEVRON_RIGHT);
+                        }
+
+                        if (clicked) {
+                            state.action = WelcomeAction::OpenRecent;
+                            state.selectedRecent = recent[i];
+                            ImGui::CloseCurrentPopup();
+                        }
+                    }
+                }
+                ImGui::EndChild();
+                ImGui::PopStyleVar();
+                ImGui::PopStyleColor();
+            }
+        }
+        ImGui::Unindent(SidePad);
+
+        // ---- Footer (MvBg1 strip) ---------------------------------------
+        ImGui::Dummy(ImVec2(0.0f, 14.0f));
+        const ImVec2 footerStart = ImGui::GetCursorScreenPos();
+        constexpr float FooterH = 48.0f;
+        const ImVec2 fMin(wpos.x, footerStart.y);
+        const ImVec2 fMax(wpos.x + ModalW, footerStart.y + FooterH);
+        dl->AddRectFilled(fMin, fMax, ColU(MvStyle::MvBg1));
+        dl->AddLine(ImVec2(fMin.x, fMin.y),
+                    ImVec2(fMax.x, fMin.y),
+                    ColU(MvStyle::MvLine2));
+
+        ImGui::SetCursorScreenPos(ImVec2(fMin.x + SidePad, fMin.y + 12.0f));
+        ImGui::Checkbox("Show this on startup", &state.showOnStartup);
+
+        // Right-aligned Close ghost button.
+        const float closeBtnW = 90.0f;
+        ImGui::SameLine();
+        ImGui::SetCursorScreenPos(ImVec2(fMax.x - SidePad - closeBtnW, fMin.y + 8.0f));
+        if (ImGui::Button("Close", ImVec2(closeBtnW, 30.0f))) {
             ImGui::CloseCurrentPopup();
         }
+
+        // Reserve the footer's vertical space so EndPopup sees it.
+        ImGui::SetCursorScreenPos(ImVec2(wpos.x, fMax.y));
+        ImGui::Dummy(ImVec2(ModalW, 0.0f));
 
         if (!ImGui::IsPopupOpen("Welcome to MetaVisage")) state.isOpen = false;
         ImGui::EndPopup();
     } else {
         state.isOpen = false;
     }
+    ImGui::PopStyleColor(2);
+    ImGui::PopStyleVar();
 }
 
 // ---------------------------------------------------------------------------

@@ -81,7 +81,8 @@ A MetaHuman head mesh (LOD0) is included in `assets/models/MetaHumanHeadLod0.obj
 
 ```
 MetaVisage/
-├── assets/           # Shaders, gizmo models, default MetaHuman head, app icons
+├── assets/           # Fonts (Inter / JetBrains Mono / Saira / Lucide), shaders,
+│                     # gizmo models, default MetaHuman head, app icons, logo mark
 ├── docs/             # Banner, KNOWN_ISSUES.md
 ├── include/          # Public headers — baking/, core/, deformation/, io/,
 │                     # rendering/, sculpting/, thirdparty/, ui/, utils/
@@ -96,6 +97,8 @@ MetaVisage/
 ├── CONTRIBUTING.md   # Contribution guidelines
 └── LICENSE           # MIT License
 ```
+
+The UI lives under `include/ui/` & `src/ui/`: shell hosts (`AppWindow`, `Viewport`, `ViewportHost`, `StageSidebar`, `StageStepper`, `ToolRail`, `Modals`, `FileDialogs`, `LoginScreen`) plus the design-system primitives (`MvStyle` for tokens, `MvIcons` for the Lucide icon font, `MvInspectorPrimitives` for shared rows/sections).
 
 ## Contributing
 
