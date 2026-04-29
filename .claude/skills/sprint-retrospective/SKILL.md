@@ -7,6 +7,56 @@ allowed-tools: Read, Write, Edit, Glob
 
 # Sprint Retrospective
 
+## Pre-Flight DoD Check (Story 4.7)
+
+**This check runs first, before any other step in this skill.** It exists to
+break a recurring anti-pattern flagged in the Sprint 3.6 / 3.7 / 3.8 retros:
+sprint outcomes were marked "Complete" or "Implementation Complete" before the
+PR review and manual UI smoke had actually run, so the retro analyzed an
+outcome that hadn't been validated.
+
+### Steps
+
+1. Locate the active sprint file at `.claude/context/sprints/sprint-{number}.md`.
+   The number is supplied either by the user (`/sprint-retrospective 04`) or
+   inferred from the highest-numbered sprint file present.
+2. Read the file's `## Sprint Outcome` section. Parse the `**Status**:` line.
+3. **If `Status` is `Planned` or `In Progress`**: the retro is being run mid-
+   sprint or before close-out. Skip the rest of this pre-flight check and
+   proceed normally. (Ad-hoc retros on incomplete sprints are still
+   supported.)
+4. **If `Status` is `Complete` or `Implementation Complete`**: read the
+   `## Definition of Done` checklist. Scan every list item that begins with
+   `- [ ]` (unchecked) for any of these substrings, case-insensitive:
+   - `"PR opened"` *or* `"/review-pr"` *or* `"blocking findings resolved"`
+   - `"manual UI smoke"` *or* `"Phase D"` *or* `"manual smoke"`
+   - `"sprint outcome notes updated"`
+5. **If any of those substrings appear in an unchecked DoD item**, REFUSE to
+   proceed. Print a message naming each blocking item verbatim and stop
+   execution. The user must either (a) tick the boxes once they're actually
+   done, or (b) revert the Status field to `In Progress` to bypass the
+   check legitimately for an ad-hoc retro.
+
+### Refusal message template
+
+```
+Cannot run /sprint-retrospective on sprint-{N}.md (Status: Complete) — the
+following Definition of Done items are still unchecked:
+
+  - [ ] {first blocking item, copied verbatim}
+  - [ ] {second blocking item}
+  ...
+
+Either tick those boxes once the work is genuinely done, or set Status back
+to "In Progress" if this is an ad-hoc mid-sprint retro. The /sprint-retro-
+spective skill refuses to run on a "Complete" sprint with unchecked DoD
+items because the Sprint 3.6 / 3.7 / 3.8 retros all flagged this as a
+recurring anti-pattern (Sprint 4 Action Item #3).
+```
+
+Only after this check passes (or is skipped because Status is not Complete)
+do you proceed to the retrospective generation steps below.
+
 ## File Location
 
 All retrospective documents are saved to:

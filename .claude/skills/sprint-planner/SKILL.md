@@ -98,6 +98,12 @@ Each sprint file follows this template:
 - [ ] Deployed to staging
 - [ ] PO approval
 
+> **Mechanical guard (Sprint 4 Action Item #3):** the `/sprint-retrospective`
+> skill refuses to run when this sprint's `Sprint Outcome` Status is set to
+> `Complete` and any DoD item containing `"PR opened"`, `"/review-pr"`,
+> `"manual UI smoke"`, or `"Phase D"` is still unchecked. Don't flip Status
+> to `Complete` until those boxes are genuinely ticked.
+
 ---
 
 ## Sprint Outcome
