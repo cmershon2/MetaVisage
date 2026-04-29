@@ -203,7 +203,40 @@ Three sprints in a row have set "Implementation Complete" before the manual smok
 
 ## Sprint Outcome
 
-**Status**: Planned
-**Velocity (Actual)**: TBD
-**Carryover**: TBD
-**Notes**: TBD
+**Status**: In Progress — implementation complete, [PR #22](https://github.com/cmershon2/MetaVisage/pull/22) open, awaiting `/review-pr` blockers + Phase D manual UI smoke
+**Velocity (Actual)**: 22 / 27 points (81%) — Story 4.5 (5 pts) deferred to Sprint 5 by deliberate scoping decision
+**Carryover**: Story 4.5 — imgui_test_engine Smoke-UI Lane. Day-1 spike confirmed Path A (vcpkg `imgui[test-engine]` feature) is license-compatible under the upstream Free License clause for entities with <$2M turnover. Spike findings + chosen integration route documented inline in this sprint plan above the deferred-story heading. Carries forward as a fresh Sprint 5 story.
+**Notes**:
+
+All six other committed stories landed plus one polish fix added mid-sprint
+in response to user testing feedback (preset card overflow / truncation,
+commit `d4d8e9c`). Build clean across the entire chain (only the three
+pre-existing C5054 dockspace flag-combine warnings carried over from
+Sprint 3.6's `04aa4ce`). All three CTest targets green:
+
+    smoke_load_serialize_export ... Passed (0.73s)
+    smoke_v1_backward_compat ...... Passed (0.04s)  ← new (Story 4.1)
+    smoke_wrap_parity ............. Passed (46.79s) ← new (Story 4.6)
+
+**Story landings (commit hashes for traceability):**
+- 4.1  `325260d` — RBF/ARAP removal + rebrand to Wrap Engine + v1.0.0 backward-compat smoke
+- 4.2  `b726008` — `WrapPreset` data model + built-in registry (Quick / Fantasy)
+- 4.3  `db34377` — preset card binding migration to `activePresetId_` string
+- 4.4  `0559601` — user-saved presets (Save / Rename / Replace / Delete) with `PresetStore` persistence + 12-glyph picker modal
+- 4.6  `b8e5163` — behavioural-parity wrap smoke
+- 4.7  `c72e6e7` — mechanical DoD gate on `/sprint-retrospective`
+- *(unplanned)* `d4d8e9c` — preset-card name + sub-label ellipsise on overflow (responds to user feedback)
+
+**Mid-sprint scope changes:**
+- Story 4.5 deferred to Sprint 5 — day-1 spike confirmed `imgui[test-engine]` is in vcpkg and the upstream Free License clause covers MetaVisage's commercial profile (<$2M turnover). The chosen integration route (Path A — `imgui_test_engine` rather than the hand-rolled fallback) is documented above. This is the third retro to carry the test-engine action item, but the first where it's "decided + scoped, not implemented" rather than "no progress".
+
+**Net surface area:**
+- 8 commits since the sprint plan landed
+- 32 files touched (10 net-new modules + 4 v1 fixture files + 2 new test exes)
+- ≈1,861 insertions / 617 deletions
+- Net new:  `core/WrapPreset.{h,cpp}`, `io/PresetStore.{h,cpp}`, `tests/smoke/wrap_parity.cpp`, `tests/smoke/v1_backward_compat.cpp`, `tests/fixtures/v1_project_*.mmproj` (4), `tests/fixtures/wrap_smoke_points.json`
+- Deleted: `RBFInterpolator.{h,cpp}` (~350 lines of dead code)
+
+Final close-out (flip Status to `Complete` + tick remaining DoD boxes)
+happens after PR #22 merges with all `/review-pr` blocking findings
+resolved and the manual UI smoke logged.
