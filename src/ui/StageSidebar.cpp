@@ -756,6 +756,40 @@ void StageSidebar::RenderPointReference(Project& project, Actions& out) {
 
 namespace {
 
+// Truncate `text` so its rendered width fits within `maxWidth` using the
+// currently pushed ImGui font. Appends a horizontal-ellipsis glyph (U+2026)
+// when truncation occurs. UTF-8-aware: walks codepoints, never splits mid-
+// sequence — so user preset names like "Casey's Café" don't blow up.
+//
+// Caller is responsible for pushing the right font (MvStyle::ScopedFont)
+// before calling — ImGui::CalcTextSize uses the active font.
+std::string TruncateToWidth(const char* text, float maxWidth) {
+    if (!text || !text[0]) return {};
+    if (ImGui::CalcTextSize(text).x <= maxWidth) return text;
+
+    constexpr const char* kEllipsis = "\xE2\x80\xA6"; // U+2026
+    const float ellipsisW = ImGui::CalcTextSize(kEllipsis).x;
+    if (maxWidth <= ellipsisW) return kEllipsis;
+
+    const float budget = maxWidth - ellipsisW;
+    std::string out;
+    const char* cur = text;
+    while (*cur) {
+        const unsigned char b = static_cast<unsigned char>(*cur);
+        size_t bytes = 1;
+        if      ((b & 0xE0) == 0xC0) bytes = 2;
+        else if ((b & 0xF0) == 0xE0) bytes = 3;
+        else if ((b & 0xF8) == 0xF0) bytes = 4;
+
+        const std::string candidate = out + std::string(cur, bytes);
+        if (ImGui::CalcTextSize(candidate.c_str()).x > budget) break;
+        out = candidate;
+        cur += bytes;
+    }
+    out += kEllipsis;
+    return out;
+}
+
 // Returns true on click. Caller decides whether to apply the preset; the
 // helper just paints the card and dispatches the hit-test.
 bool DrawPresetCard(const char* idStr,
@@ -811,27 +845,34 @@ bool DrawPresetCard(const char* idStr,
                     glyph);
     }
 
-    // Name (Body Md) — centred horizontally.
+    // 8 px on each side keeps the truncated text from butting up against
+    // the card border. Long preset names (user-provided via the Save modal)
+    // would otherwise overflow into adjacent cards — see the Sprint 4 user
+    // feedback on "Casey's Custom Preset" and the bundled descriptions.
+    constexpr float kTextPad = 8.0f;
+    const float maxTextW = availW - 2.0f * kTextPad;
+
+    // Name (Body Md) — centred horizontally, ellipsised on overflow.
     if (name && name[0]) {
         MvStyle::ScopedFont f(MvStyle::Font.BodyMd);
-        const ImVec2 ts = ImGui::CalcTextSize(name);
-        const ImVec4 nameColor =
-            disabled ? MvStyle::MvFg4 :
-            active   ? MvStyle::MvFg1 : MvStyle::MvFg1;
+        const std::string drawn = TruncateToWidth(name, maxTextW);
+        const ImVec2 ts = ImGui::CalcTextSize(drawn.c_str());
+        const ImVec4 nameColor = disabled ? MvStyle::MvFg4 : MvStyle::MvFg1;
         dl->AddText(ImVec2(pmin.x + (availW - ts.x) * 0.5f,
                            pmin.y + 36.0f),
                     ImGui::ColorConvertFloat4ToU32(nameColor),
-                    name);
+                    drawn.c_str());
     }
 
-    // Sub-label (MonoSm MvFg3).
+    // Sub-label (MonoSm MvFg3) — same treatment.
     if (sub && sub[0]) {
         MvStyle::ScopedFont f(MvStyle::Font.MonoSm);
-        const ImVec2 ts = ImGui::CalcTextSize(sub);
+        const std::string drawn = TruncateToWidth(sub, maxTextW);
+        const ImVec2 ts = ImGui::CalcTextSize(drawn.c_str());
         dl->AddText(ImVec2(pmin.x + (availW - ts.x) * 0.5f,
                            pmin.y + CardH - ts.y - 8.0f),
                     ImGui::ColorConvertFloat4ToU32(MvStyle::MvFg3),
-                    sub);
+                    drawn.c_str());
     }
 
     if (hovered && disabled) {
