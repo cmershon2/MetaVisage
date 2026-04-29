@@ -845,6 +845,16 @@ void StageSidebar::RenderMorph(Project& project, bool processing, float progress
     namespace I = MvInspector;
     auto& morph = project.GetMorphData();
 
+    // Auto-derive the active preset card by parameter equality whenever the
+    // tracked id is empty — handles project load (no explicit serialization
+    // of the active id) and the case where the user drags a slider back to
+    // a preset's exact value. The param-edit clear path lower in this
+    // function clears the id; the next frame this re-checks. Cheap: the
+    // built-in registry is two entries.
+    if (activePresetId_.empty()) {
+        activePresetId_ = WrapPreset::FindMatchingBuiltInId(morph);
+    }
+
     // ---- Header ---------------------------------------------------------
     I::DrawStageHeader("STAGE 03 / 04",
                        "Morph", "ing",
@@ -861,41 +871,48 @@ void StageSidebar::RenderMorph(Project& project, bool processing, float progress
 
         // ---- Preset cards row ------------------------------------------
         // Built-ins come from WrapPreset::BuiltIns(); the canonical params
-        // live in core/WrapPreset.cpp. The "Save preset" card is still a
-        // disabled placeholder — Story 4.4 wires its callback.
+        // live in core/WrapPreset.cpp. The "+ Save preset" card is enabled
+        // but its click callback is a stub for now — Story 4.4 wires the
+        // real save dialog.
         I::DrawSectionLabel("PRESETS");
-        if (ImGui::BeginTable("##presetCards", 3,
+        const auto builtIns = WrapPreset::BuiltIns();
+        const int  cardColumns = static_cast<int>(builtIns.size()) + 1; // +1 = Save
+        if (ImGui::BeginTable("##presetCards", cardColumns,
                               ImGuiTableFlags_SizingStretchSame |
                               ImGuiTableFlags_NoPadOuterX)) {
             ImGui::TableNextRow();
 
-            ImGui::TableNextColumn();
-            if (DrawPresetCard("quick", "Quick Wrap",
-                               "Tight wrap", MV_ICON_TARGET,
-                               lastAppliedPreset_ == 0, /*disabled=*/false)) {
-                WrapPreset::QuickWrap().ApplyTo(morph);
-                lastAppliedPreset_ = 0;
+            for (const auto& preset : builtIns) {
+                ImGui::TableNextColumn();
+                const bool active = (activePresetId_ == preset.id);
+                if (DrawPresetCard(preset.id.c_str(),
+                                   preset.name.c_str(),
+                                   preset.description.c_str(),
+                                   preset.iconGlyph.c_str(),
+                                   active, /*disabled=*/false)) {
+                    preset.ApplyTo(morph);
+                    activePresetId_ = preset.id;
+                }
             }
 
             ImGui::TableNextColumn();
-            if (DrawPresetCard("fantasy", "Fantasy Wrap",
-                               "Looser fit", MV_ICON_SPARKLES,
-                               lastAppliedPreset_ == 1, /*disabled=*/false)) {
-                WrapPreset::FantasyWrap().ApplyTo(morph);
-                lastAppliedPreset_ = 1;
+            if (DrawPresetCard("save", "Save preset", "Custom", MV_ICON_PLUS,
+                               /*active=*/false, /*disabled=*/false)) {
+                // Story 4.4 will replace this stub with a Save Preset
+                // modal that prompts for name + description + icon and
+                // writes a .mvpreset.json under %APPDATA%\MetaVisage\presets.
+                // Routed through Actions so AppWindow owns the modal.
+                out.savePresetRequested = true;
             }
-
-            ImGui::TableNextColumn();
-            DrawPresetCard("save", "Save preset", "Custom", MV_ICON_PLUS,
-                           /*active=*/false, /*disabled=*/true);
 
             ImGui::EndTable();
         }
 
         // ---- General parameters ----------------------------------------
-        // Track per-frame edits across the slider block so any manual
-        // tweak resets lastAppliedPreset_ → -1 and the active-card highlight
-        // disappears.
+        // Track per-frame edits across the slider block so any manual tweak
+        // clears activePresetId_ and the active-card highlight disappears.
+        // Next frame's auto-derive at the top of RenderMorph re-checks for
+        // a built-in match (handles the edit-back-to-default case).
         bool paramEdited = false;
         I::DrawSectionLabel("GENERAL");
         ImGui::PushItemWidth(ImGui::GetContentRegionAvail().x * 0.55f);
@@ -933,11 +950,11 @@ void StageSidebar::RenderMorph(Project& project, bool processing, float progress
             ImGui::Dummy(ImVec2(0.0f, 4.0f));
             if (ImGui::Button("Reset to defaults", ImVec2(-FLT_MIN, 30.0f))) {
                 morph = MorphData();
-                lastAppliedPreset_ = -1;
+                activePresetId_.clear();
             }
         }
 
-        if (paramEdited) lastAppliedPreset_ = -1;
+        if (paramEdited) activePresetId_.clear();
 
         // ---- Process / cancel ------------------------------------------
         I::DrawSectionLabel("PROCESS");

@@ -25,6 +25,32 @@ void WrapPreset::ApplyTo(MorphData& morph) const {
     morph.nricpNormalizeSampling         = params.nricpNormalizeSampling;
 }
 
+bool WrapPreset::MatchesParamsOf(const MorphData& morph) const {
+    // Exact equality — params copied via ApplyTo are bit-identical, so == is
+    // the right comparator. If the user drags a slider to the precise preset
+    // value the card re-highlights, which matches user intent.
+    return morph.algorithm                     == params.algorithm
+        && morph.stiffness                     == params.stiffness
+        && morph.smoothness                    == params.smoothness
+        && morph.nricpStiffnessSteps           == params.nricpStiffnessSteps
+        && morph.nricpAlphaInitial             == params.nricpAlphaInitial
+        && morph.nricpAlphaFinal               == params.nricpAlphaFinal
+        && morph.nricpIcpIterations            == params.nricpIcpIterations
+        && morph.nricpNormalThreshold          == params.nricpNormalThreshold
+        && morph.nricpLandmarkWeight           == params.nricpLandmarkWeight
+        && morph.nricpEpsilon                  == params.nricpEpsilon
+        && morph.nricpEnableBoundaryExclusion  == params.nricpEnableBoundaryExclusion
+        && morph.nricpBoundaryExclusionHops    == params.nricpBoundaryExclusionHops
+        && morph.nricpOptimizationIterations   == params.nricpOptimizationIterations
+        && morph.nricpDpInitial                == params.nricpDpInitial
+        && morph.nricpDpFinal                  == params.nricpDpFinal
+        && morph.nricpGammaInitial             == params.nricpGammaInitial
+        && morph.nricpGammaFinal               == params.nricpGammaFinal
+        && morph.nricpSamplingInitial          == params.nricpSamplingInitial
+        && morph.nricpSamplingFinal            == params.nricpSamplingFinal
+        && morph.nricpNormalizeSampling        == params.nricpNormalizeSampling;
+}
+
 // Lucide glyph UTF-8 byte literals (mirrors MV_ICON_TARGET / MV_ICON_SPARKLES
 // in include/ui/MvIcons.h). Hard-coded here because core/ must not depend on
 // ui/ — if Lucide ever renumbers, both files have to update in lockstep.
@@ -77,6 +103,13 @@ const WrapPreset& WrapPreset::FantasyWrap() {
 
 std::vector<WrapPreset> WrapPreset::BuiltIns() {
     return { QuickWrap(), FantasyWrap() };
+}
+
+std::string WrapPreset::FindMatchingBuiltInId(const MorphData& morph) {
+    for (const auto& preset : BuiltIns()) {
+        if (preset.MatchesParamsOf(morph)) return preset.id;
+    }
+    return {};
 }
 
 } // namespace MetaVisage

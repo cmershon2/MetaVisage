@@ -67,6 +67,12 @@ struct WrapPreset {
     // already-computed deformed mesh.
     void ApplyTo(MorphData& morph) const;
 
+    // Returns true if every parameter field in `morph` exactly equals this
+    // preset's params snapshot. Used by the inspector to figure out which
+    // card to highlight after a project load or after the user edits a
+    // slider back to a preset's exact value.
+    bool MatchesParamsOf(const MorphData& morph) const;
+
     // Canonical built-ins. Quick Wrap is the project default.
     static const WrapPreset& QuickWrap();
     static const WrapPreset& FantasyWrap();
@@ -74,6 +80,11 @@ struct WrapPreset {
     // Returns Quick → Fantasy in card-row display order. Story 4.4's user
     // presets will be rendered after this list in the same row.
     static std::vector<WrapPreset> BuiltIns();
+
+    // Finds a built-in whose params exactly match `morph`. Returns the
+    // matching id, or empty string if no built-in matches (the user has
+    // tweaked parameters since the last preset was applied).
+    static std::string FindMatchingBuiltInId(const MorphData& morph);
 };
 
 } // namespace MetaVisage

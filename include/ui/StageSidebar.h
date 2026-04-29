@@ -30,6 +30,11 @@ public:
         bool clearMaskRequested = false;
         bool invertMaskRequested = false;
 
+        // Stage 3 — user clicked the "+ Save preset" card. Story 4.4 will
+        // open a Save Preset modal in response; until then AppWindow can
+        // ignore this signal (the click is a no-op).
+        bool savePresetRequested = false;
+
         // Stage 1 extras
         bool useDefaultMorphMeshRequested = false;
         // When non-empty, AppWindow opens an NFD picker, loads the texture,
@@ -101,10 +106,16 @@ private:
     // highlight the active row. Refreshed on each Render() call.
     int selectedPointIndexExternal_ = -1;
 
-    // Stage 3 — last preset stamped onto MorphData via the preset cards.
-    // 0 = Quick Wrap, 1 = Fantasy Wrap, -1 = Custom (any manual edit
-    // resets to this so the active card highlight stays accurate).
-    int lastAppliedPreset_ = -1;
+    // Stage 3 — id of the active preset card. Empty string means "no card
+    // highlighted" (the user has tweaked params away from every built-in,
+    // or no preset has been applied yet). Built-in ids: "quick", "fantasy"
+    // (see core/WrapPreset.cpp). Story 4.4 will add user preset ids.
+    //
+    // Auto-derived at the top of RenderMorph by parameter equality, so a
+    // freshly loaded project picks up the right card without explicit
+    // serialization of the active id, and editing a slider back to a
+    // preset's exact value re-highlights that card.
+    std::string activePresetId_;
 };
 
 } // namespace MetaVisage
