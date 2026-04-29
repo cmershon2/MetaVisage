@@ -43,6 +43,12 @@ struct WrapParams {
     float nricpSamplingInitial            = 0.1f;
     float nricpSamplingFinal              = 0.01f;
     bool  nricpNormalizeSampling          = true;
+
+    // Inverse of WrapPreset::ApplyTo — extract a snapshot of `morph`'s
+    // parameter fields into a fresh WrapParams. Used by the Save / Replace
+    // flows in Story 4.4 so a user preset captures whatever the inspector
+    // is showing right now.
+    static WrapParams FromMorphData(const MorphData& morph);
 };
 
 // A named Wrap Engine parameter snapshot. Built-in presets are read-only

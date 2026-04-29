@@ -6,6 +6,7 @@
 #include <functional>
 #include <optional>
 #include <string>
+#include <vector>
 
 namespace MetaVisage {
 
@@ -113,6 +114,42 @@ struct ExportModalState {
     void Open(bool hasTextures);
 };
 void RenderExportModal(ExportModalState& state);
+
+// ---------------------------------------------------------------------------
+// Save / Rename Wrap Engine preset (Story 4.4).
+//
+// One modal type drives both flows — the only difference is the dialog title
+// and whether `editingPresetId` is empty (Save = new preset) or set (Rename
+// of an existing user preset). On confirm, AppWindow reads `name`,
+// `description`, `iconGlyph`, and `editingPresetId`, then writes through
+// PresetStore::Save (which uses the id as the filename and overwrites if it
+// already exists, so Rename round-trips cleanly).
+// ---------------------------------------------------------------------------
+
+struct SavePresetModalState {
+    bool pendingOpen = false;
+    bool confirmed   = false; // set on the frame the user clicks Save
+
+    std::string title;            // "Save Preset" or "Rename Preset"
+    std::string editingPresetId;  // empty = Save flow; non-empty = Rename flow
+    std::string name;
+    std::string description;
+    std::string iconGlyph;        // UTF-8 Lucide PUA codepoint string
+
+    // Names already taken by other user presets — rejected by validation.
+    // Built-in names ("Quick Wrap", "Fantasy Wrap") are NOT included; users
+    // may safely use those names since the active card is keyed by id.
+    // For Rename, the caller excludes the preset's own current name.
+    std::vector<std::string> takenNames;
+
+    void Open(const std::string& title,
+              const std::string& editingId,
+              const std::string& initName,
+              const std::string& initDesc,
+              const std::string& initGlyph,
+              std::vector<std::string> taken);
+};
+void RenderSavePresetModal(SavePresetModalState& state);
 
 // ---------------------------------------------------------------------------
 // Keyboard shortcuts reference — read-only table grouped by category.

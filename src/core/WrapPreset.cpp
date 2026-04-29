@@ -2,6 +2,31 @@
 
 namespace MetaVisage {
 
+WrapParams WrapParams::FromMorphData(const MorphData& morph) {
+    WrapParams p;
+    p.algorithm                     = morph.algorithm;
+    p.stiffness                     = morph.stiffness;
+    p.smoothness                    = morph.smoothness;
+    p.nricpStiffnessSteps           = morph.nricpStiffnessSteps;
+    p.nricpAlphaInitial             = morph.nricpAlphaInitial;
+    p.nricpAlphaFinal               = morph.nricpAlphaFinal;
+    p.nricpIcpIterations            = morph.nricpIcpIterations;
+    p.nricpNormalThreshold          = morph.nricpNormalThreshold;
+    p.nricpLandmarkWeight           = morph.nricpLandmarkWeight;
+    p.nricpEpsilon                  = morph.nricpEpsilon;
+    p.nricpEnableBoundaryExclusion  = morph.nricpEnableBoundaryExclusion;
+    p.nricpBoundaryExclusionHops    = morph.nricpBoundaryExclusionHops;
+    p.nricpOptimizationIterations   = morph.nricpOptimizationIterations;
+    p.nricpDpInitial                = morph.nricpDpInitial;
+    p.nricpDpFinal                  = morph.nricpDpFinal;
+    p.nricpGammaInitial             = morph.nricpGammaInitial;
+    p.nricpGammaFinal               = morph.nricpGammaFinal;
+    p.nricpSamplingInitial          = morph.nricpSamplingInitial;
+    p.nricpSamplingFinal            = morph.nricpSamplingFinal;
+    p.nricpNormalizeSampling        = morph.nricpNormalizeSampling;
+    return p;
+}
+
 void WrapPreset::ApplyTo(MorphData& morph) const {
     morph.algorithm                      = params.algorithm;
     morph.stiffness                      = params.stiffness;

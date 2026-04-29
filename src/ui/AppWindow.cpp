@@ -27,6 +27,7 @@
 #include "deformation/NRICPDeformer.h"
 #include "io/ProjectSerializer.h"
 #include "io/MeshExporter.h"
+#include "io/PresetStore.h"
 #include "baking/TextureBaker.h"
 #include "baking/TextureWriter.h"
 #include "utils/Config.h"
@@ -345,8 +346,13 @@ bool AppWindow::Initialize(int width, int height, const char* title) {
     }
 
     project_ = std::make_unique<Project>();
+    // Quick Wrap is the canonical project default per CLAUDE.md and the
+    // Sprint 4 plan — apply on every fresh-project construction so the
+    // inspector card row opens with that built-in highlighted.
+    WrapPreset::QuickWrap().ApplyTo(project_->GetMorphData());
     undoStack_ = std::make_unique<UndoStack>();
     viewportHost_->SetProject(project_.get());
+    userPresets_ = PresetStore::LoadAll();
     statusMessage_ = "Ready";
 
     // Stage 2 point placement: both viewports fire OnPointPlaced when the user
@@ -755,6 +761,7 @@ void AppWindow::Run() {
             auto actions = stageSidebar_.Render(project_.get(),
                                                 morphRunning_.load(),
                                                 morphProgress_.load(),
+                                                userPresets_,
                                                 selectedPointIdx);
 
             if (actions.selectPointIndex && viewportHost_) {
@@ -806,6 +813,61 @@ void AppWindow::Run() {
             if (actions.cancelMorphRequested)  CancelMorph();
             if (actions.acceptMorphRequested)  AcceptMorph();
             // finalize is a Sprint 4 no-op (Export handles end-of-workflow).
+
+            // Story 4.4 — Wrap preset card row actions.
+            if (actions.savePresetRequested) {
+                std::vector<std::string> takenNames;
+                takenNames.reserve(userPresets_.size());
+                for (const auto& p : userPresets_) takenNames.push_back(p.name);
+                savePresetModal_.Open("Save Preset", /*editingId=*/"",
+                                      /*name=*/"", /*desc=*/"", /*glyph=*/"",
+                                      std::move(takenNames));
+            }
+            if (actions.renamePresetRequested && !actions.targetPresetId.empty()) {
+                const WrapPreset* target = nullptr;
+                for (const auto& p : userPresets_) {
+                    if (p.id == actions.targetPresetId) { target = &p; break; }
+                }
+                if (target) {
+                    std::vector<std::string> takenNames;
+                    for (const auto& p : userPresets_) {
+                        // Exclude the preset being renamed from the collision list
+                        // — keeping its current name is a no-op rename.
+                        if (p.id != target->id) takenNames.push_back(p.name);
+                    }
+                    savePresetModal_.Open("Rename Preset", target->id,
+                                          target->name, target->description,
+                                          target->iconGlyph, std::move(takenNames));
+                }
+            }
+            if (actions.deletePresetRequested && !actions.targetPresetId.empty()) {
+                const WrapPreset* target = nullptr;
+                for (const auto& p : userPresets_) {
+                    if (p.id == actions.targetPresetId) { target = &p; break; }
+                }
+                if (target) {
+                    const std::string presetId = target->id;
+                    confirmModal_.Open(
+                        "Delete preset?",
+                        std::format("Delete preset '{}'? This cannot be undone.",
+                                    target->name),
+                        [this, presetId]() {
+                            PresetStore::Delete(presetId);
+                            userPresets_ = PresetStore::LoadAll();
+                        },
+                        "Delete");
+                }
+            }
+            if (actions.replacePresetRequested && !actions.targetPresetId.empty() && project_) {
+                for (auto& p : userPresets_) {
+                    if (p.id != actions.targetPresetId) continue;
+                    p.params = WrapParams::FromMorphData(project_->GetMorphData());
+                    PresetStore::Save(p);
+                    userPresets_ = PresetStore::LoadAll();
+                    statusMessage_ = std::format("Replaced preset '{}'", p.name);
+                    break;
+                }
+            }
 
             // Mirror Stage 3 mask-UI state onto the primary viewport so LMB,
             // renderer overlay, and brush radius track sidebar toggles each
@@ -1816,6 +1878,46 @@ void AppWindow::RenderModals() {
         }
         if (!exportModal_.filepath.empty()) DoExport();
     }
+
+    // Story 4.4 — Save / Rename Wrap preset modal. The render flips
+    // `confirmed` on the frame the user clicks Save; we consume it here,
+    // build the new (or updated) WrapPreset, persist it, and reload the
+    // user-preset list so the sidebar's next frame picks up the change.
+    RenderSavePresetModal(savePresetModal_);
+    if (savePresetModal_.confirmed) {
+        savePresetModal_.confirmed = false;
+        if (project_) {
+            const bool isRename = !savePresetModal_.editingPresetId.empty();
+            WrapPreset preset;
+            preset.id = isRename
+                ? savePresetModal_.editingPresetId
+                : PresetStore::GenerateUserPresetId();
+            preset.name        = savePresetModal_.name;
+            preset.description = savePresetModal_.description;
+            preset.iconGlyph   = savePresetModal_.iconGlyph;
+            preset.isBuiltIn   = false;
+            preset.params      = isRename
+                // Rename keeps the existing param snapshot; only metadata
+                // changes. Find the original to preserve params.
+                ? [&]() {
+                    for (const auto& p : userPresets_) {
+                        if (p.id == savePresetModal_.editingPresetId) return p.params;
+                    }
+                    return WrapParams::FromMorphData(project_->GetMorphData());
+                  }()
+                : WrapParams::FromMorphData(project_->GetMorphData());
+
+            if (PresetStore::Save(preset)) {
+                userPresets_ = PresetStore::LoadAll();
+                statusMessage_ = isRename
+                    ? std::format("Renamed preset to '{}'", preset.name)
+                    : std::format("Saved preset '{}'", preset.name);
+            } else {
+                errorModal_.Open("Could not save preset to disk. "
+                                 "Check %APPDATA%\\MetaVisage\\presets is writable.");
+            }
+        }
+    }
 }
 
 bool AppWindow::HandleGlobalShortcut(int key, int action, int mods) {
@@ -1855,6 +1957,7 @@ bool AppWindow::HandleGlobalShortcut(int key, int action, int mods) {
 
 void AppWindow::OnFileNewProject() {
     project_ = std::make_unique<Project>();
+    WrapPreset::QuickWrap().ApplyTo(project_->GetMorphData());
     if (undoStack_) undoStack_->Clear();
     if (viewportHost_) viewportHost_->SetProject(project_.get());
     projectPath_.clear();

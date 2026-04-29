@@ -63,6 +63,7 @@ Axis IndexToAxis(int i) {
 StageSidebar::Actions StageSidebar::Render(Project* project,
                                            bool morphProcessing,
                                            float morphProgress,
+                                           const std::vector<WrapPreset>& userPresets,
                                            int selectedPointIndex) {
     Actions out;
     selectedPointIndexExternal_ = selectedPointIndex;
@@ -116,7 +117,7 @@ StageSidebar::Actions StageSidebar::Render(Project* project,
     switch (stage) {
         case WorkflowStage::Alignment:      RenderAlignment(*project, out); break;
         case WorkflowStage::PointReference: RenderPointReference(*project, out); break;
-        case WorkflowStage::Morph:          RenderMorph(*project, morphProcessing, morphProgress, out); break;
+        case WorkflowStage::Morph:          RenderMorph(*project, morphProcessing, morphProgress, userPresets, out); break;
         case WorkflowStage::TouchUp:        RenderTouchUp(*project, out); break;
     }
 
@@ -841,18 +842,30 @@ bool DrawPresetCard(const char* idStr,
 }
 } // namespace
 
-void StageSidebar::RenderMorph(Project& project, bool processing, float progress, Actions& out) {
+void StageSidebar::RenderMorph(Project& project, bool processing, float progress,
+                               const std::vector<WrapPreset>& userPresets,
+                               Actions& out) {
     namespace I = MvInspector;
     auto& morph = project.GetMorphData();
 
     // Auto-derive the active preset card by parameter equality whenever the
     // tracked id is empty — handles project load (no explicit serialization
-    // of the active id) and the case where the user drags a slider back to
-    // a preset's exact value. The param-edit clear path lower in this
-    // function clears the id; the next frame this re-checks. Cheap: the
-    // built-in registry is two entries.
+    // of the active id), the case where the user drags a slider back to a
+    // preset's exact value, and the just-after-save case where a new user
+    // preset becomes the canonical match for the current params. Built-ins
+    // get first dibs so a user preset that happens to duplicate a built-in
+    // doesn't shadow it. The param-edit clear path lower in this function
+    // clears the id; the next frame this re-checks.
     if (activePresetId_.empty()) {
         activePresetId_ = WrapPreset::FindMatchingBuiltInId(morph);
+        if (activePresetId_.empty()) {
+            for (const auto& preset : userPresets) {
+                if (preset.MatchesParamsOf(morph)) {
+                    activePresetId_ = preset.id;
+                    break;
+                }
+            }
+        }
     }
 
     // ---- Header ---------------------------------------------------------
@@ -870,20 +883,28 @@ void StageSidebar::RenderMorph(Project& project, bool processing, float progress
                           ImGuiWindowFlags_NoBackground)) {
 
         // ---- Preset cards row ------------------------------------------
-        // Built-ins come from WrapPreset::BuiltIns(); the canonical params
-        // live in core/WrapPreset.cpp. The "+ Save preset" card is enabled
-        // but its click callback is a stub for now — Story 4.4 wires the
-        // real save dialog.
+        // Card order: built-ins (Quick / Fantasy) → user-saved presets →
+        // "+ Save preset". Wraps to a new row every 3 cards so the row
+        // grows downward as the user accumulates presets — chosen over
+        // horizontal scroll because the design team's verdict pending,
+        // wrap-to-row keeps the layout readable without scroll-state
+        // bookkeeping (sprint-04.md Story 4.4 mitigation).
         I::DrawSectionLabel("PRESETS");
         const auto builtIns = WrapPreset::BuiltIns();
-        const int  cardColumns = static_cast<int>(builtIns.size()) + 1; // +1 = Save
-        if (ImGui::BeginTable("##presetCards", cardColumns,
+        constexpr int kCardsPerRow = 3;
+
+        if (ImGui::BeginTable("##presetCards", kCardsPerRow,
                               ImGuiTableFlags_SizingStretchSame |
                               ImGuiTableFlags_NoPadOuterX)) {
-            ImGui::TableNextRow();
+            int cellIdx = 0;
+            auto AdvanceCell = [&]() {
+                if ((cellIdx % kCardsPerRow) == 0) ImGui::TableNextRow();
+                ImGui::TableNextColumn();
+                ++cellIdx;
+            };
 
             for (const auto& preset : builtIns) {
-                ImGui::TableNextColumn();
+                AdvanceCell();
                 const bool active = (activePresetId_ == preset.id);
                 if (DrawPresetCard(preset.id.c_str(),
                                    preset.name.c_str(),
@@ -895,13 +916,44 @@ void StageSidebar::RenderMorph(Project& project, bool processing, float progress
                 }
             }
 
-            ImGui::TableNextColumn();
+            for (const auto& preset : userPresets) {
+                AdvanceCell();
+                const bool active = (activePresetId_ == preset.id);
+                if (DrawPresetCard(preset.id.c_str(),
+                                   preset.name.c_str(),
+                                   preset.description.empty()
+                                       ? "Custom" : preset.description.c_str(),
+                                   preset.iconGlyph.empty()
+                                       ? MV_ICON_TARGET : preset.iconGlyph.c_str(),
+                                   active, /*disabled=*/false)) {
+                    preset.ApplyTo(morph);
+                    activePresetId_ = preset.id;
+                }
+                // Right-click context menu — popup id is auto-derived from
+                // the card's last item (the InvisibleButton inside
+                // DrawPresetCard), so each user preset card gets its own
+                // popup despite the shared MenuItem labels.
+                if (ImGui::BeginPopupContextItem()) {
+                    if (ImGui::MenuItem("Rename...")) {
+                        out.renamePresetRequested = true;
+                        out.targetPresetId = preset.id;
+                    }
+                    if (ImGui::MenuItem("Replace with current parameters")) {
+                        out.replacePresetRequested = true;
+                        out.targetPresetId = preset.id;
+                    }
+                    ImGui::Separator();
+                    if (ImGui::MenuItem("Delete")) {
+                        out.deletePresetRequested = true;
+                        out.targetPresetId = preset.id;
+                    }
+                    ImGui::EndPopup();
+                }
+            }
+
+            AdvanceCell();
             if (DrawPresetCard("save", "Save preset", "Custom", MV_ICON_PLUS,
                                /*active=*/false, /*disabled=*/false)) {
-                // Story 4.4 will replace this stub with a Save Preset
-                // modal that prompts for name + description + icon and
-                // writes a .mvpreset.json under %APPDATA%\MetaVisage\presets.
-                // Routed through Actions so AppWindow owns the modal.
                 out.savePresetRequested = true;
             }
 

@@ -135,6 +135,7 @@ set(CORE_SOURCES
     src/sculpting/MaskBrush.cpp
     src/io/MeshExporter.cpp
     src/io/ProjectSerializer.cpp
+    src/io/PresetStore.cpp
     src/baking/TextureBaker.cpp
     src/baking/TextureWriter.cpp
 )
@@ -187,6 +188,7 @@ set(CORE_HEADERS
     include/sculpting/BrushStroke.h
     include/io/MeshExporter.h
     include/io/ProjectSerializer.h
+    include/io/PresetStore.h
     include/baking/TextureBaker.h
     include/baking/TextureWriter.h
 )

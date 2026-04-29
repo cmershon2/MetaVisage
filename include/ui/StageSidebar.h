@@ -2,9 +2,11 @@
 #define METAVISAGE_UI_STAGESIDEBAR_H
 
 #include "core/Transform.h"
+#include "core/WrapPreset.h"
 
 #include <optional>
 #include <string>
+#include <vector>
 
 namespace MetaVisage {
 
@@ -30,10 +32,15 @@ public:
         bool clearMaskRequested = false;
         bool invertMaskRequested = false;
 
-        // Stage 3 — user clicked the "+ Save preset" card. Story 4.4 will
-        // open a Save Preset modal in response; until then AppWindow can
-        // ignore this signal (the click is a no-op).
-        bool savePresetRequested = false;
+        // Stage 3 — preset card actions. AppWindow opens the corresponding
+        // modals in response. targetPresetId names the user preset the
+        // Rename / Delete / Replace request applies to (ignored for
+        // savePresetRequested, which always refers to "current params").
+        bool savePresetRequested    = false;
+        bool renamePresetRequested  = false;
+        bool deletePresetRequested  = false;
+        bool replacePresetRequested = false;
+        std::string targetPresetId;
 
         // Stage 1 extras
         bool useDefaultMorphMeshRequested = false;
@@ -73,14 +80,17 @@ public:
     // frame — the caller (AppWindow) dispatches them to the appropriate
     // command / worker. `selectedPointIndex` is read by Stage 2's point list
     // so the active row stays highlighted when the user picks a point in
-    // the viewport.
+    // the viewport. `userPresets` is read by Stage 3's preset card row;
+    // built-ins live in WrapPreset::BuiltIns() and are not in this list.
     Actions Render(Project* project, bool morphProcessing, float morphProgress,
+                   const std::vector<WrapPreset>& userPresets,
                    int selectedPointIndex = -1);
 
 private:
     void RenderAlignment(Project& project, Actions& out);
     void RenderPointReference(Project& project, Actions& out);
-    void RenderMorph(Project& project, bool processing, float progress, Actions& out);
+    void RenderMorph(Project& project, bool processing, float progress,
+                     const std::vector<WrapPreset>& userPresets, Actions& out);
     void RenderTouchUp(Project& project, Actions& out);
 
     // Stage 3 mask painting — state persists across frames. When painting is
