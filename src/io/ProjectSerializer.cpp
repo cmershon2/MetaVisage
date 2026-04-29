@@ -100,6 +100,15 @@ SerializationResult ProjectSerializer::Save(const Project& project, const std::s
         return result;
     }
     out << root.dump(2);
+    out.flush();
+    if (out.fail()) {
+        // Disk full / I/O error mid-write would otherwise leave a truncated
+        // .mmproj on disk and report success. Surface the failure to the
+        // user via SerializationResult so the caller can show an error
+        // dialog instead of silently corrupting their project.
+        result.errorMessage = std::format("Write failed for {} (disk full or I/O error)", filepath);
+        return result;
+    }
 
     result.success = true;
     MV_LOG_INFO(std::format("Project saved to: {}", filepath));
@@ -471,25 +480,29 @@ MorphData ProjectSerializer::DeserializeMorphData(const Json& obj) const {
     data.maxDisplacement = static_cast<float>(GetOr<double>(obj, "maxDisplacement", 0.0));
     data.avgDisplacement = static_cast<float>(GetOr<double>(obj, "avgDisplacement", 0.0));
 
-    // NRICP parameters (backward compatible - defaults match MorphData constructor)
+    // NRICP parameters — fallbacks must match the MorphData() constructor
+    // defaults in include/core/Project.h. PR #22 review caught nricpAlphaFinal
+    // diverging (was 1.0, ctor is 50.0); audit found three more drifts
+    // (nricpIcpIterations, nricpSamplingInitial, nricpSamplingFinal). Sprint 4
+    // fixed all four — keep this list aligned with the ctor going forward.
     data.nricpStiffnessSteps = GetOr<int>(obj, "nricpStiffnessSteps", 5);
     data.nricpAlphaInitial = static_cast<float>(GetOr<double>(obj, "nricpAlphaInitial", 100.0));
-    data.nricpAlphaFinal = static_cast<float>(GetOr<double>(obj, "nricpAlphaFinal", 1.0));
-    data.nricpIcpIterations = GetOr<int>(obj, "nricpIcpIterations", 3);
+    data.nricpAlphaFinal = static_cast<float>(GetOr<double>(obj, "nricpAlphaFinal", 50.0));
+    data.nricpIcpIterations = GetOr<int>(obj, "nricpIcpIterations", 7);
     data.nricpNormalThreshold = static_cast<float>(GetOr<double>(obj, "nricpNormalThreshold", 60.0));
     data.nricpLandmarkWeight = static_cast<float>(GetOr<double>(obj, "nricpLandmarkWeight", 10.0));
     data.nricpEpsilon = static_cast<float>(GetOr<double>(obj, "nricpEpsilon", 1e-4));
     data.nricpEnableBoundaryExclusion = GetOr<bool>(obj, "nricpEnableBoundaryExclusion", true);
     data.nricpBoundaryExclusionHops = GetOr<int>(obj, "nricpBoundaryExclusionHops", 3);
 
-    // NRICP optimization, rigidity, and subsampling parameters (backward compatible)
+    // NRICP optimization, rigidity, and subsampling parameters
     data.nricpOptimizationIterations = GetOr<int>(obj, "nricpOptimizationIterations", 1);
     data.nricpDpInitial = static_cast<float>(GetOr<double>(obj, "nricpDpInitial", 1.0));
     data.nricpDpFinal = static_cast<float>(GetOr<double>(obj, "nricpDpFinal", 1.0));
     data.nricpGammaInitial = static_cast<float>(GetOr<double>(obj, "nricpGammaInitial", 0.0));
     data.nricpGammaFinal = static_cast<float>(GetOr<double>(obj, "nricpGammaFinal", 0.0));
-    data.nricpSamplingInitial = static_cast<float>(GetOr<double>(obj, "nricpSamplingInitial", 0.0));
-    data.nricpSamplingFinal = static_cast<float>(GetOr<double>(obj, "nricpSamplingFinal", 0.0));
+    data.nricpSamplingInitial = static_cast<float>(GetOr<double>(obj, "nricpSamplingInitial", 0.1));
+    data.nricpSamplingFinal = static_cast<float>(GetOr<double>(obj, "nricpSamplingFinal", 0.01));
     data.nricpNormalizeSampling = GetOr<bool>(obj, "nricpNormalizeSampling", true);
 
     // Restore vertex mask (run-length encoded)

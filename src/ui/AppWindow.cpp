@@ -859,12 +859,23 @@ void AppWindow::Run() {
                 }
             }
             if (actions.replacePresetRequested && !actions.targetPresetId.empty() && project_) {
-                for (auto& p : userPresets_) {
+                for (const auto& p : userPresets_) {
                     if (p.id != actions.targetPresetId) continue;
-                    p.params = WrapParams::FromMorphData(project_->GetMorphData());
-                    PresetStore::Save(p);
-                    userPresets_ = PresetStore::LoadAll();
-                    statusMessage_ = std::format("Replaced preset '{}'", p.name);
+                    // Build the replacement preset on the side; only mutate
+                    // userPresets_ after Save succeeds so a write failure
+                    // (full disk, permission denied) doesn't leave the
+                    // in-memory list out of sync with what's on disk.
+                    WrapPreset updated = p;
+                    updated.params = WrapParams::FromMorphData(project_->GetMorphData());
+                    if (PresetStore::Save(updated)) {
+                        userPresets_ = PresetStore::LoadAll();
+                        statusMessage_ = std::format("Replaced preset '{}'", updated.name);
+                    } else {
+                        errorModal_.Open(std::format(
+                            "Could not save preset '{}' to disk. "
+                            "Check %APPDATA%\\MetaVisage\\presets is writable.",
+                            updated.name));
+                    }
                     break;
                 }
             }

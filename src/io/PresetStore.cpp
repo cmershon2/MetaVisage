@@ -25,6 +25,25 @@ constexpr int kSchemaVersion = 1;
 
 constexpr const char* kFileExtension = ".mvpreset.json";
 
+// Strict whitelist for preset ids: "user-" followed by exactly 8 lower-case
+// hex digits. Mirrors the format `GenerateUserPresetId` produces, so any
+// value that doesn't match couldn't have come from us. Used as a path-
+// traversal guard before constructing `<id>.mvpreset.json` filenames in
+// the user presets directory — a hand-edited file with id="../etc/passwd"
+// would otherwise let `Delete` / `Save` escape `UserPresetsDir`.
+bool IsValidUserPresetId(const std::string& id) {
+    if (id.size() != 13) return false;        // "user-" (5) + 8 hex
+    if (id.compare(0, 5, "user-") != 0) return false;
+    for (size_t i = 5; i < id.size(); ++i) {
+        const char c = id[i];
+        const bool isHex =
+            (c >= '0' && c <= '9') ||
+            (c >= 'a' && c <= 'f');
+        if (!isHex) return false;
+    }
+    return true;
+}
+
 // Small read helper, mirrors ProjectSerializer::GetOr.
 template <typename T>
 T GetOr(const OrderedJson& obj, const char* key, T fallback) {
@@ -178,6 +197,16 @@ std::vector<WrapPreset> PresetStore::LoadAll() {
             MV_LOG_WARNING(std::format("PresetStore: skipping {} (missing id or name)", name));
             continue;
         }
+        // Path-traversal guard. Any preset whose id wasn't produced by
+        // GenerateUserPresetId is treated as malformed — this keeps a
+        // hand-edited "id": "../bad" out of the in-memory list and out of
+        // the path Save / Delete would later construct.
+        if (!IsValidUserPresetId(preset.id)) {
+            MV_LOG_WARNING(std::format(
+                "PresetStore: skipping {} (id '{}' fails user-XXXXXXXX format check)",
+                name, preset.id));
+            continue;
+        }
         out.push_back(std::move(preset));
     }
 
@@ -188,6 +217,12 @@ bool PresetStore::Save(const WrapPreset& preset) {
     namespace fs = std::filesystem;
     if (preset.id.empty()) {
         MV_LOG_ERROR("PresetStore::Save: preset has empty id");
+        return false;
+    }
+    if (!IsValidUserPresetId(preset.id)) {
+        MV_LOG_ERROR(std::format(
+            "PresetStore::Save: refusing id '{}' — fails user-XXXXXXXX format check",
+            preset.id));
         return false;
     }
     const std::string dir = UserPresetsDir();
@@ -213,12 +248,25 @@ bool PresetStore::Save(const WrapPreset& preset) {
         return false;
     }
     out << root.dump(2);
+    out.flush();
+    if (out.fail()) {
+        MV_LOG_ERROR(std::format(
+            "PresetStore::Save: write failed for {} (disk full or I/O error)",
+            path.generic_string()));
+        return false;
+    }
     return true;
 }
 
 bool PresetStore::Delete(const std::string& presetId) {
     namespace fs = std::filesystem;
     if (presetId.empty()) return false;
+    if (!IsValidUserPresetId(presetId)) {
+        MV_LOG_ERROR(std::format(
+            "PresetStore::Delete: refusing id '{}' — fails user-XXXXXXXX format check",
+            presetId));
+        return false;
+    }
     const std::string dir = UserPresetsDir();
     if (dir.empty()) return false;
     const fs::path path = fs::path(dir) / (presetId + kFileExtension);

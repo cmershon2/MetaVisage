@@ -780,9 +780,9 @@ void RenderSavePresetModal(SavePresetModalState& state) {
         if (taken == trimmedName) { nameTaken = true; break; }
     }
     if (nameMissing) {
-        ImGui::TextColored(ImVec4(1.0f, 0.5f, 0.4f, 1.0f), "Name is required.");
+        ImGui::TextColored(MvStyle::MvDanger, "Name is required.");
     } else if (nameTaken) {
-        ImGui::TextColored(ImVec4(1.0f, 0.5f, 0.4f, 1.0f),
+        ImGui::TextColored(MvStyle::MvDanger,
                            "A preset with that name already exists.");
     }
 

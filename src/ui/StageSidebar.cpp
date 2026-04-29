@@ -10,6 +10,7 @@
 #include <imgui.h>
 
 #include <cstdio>
+#include <cstring>
 
 #include <algorithm>
 #include <array>
@@ -773,6 +774,10 @@ std::string TruncateToWidth(const char* text, float maxWidth) {
 
     const float budget = maxWidth - ellipsisW;
     std::string out;
+    out.reserve(std::strlen(text) + 4);
+
+    // Append codepoints in place; on overshoot, roll back the last codepoint
+    // and stop. O(n) in the input length — no per-iteration allocation.
     const char* cur = text;
     while (*cur) {
         const unsigned char b = static_cast<unsigned char>(*cur);
@@ -781,9 +786,12 @@ std::string TruncateToWidth(const char* text, float maxWidth) {
         else if ((b & 0xF0) == 0xE0) bytes = 3;
         else if ((b & 0xF8) == 0xF0) bytes = 4;
 
-        const std::string candidate = out + std::string(cur, bytes);
-        if (ImGui::CalcTextSize(candidate.c_str()).x > budget) break;
-        out = candidate;
+        const size_t before = out.size();
+        out.append(cur, bytes);
+        if (ImGui::CalcTextSize(out.c_str()).x > budget) {
+            out.resize(before); // roll back the codepoint that overshot
+            break;
+        }
         cur += bytes;
     }
     out += kEllipsis;
