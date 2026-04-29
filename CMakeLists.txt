@@ -323,3 +323,35 @@ add_custom_command(TARGET metavisage_v1_compat POST_BUILD
 add_test(NAME smoke_v1_backward_compat
          COMMAND metavisage_v1_compat
          WORKING_DIRECTORY ${CMAKE_RUNTIME_OUTPUT_DIRECTORY})
+
+# ---------------------------------------------------------------------------
+# Wrap Engine behavioural-parity smoke (Story 4.6)
+# ---------------------------------------------------------------------------
+# Loads the bundled MetaHuman head as both source and target with a small
+# Y-offset, places four correspondence anchors, runs MeshDeformer for both
+# Quick Wrap and Fantasy Wrap presets, and asserts each converges with
+# preserved topology + bounded displacement. Catches the bug class Sprint
+# 3.8.9 first shipped — preset numbers that look reasonable in the
+# inspector but produce a visibly broken wrap.
+add_executable(metavisage_smoke_wrap_parity
+    tests/smoke/wrap_parity.cpp
+)
+target_link_libraries(metavisage_smoke_wrap_parity
+    PRIVATE
+        ${PROJECT_NAME}Core
+)
+if(MSVC)
+    target_compile_options(metavisage_smoke_wrap_parity PRIVATE /W4)
+else()
+    target_compile_options(metavisage_smoke_wrap_parity PRIVATE -Wall -Wextra)
+endif()
+
+# Wrap-parity needs the bundled MetaHuman head — same asset the existing
+# smoke_load_serialize_export target resolves via Paths::ExecutableDir().
+# No fixture-staging step here because the test reads from the existing
+# build/bin/<config>/assets/ tree the main app already populates.
+
+add_test(NAME smoke_wrap_parity
+         COMMAND metavisage_smoke_wrap_parity
+         WORKING_DIRECTORY ${CMAKE_RUNTIME_OUTPUT_DIRECTORY})
+set_tests_properties(smoke_wrap_parity PROPERTIES TIMEOUT 60)

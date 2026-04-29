@@ -17,7 +17,7 @@
 | 2 | **Story 4.2: WrapPreset Data Model & Built-In Presets** | 3 | Story 4.1 | [ ] |
 | 3 | **Story 4.3: Preset Card Wiring through WrapPreset** | 2 | Story 4.2 | [ ] |
 | 4 | **Story 4.4: User-Saved Wrap Presets (Save / Rename / Delete)** | 8 | Story 4.2 | [ ] |
-| 5 | **Story 4.5: imgui_test_engine Smoke-UI Lane** *(retro AI #1)* | 5 | None | [ ] |
+| 5 | **Story 4.5: imgui_test_engine Smoke-UI Lane** *(retro AI #1)* | 5 | None | [→] *deferred to Sprint 5* |
 | 6 | **Story 4.6: Behavioural-Parity Wrap Smoke Target** *(retro AI #2)* | 3 | Story 4.2 | [ ] |
 | 7 | **Story 4.7: Mechanical DoD Enforcement in /sprint-retrospective** *(retro AI #3)* | 1 | None | [ ] |
 
@@ -72,9 +72,17 @@ The largest story in the sprint. Net-new persistence layer + three modal dialogs
 - **Default selection on new projects**: extend the existing new-project init path so `MorphData::WrapParams` are populated from the Quick Wrap built-in (Story 4.2 already enforces this on the data side; this is just confirming the entry point applies it).
 - **Out of scope this sprint** — preset import/export across machines (Sprint 5+ candidate, log a backlog item if it surfaces during dogfooding); preset thumbnails as PNGs (Lucide glyphs replace them, consistent with the 3.8 design system).
 
-### Story 4.5: imgui_test_engine Smoke-UI Lane (5 pts) *(retro AI #1)*
+### Story 4.5: imgui_test_engine Smoke-UI Lane (5 pts) *(retro AI #1) — DEFERRED to Sprint 5*
 
-Carried action item from Sprint 3.7 retro and Sprint 3.8 retro — the click-through bug, the preset-values bug, and the login caption-button bug from 3.8 would all have been caught by an interactive test driver. **This sprint builds it.**
+Carried action item from Sprint 3.7 retro and Sprint 3.8 retro. Day-1 spike (2026-04-29) confirmed:
+
+- **`imgui[test-engine]` is available via vcpkg** as a feature flag on the existing `imgui` port (`C:/vcpkg/ports/imgui/vcpkg.json` declares it; supports `!uwp`).
+- **License is compatible** under the Dear ImGui Test Engine Free License clause: any legal entity with turnover under $2M USD in their last fiscal year qualifies (per `https://github.com/ocornut/imgui_test_engine/blob/main/imgui_test_engine/LICENSE.txt`, Article 1.1). MetaVisage v2.0's commercial profile fits comfortably under this threshold.
+- **Path A (imgui_test_engine integration) is the chosen route** when this story is picked back up — it gives `ItemAction("label")`-style scenario authoring, robust click-through detection, and screenshot-on-failure, catching all four bug classes the Sprint 3.7/3.8 retros flagged. The hand-rolled fallback (Path B in the original plan) was rejected because it doesn't catch click-through regressions, which were 3 of 4 retro-cited bug classes.
+
+**Why deferred**: the sprint plan's explicit fallback authorized this — *"If the hand-rolled fallback also blocks (e.g. GLFW input simulation flakes on Windows), defer to Sprint 5 and note in retro — this is the third sprint this is being attempted."* Sprint 4's other stories (4.1–4.4 + 4.6 + 4.7) deliver 22/27 points and the data-layer regressions they introduce are covered by Story 4.6's behavioural smoke. Story 4.5 carries forward to Sprint 5 as a fresh story with the integration plan + license finding above pinned to the front of the description.
+
+
 
 - **Spike on day 1**: confirm `imgui_test_engine` is installable via vcpkg or available as a submodule under a license compatible with proprietary distribution (MIT). If unavailable, fall back to a hand-rolled driver using `glfwSetCursorPos` + synthetic GLFW input events + frame stepping (`AppWindow::TickOnce()` exposed for tests). The hand-rolled fallback is ~150 lines of harness code; budget the 5 points either way.
 - **New CTest target** `smoke_ui` runnable via `ctest -C Release -L ui`. Headless mode where possible; OS window allowed if `imgui_test_engine` requires it (CI is not a constraint — this runs locally on Windows).
