@@ -6,12 +6,13 @@ An open-source desktop application for automated MetaHuman mesh morphing. Wrap M
 
 - **Four-stage workflow**: Alignment, Point Reference, Morph, Touch Up
 - **Non-rigid surface registration** for high-quality mesh wrapping
+- **Wrap presets**: Quick Wrap (rigid, for human-like targets) and Fantasy Wrap (looser, for dramatic features) ship as built-ins; users can save their own tuned parameter sets as named presets with a 12-glyph picker, then rename / replace / delete via right-click on the preset card
 - **Sculpting tools**: Smooth, Grab, Push/Pull, and Inflate brushes for manual refinement
 - **Symmetry support**: Mirrored point placement and sculpting
 - **Blender-style controls**: Familiar orbit/pan/zoom camera and G/R/S transform shortcuts
 - **Multiple formats**: Import/export FBX, OBJ, and GLTF meshes
 - **Unreal Engine ready**: Exports preserve topology, UVs, normals, and material slots — quad topology is preserved end-to-end for UE5 MetaHuman Conform compatibility
-- **Project management**: Save/load workflow state with full undo/redo support
+- **Project management**: Save/load workflow state with full undo/redo support; v1.0.0 `.mmproj` files load without modification
 - **Included assets**: Ships with a MetaHuman head mesh (LOD0) ready to use
 
 ## Requirements
@@ -46,7 +47,8 @@ mkdir build && cd build
 cmake .. -DCMAKE_TOOLCHAIN_FILE="%VCPKG_ROOT%/scripts/buildsystems/vcpkg.cmake" -G "Visual Studio 17 2022" -A x64
 cmake --build . --config Release
 
-# Run the smoke test (load → serialize → reload → export round-trip)
+# Run the smoke test suite (load → serialize → reload → export round-trip,
+# v1.0.0 backward-compat regression, and Wrap Engine behavioural-parity)
 ctest -C Release
 
 # Launch
@@ -87,7 +89,10 @@ MetaVisage/
 ├── include/          # Public headers — baking/, core/, deformation/, io/,
 │                     # rendering/, sculpting/, thirdparty/, ui/, utils/
 ├── src/              # Implementation (mirrors include/ structure) + main.cpp
-├── tests/            # Headless smoke test (load → serialize → export pipeline)
+├── tests/            # Headless CTest suite — three smoke executables plus
+│                     # pinned v1.0.0 fixtures (load → serialize → export,
+│                     # v1.0.0 backward-compat regression, Wrap Engine
+│                     # behavioural-parity over Quick + Fantasy presets)
 ├── .claude/          # Sprint plans, retros, agents, hooks, skills (dev tooling)
 ├── CMakeLists.txt    # Build configuration
 ├── vcpkg.json        # Pinned dependency manifest
