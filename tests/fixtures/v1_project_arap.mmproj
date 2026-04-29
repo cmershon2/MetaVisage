@@ -1,0 +1,9 @@
+{
+  "formatVersion": 1,
+  "name": "v1_arap",
+  "morph": {
+    "algorithm": 3,
+    "stiffness": 0.5,
+    "smoothness": 0.5
+  }
+}

@@ -1,0 +1,9 @@
+{
+  "formatVersion": 1,
+  "name": "v1_rbf_multiquadric",
+  "morph": {
+    "algorithm": 2,
+    "stiffness": 0.5,
+    "smoothness": 0.5
+  }
+}

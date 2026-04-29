@@ -124,7 +124,6 @@ set(CORE_SOURCES
     src/utils/SingleInstance.cpp
     src/utils/HttpClient.cpp
     src/utils/SecureStorage.cpp
-    src/deformation/RBFInterpolator.cpp
     src/deformation/MeshDeformer.cpp
     src/deformation/NRICPDeformer.cpp
     src/sculpting/SculptBrush.cpp
@@ -175,7 +174,6 @@ set(CORE_HEADERS
     include/utils/SingleInstance.h
     include/utils/HttpClient.h
     include/utils/SecureStorage.h
-    include/deformation/RBFInterpolator.h
     include/deformation/MeshDeformer.h
     include/deformation/NRICPDeformer.h
     include/sculpting/SculptBrush.h
@@ -287,4 +285,37 @@ endif()
 
 add_test(NAME smoke_load_serialize_export
          COMMAND metavisage_smoke
+         WORKING_DIRECTORY ${CMAKE_RUNTIME_OUTPUT_DIRECTORY})
+
+# ---------------------------------------------------------------------------
+# v1.0.0 backward-compat regression (Story 4.1)
+# ---------------------------------------------------------------------------
+# Loads a set of minimal .mmproj fixtures carrying every discontinued
+# DeformationAlgorithm ordinal (RBF_TPS / RBF_GAUSSIAN / RBF_MULTIQUADRIC /
+# ARAP) and asserts the serializer coerces each silently to NRICP. Catches
+# regressions in the Sprint 4 algorithm-collapse path without needing GL.
+add_executable(metavisage_v1_compat
+    tests/smoke/v1_backward_compat.cpp
+)
+target_link_libraries(metavisage_v1_compat
+    PRIVATE
+        ${PROJECT_NAME}Core
+)
+if(MSVC)
+    target_compile_options(metavisage_v1_compat PRIVATE /W4)
+else()
+    target_compile_options(metavisage_v1_compat PRIVATE -Wall -Wextra)
+endif()
+
+# Stage the fixtures next to the test exe so the LocateFixture path walk
+# resolves on Windows builds (build/bin/<config>/fixtures/) and Linux/Mac
+# (build/<config>/fixtures/).
+add_custom_command(TARGET metavisage_v1_compat POST_BUILD
+    COMMAND ${CMAKE_COMMAND} -E copy_directory
+            "${CMAKE_SOURCE_DIR}/tests/fixtures"
+            "$<TARGET_FILE_DIR:metavisage_v1_compat>/fixtures"
+    COMMENT "Staging v1.0.0 .mmproj fixtures next to metavisage_v1_compat")
+
+add_test(NAME smoke_v1_backward_compat
+         COMMAND metavisage_v1_compat
          WORKING_DIRECTORY ${CMAKE_RUNTIME_OUTPUT_DIRECTORY})

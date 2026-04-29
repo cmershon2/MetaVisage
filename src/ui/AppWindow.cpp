@@ -2300,7 +2300,6 @@ void AppWindow::StartMorph() {
     morphDeformer_->SetMorphTransform(morphMeshRef.transform);
     morphDeformer_->SetTargetTransform(targetMeshRef.transform);
     morphDeformer_->SetCorrespondences(project_->GetPointReferenceData().correspondences);
-    morphDeformer_->SetKernelType(morphData.algorithm);
     morphDeformer_->SetStiffness(morphData.stiffness);
     morphDeformer_->SetSmoothness(morphData.smoothness);
     morphDeformer_->SetNRICPParams(params);

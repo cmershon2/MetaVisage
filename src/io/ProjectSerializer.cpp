@@ -456,8 +456,13 @@ PointReferenceData ProjectSerializer::DeserializePointReferenceData(const Json& 
 
 MorphData ProjectSerializer::DeserializeMorphData(const Json& obj) const {
     MorphData data;
-    data.algorithm = static_cast<DeformationAlgorithm>(GetOr<int>(obj, "algorithm",
-        static_cast<int>(DeformationAlgorithm::NRICP)));
+    // Sprint 4 (Wrap Engine Redesign): the enum collapsed to a single member
+    // (NRICP). v1.0.0 .mmproj files may carry any of the discontinued ordinals
+    // (0=RBF_TPS, 1=RBF_GAUSSIAN, 2=RBF_MULTIQUADRIC, 3=ARAP). Read the field
+    // for forward-compat but ignore the value — every project runs through the
+    // surviving Wrap Engine path.
+    (void)GetOr<int>(obj, "algorithm", static_cast<int>(DeformationAlgorithm::NRICP));
+    data.algorithm = DeformationAlgorithm::NRICP;
     data.stiffness = static_cast<float>(GetOr<double>(obj, "stiffness", 0.5));
     data.smoothness = static_cast<float>(GetOr<double>(obj, "smoothness", 0.5));
     data.previewMode = static_cast<MorphPreviewMode>(GetOr<int>(obj, "previewMode", 0));

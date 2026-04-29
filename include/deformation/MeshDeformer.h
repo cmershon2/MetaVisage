@@ -5,7 +5,6 @@
 #include "core/Mesh.h"
 #include "core/Transform.h"
 #include "core/Project.h"
-#include "deformation/RBFInterpolator.h"
 #include "deformation/NRICPDeformer.h"
 #include <memory>
 #include <atomic>
@@ -46,7 +45,6 @@ public:
     void SetCorrespondences(const std::vector<PointCorrespondence>& correspondences);
 
     // Set deformation parameters
-    void SetKernelType(DeformationAlgorithm kernel);
     void SetStiffness(float stiffness);
     void SetSmoothness(float smoothness);
 
@@ -103,7 +101,6 @@ private:
     std::vector<PointCorrespondence> correspondences_;
 
     // Parameters
-    DeformationAlgorithm kernelType_;
     float stiffness_;
     float smoothness_;
     NRICPParams nricpParams_;
