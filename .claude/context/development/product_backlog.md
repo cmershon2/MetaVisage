@@ -33,7 +33,7 @@
 
 ## 🟡 Medium Priority
 
-- [ ] **Custom wrap preset saving**
+- [/] **Custom wrap preset saving** *(Sprint 4, in progress — Story 4.4)*
   - v2.0 ships with Quick Wrap and Fantasy Wrap presets. Users have asked to save their own tuned parameter sets as presets with thumbnails.
   - **Effort**: ~3–4 days
   - **Value**: Power-user retention; reduces re-tuning effort across projects
