@@ -19,7 +19,7 @@
   - **Effort**: ~15–20 points (~1.5 weeks solo)
   - **Value**: Completes the Qt exit begun in Sprint 3.5; shrinks installer; removes final Qt build-tool dependency
 
-- [ ] **Investigate "cottage cheese face" morph artifacts**
+- [/] **Investigate "cottage cheese face" morph artifacts** *(Sprint 5, in progress — Story 5.2)*
   - Users report geometry stretching at correspondence point locations after morphing. Needs diagnostic work: determine whether this is an NRICP parameter-tuning issue, a point-density issue, or a normal-recomputation bug.
   - **Effort**: ~1–2 weeks (investigation + fix)
   - **Value**: Directly affects output quality — the feature users pay for
