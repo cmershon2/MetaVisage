@@ -242,23 +242,27 @@ void LoadFonts() {
     }
 }
 
-void LoadAssets() {
-    const std::filesystem::path logoPath =
-        std::filesystem::path(Paths::ExecutableDir()) / "assets" / "metavisage-logo-mark.png";
+// Helper: stbi_load + glTexImage2D + free. Returns 0 on failure (caller
+// is expected to fall back gracefully). Mip-min/mag = GL_LINEAR with
+// edge clamp matches the existing logo pipeline.
+namespace {
 
+GLuint UploadPngAsTexture(const std::filesystem::path& path,
+                           int* outWidth = nullptr,
+                           int* outHeight = nullptr) {
     std::error_code ec;
-    if (!std::filesystem::exists(logoPath, ec)) {
-        MV_LOG_WARNING(std::format("MvStyle: logo image not found at {}", logoPath.string()));
-        return;
+    if (!std::filesystem::exists(path, ec)) {
+        MV_LOG_WARNING(std::format("MvStyle: image not found at {}", path.string()));
+        return 0;
     }
 
     int w = 0, h = 0, sourceChannels = 0;
     unsigned char* pixels =
-        stbi_load(logoPath.string().c_str(), &w, &h, &sourceChannels, /*req=*/4);
+        stbi_load(path.string().c_str(), &w, &h, &sourceChannels, /*req=*/4);
     if (!pixels) {
         MV_LOG_WARNING(std::format("MvStyle: stbi_load failed for {}: {}",
-                                   logoPath.string(), stbi_failure_reason()));
-        return;
+                                   path.string(), stbi_failure_reason()));
+        return 0;
     }
 
     GLuint tex = 0;
@@ -274,19 +278,55 @@ void LoadAssets() {
 
     stbi_image_free(pixels);
 
-    Asset.LogoTextureId = tex;
-    Asset.LogoWidth     = w;
-    Asset.LogoHeight    = h;
+    if (outWidth)  *outWidth  = w;
+    if (outHeight) *outHeight = h;
+    return tex;
+}
 
-    MV_LOG_INFO(std::format("MvStyle: logo loaded {}x{} (GL tex {})", w, h, tex));
+} // namespace
+
+void LoadAssets() {
+    const std::filesystem::path assetsRoot =
+        std::filesystem::path(Paths::ExecutableDir()) / "assets";
+
+    // Brand logo (existing path).
+    int logoW = 0, logoH = 0;
+    Asset.LogoTextureId =
+        UploadPngAsTexture(assetsRoot / "metavisage-logo-mark.png", &logoW, &logoH);
+    if (Asset.LogoTextureId) {
+        Asset.LogoWidth  = logoW;
+        Asset.LogoHeight = logoH;
+        MV_LOG_INFO(std::format("MvStyle: logo loaded {}x{} (GL tex {})",
+                                logoW, logoH, Asset.LogoTextureId));
+    }
+
+    // Story 5.3 — Stage 4 brush preview thumbnails. Filenames are
+    // load-bearing: the order here MUST match kBrushes in
+    // StageSidebar.cpp::RenderTouchUp (Smooth / Grab / PushPull / Inflate).
+    static constexpr const char* kBrushPreviewFilenames[4] = {
+        "smooth_preview.png",
+        "grab_preview.png",
+        "pushpull_preview.png",
+        "inflate_preview.png",
+    };
+    for (int i = 0; i < 4; ++i) {
+        Asset.BrushPreviewTextureIds[i] =
+            UploadPngAsTexture(assetsRoot / "brushes" / kBrushPreviewFilenames[i]);
+    }
 }
 
 void Shutdown() {
     if (Asset.LogoTextureId) {
         GLuint t = Asset.LogoTextureId;
         glDeleteTextures(1, &t);
-        Asset = {};
     }
+    for (int i = 0; i < 4; ++i) {
+        if (Asset.BrushPreviewTextureIds[i]) {
+            GLuint t = Asset.BrushPreviewTextureIds[i];
+            glDeleteTextures(1, &t);
+        }
+    }
+    Asset = {};
     // Font* lifetimes are owned by the ImFontAtlas; ImGui::DestroyContext
     // (called by AppWindow::Shutdown immediately after this) frees them.
     Font = {};

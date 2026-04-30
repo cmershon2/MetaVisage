@@ -48,11 +48,6 @@
   - **Effort**: ~1 day
   - **Value**: Quality-of-life polish for texture workflow
 
-- [ ] **Stage 4 procedural brush-effect previews** *(follow-up to Sprint 5 Story 5.3)*
-  - Sprint 5 Story 5.3 shipped brush hotkeys (1–4) and `[N]` indicators in the card sub-labels but deferred the brush-effect previews from the master plan (PNG thumbnails or procedural ImDrawList shapes per [SPRINT_PLAN.md § Sprint 5](../sprints/SPRINT_PLAN.md)). The deferred work: replace the centred Lucide glyph in each Stage 4 brush card with a small (~28×28px) procedural visualization showing the brush effect — e.g. Smooth = wavy line straightening, Grab = horizontal line with one point pulled, Push/Pull = bumpy line with displaced section, Inflate = small circle to large. Path A (PNG assets at `assets/brushes/{smooth,grab,pushpull,inflate}_preview.png` loaded via stb_image) and Path B (procedural `ImDrawList::Add*` calls inside `DrawPresetCard` or a new `DrawBrushCard` sibling) are both viable per the Sprint 5 plan; pick whichever is faster after this lands.
-  - **Effort**: ~1 day (Path B procedural) or ~half day plus asset turnaround (Path A).
-  - **Value**: Closes Story 5.3's master-plan DoD; users see at-a-glance what each brush does before committing to a stroke.
-
 - [ ] **Advanced sculpting brushes**
   - Crease, pinch, and masking brushes beyond the v1.0 smooth/grab/push-pull/inflate-deflate set.
   - **Effort**: ~1 week

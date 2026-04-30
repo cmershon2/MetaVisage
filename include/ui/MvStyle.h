@@ -108,6 +108,13 @@ struct AssetHandles {
     unsigned int LogoTextureId = 0;  // metavisage-logo-mark.png — title bar / welcome / login
     int          LogoWidth     = 0;
     int          LogoHeight    = 0;
+
+    // Story 5.3 follow-up — Stage 4 brush preview textures. Index order
+    // matches kBrushes in StageSidebar.cpp::RenderTouchUp:
+    //   0 Smooth, 1 Grab, 2 PushPull, 3 Inflate.
+    // Zero means "load failed" — the brush card silently falls back to
+    // the Lucide glyph in that case so the panel stays usable.
+    unsigned int BrushPreviewTextureIds[4] = { 0, 0, 0, 0 };
 };
 extern AssetHandles Asset;
 

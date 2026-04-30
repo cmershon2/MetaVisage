@@ -807,12 +807,20 @@ std::string TruncateToWidth(const char* text, float maxWidth) {
 
 // Returns true on click. Caller decides whether to apply the preset; the
 // helper just paints the card and dispatches the hit-test.
+//
+// `thumbnail` is optional (Story 5.3): when non-zero, an RGBA texture is
+// rendered in place of the Lucide glyph, scaled to a 28 px square (matches
+// the visual weight of the existing 22 px glyph + 4 px breathing room
+// before the name row). Used by the Stage 4 brush card grid to surface
+// brush-effect preview PNGs from `assets/brushes/`. Stage 3 preset cards
+// leave it 0 and keep their glyphs.
 bool DrawPresetCard(const char* idStr,
                     const char* name,
                     const char* sub,
                     const char* glyph,
                     bool active,
-                    bool disabled) {
+                    bool disabled,
+                    ImTextureID thumbnail = 0) {
     constexpr float CardH = 76.0f;
     ImGui::PushID(idStr);
     const ImVec2 pmin = ImGui::GetCursorScreenPos();
@@ -845,8 +853,23 @@ bool DrawPresetCard(const char* idStr,
         dl->AddRect(pmin, pmax, borderCol, 6.0f, 0, 1.0f);
     }
 
-    // Centred icon, 24 px Lucide.
-    if (glyph && MvStyle::Font.Icon) {
+    // Centred icon area (y=8..32). Prefer the PNG thumbnail when a caller
+    // passes one (Stage 4 brush previews); otherwise fall back to the
+    // Lucide glyph at the same vertical slot. Disabled state mutes the
+    // image with a 50 % alpha overlay, mirroring the glyph's MvFg4
+    // treatment so the two paths feel consistent.
+    if (thumbnail) {
+        constexpr float kThumbSize = 28.0f;
+        const ImVec2 thumbMin(pmin.x + (availW - kThumbSize) * 0.5f,
+                              pmin.y + 4.0f);
+        const ImVec2 thumbMax(thumbMin.x + kThumbSize,
+                              thumbMin.y + kThumbSize);
+        const ImU32 tint = disabled
+            ? IM_COL32(255, 255, 255, 128)
+            : IM_COL32_WHITE;
+        dl->AddImage(thumbnail, thumbMin, thumbMax,
+                     ImVec2(0, 0), ImVec2(1, 1), tint);
+    } else if (glyph && MvStyle::Font.Icon) {
         ImFont* icon = MvStyle::Font.Icon;
         constexpr float iconSize = 22.0f;
         const ImVec2 ts = icon->CalcTextSizeA(iconSize, FLT_MAX, 0.0f, glyph);
@@ -1309,9 +1332,17 @@ void StageSidebar::RenderTouchUp(Project& project, Actions& out) {
                 if (i % 2 == 0) ImGui::TableNextRow();
                 ImGui::TableNextColumn();
                 const bool active = (sculpt.activeBrush == kBrushes[i].kind);
+                // Story 5.3 — pass the matching brush preview thumbnail
+                // when one is loaded; if loading failed (zero handle),
+                // DrawPresetCard silently falls back to the Lucide glyph.
+                // Cast pattern matches the existing logo paths (Modals,
+                // LoginScreen, AppWindow) — modern ImGui defines
+                // ImTextureID as ImU64 with the int↔ptr round-trip.
+                const ImTextureID thumb =
+                    (ImTextureID)(intptr_t)MvStyle::Asset.BrushPreviewTextureIds[i];
                 if (DrawPresetCard(kBrushes[i].name, kBrushes[i].name,
                                    kBrushes[i].sub, kBrushes[i].glyph,
-                                   active, /*disabled=*/false)) {
+                                   active, /*disabled=*/false, thumb)) {
                     sculpt.activeBrush = kBrushes[i].kind;
                 }
             }
