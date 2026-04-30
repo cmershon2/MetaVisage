@@ -1165,6 +1165,31 @@ void StageSidebar::RenderMorph(Project& project, bool processing, float progress
             activePresetId_.clear();
         }
 
+        // ---- Cottage-cheese-face stopgap (Story 5.2 Outcome B) ---------
+        // High landmark weight relative to final stiffness leaves the
+        // landmark term over-weighted at the last stiffness level, which
+        // matches the reported local-stretching artifact. Threshold (0.5)
+        // is the initial estimate per the sprint plan; will be refined
+        // empirically once the diagnostic dump
+        // (METAVISAGE_DUMP_RESIDUALS=1) yields real residual data from
+        // reproduction cases. The warning is informational — Process is
+        // not blocked.
+        constexpr float kLandmarkRatioWarnThreshold = 0.5f;
+        const float ratio = morph.nricpAlphaFinal > 0.0f
+            ? morph.nricpLandmarkWeight / morph.nricpAlphaFinal
+            : 0.0f;
+        if (ratio > kLandmarkRatioWarnThreshold) {
+            ImGui::Dummy(ImVec2(0.0f, 6.0f));
+            MvStyle::ScopedFont f(MvStyle::Font.BodySm);
+            ImGui::PushStyleColor(ImGuiCol_Text, MvStyle::MvWarning);
+            ImGui::TextWrapped(
+                MV_ICON_ALERT
+                "  High landmark weight relative to final stiffness can "
+                "cause local geometry artifacts. Consider lowering "
+                "Landmark Weight or raising Stiffness (end).");
+            ImGui::PopStyleColor();
+        }
+
         if (paramEdited) activePresetId_.clear();
 
         // ---- Process / cancel ------------------------------------------
