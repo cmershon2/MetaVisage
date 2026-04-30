@@ -98,11 +98,15 @@ Each sprint file follows this template:
 - [ ] Deployed to staging
 - [ ] PO approval
 
-> **Mechanical guard (Sprint 4 Action Item #3):** the `/sprint-retrospective`
-> skill refuses to run when this sprint's `Sprint Outcome` Status is set to
-> `Complete` and any DoD item containing `"PR opened"`, `"/review-pr"`,
-> `"manual UI smoke"`, or `"Phase D"` is still unchecked. Don't flip Status
-> to `Complete` until those boxes are genuinely ticked.
+> **Mechanical guard (Sprint 4 Action Item #3 + Sprint 5 Story 5.5):** the
+> `/sprint-retrospective` skill refuses to run in two cases — (Clause A) when
+> this sprint's `Sprint Outcome` Status is `Complete`/`Implementation Complete`
+> and any DoD item containing `"PR opened"`, `"/review-pr"`, `"manual UI smoke"`,
+> or `"Phase D"` is still unchecked, *and* (Clause B) when every committed
+> backlog story is shipped (`[x]`) but Status is still `Planned`/`In Progress`
+> with the same validation DoD items unchecked. Don't flip Status to `Complete`
+> until those boxes are genuinely ticked, and don't try to slip past Clause A
+> by leaving Status at `Planned`/`In Progress` — Clause B closes that bypass.
 
 ---
 
