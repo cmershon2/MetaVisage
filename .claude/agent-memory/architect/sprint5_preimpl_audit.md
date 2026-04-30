@@ -49,4 +49,20 @@ Three primary culprit locations in `src/deformation/NRICPDeformer.cpp`:
 
 **AppWindow::TickOnce()** (`include/ui/AppWindow.h`): Public API is only `Initialize`, `Run`, `Shutdown`. `Run()` is a blocking loop. No headless-tick entry point. The private `RenderFrame(int fbWidth, int fbHeight)` exists at line 63 — a public `TickOnce` wrapper would need to be added before any test harness can drive the window.
 
+**Run() loop structure** (`src/ui/AppWindow.cpp:651–982`): Uses `glfwPollEvents()` (non-blocking, line 655) — no blocking on `glfwWaitEvents`. Per-frame sequence: poll events → get framebuffer size → ImGui new frame → login early-continue branch OR (RenderAppShell → BuildLayout → RenderFrame → PollMorphCompletion → sidebar dispatch → Welcome modal check → DispatchPendingAction → RenderModals → ImGui::Render → GL clear → RenderGL → RenderDrawData → SwapBuffers).
+
+**TickOnce() extraction subtleties**:
+- `welcomeShownOnLaunch_` (line 948) fires only on tick 1 and opens the Welcome modal — test harness must suppress or reset this.
+- Login-screen branch (lines 671–711) uses `continue` which must become an early `return` in a non-loop `TickOnce()`.
+- No `firstFrame` flag or deferred load inside the loop — `Initialize()` handles all one-time setup.
+- `PollMorphCompletion()` at line 747 joins the morph thread when done — safe for UI tests but will block if a real morph is running.
+
+**CMake target name for test-engine**: Current installed imgui port (`build/vcpkg_installed/x64-windows/share/imgui/imgui-targets.cmake:22`) exposes exactly one target — `imgui::imgui`. After adding `test-engine` feature and reinstalling, re-check that file to see if test-engine is folded into `imgui::imgui` or adds a second target.
+
+**ConfigFlags**: Only `ImGuiConfigFlags_NavEnableKeyboard` and `ImGuiConfigFlags_DockingEnable` set (`src/ui/AppWindow.cpp:297–298`). `ImGuiConfigFlags_ViewportsEnable` is NOT set — no multi-viewport conflict with test-engine.
+
+**smoke_ui CMake needs explicit GL deps**: `MetaVisageCore` PUBLIC link set (`CMakeLists.txt:222–232`) includes `imgui::imgui`, `glfw`, `GLEW::GLEW`. Since the smoke_ui target needs a real GL context, those are already transitive through MetaVisageCore — but confirm after seeing what test-engine requires.
+
+**CTest pattern** (all three existing smokes): `add_executable` → `target_link_libraries(PRIVATE MetaVisageCore)` → optional `add_custom_command POST_BUILD` for fixture staging → `add_test(NAME ... COMMAND ... WORKING_DIRECTORY ${CMAKE_RUNTIME_OUTPUT_DIRECTORY})` → optional `set_tests_properties(... PROPERTIES TIMEOUT 60)`. No LABELS on any existing smoke target.
+
 **How to apply:** Sprint 5 story scoping should account for these gaps as prerequisite work before the test lane can be written.

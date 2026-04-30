@@ -657,328 +657,334 @@ void AppWindow::Run() {
         int fbWidth, fbHeight;
         glfwGetFramebufferSize(window_, &fbWidth, &fbHeight);
 
-        ImGui_ImplOpenGL3_NewFrame();
-        ImGui_ImplGlfw_NewFrame();
-        ImGui::NewFrame();
+        TickOnce(fbWidth, fbHeight);
+    }
+}
 
-        // Story 3.8.12 — when the login screen is showing, it must fully
-        // replace every other UI surface. Otherwise the foreground-drawlist
-        // primitives in Viewport::DrawOverlays (orientation gizmo, point
-        // labels, active-pane border) bleed through, and the GL 3D pass
-        // keeps writing pixels behind the login card. Short-circuit the
-        // entire frame body — render only the login surface and skip the
-        // app shell, viewports, sidebar, and modals.
-        if (showLoginScreen_) {
-            // Render login first so the title bar (Begin'd second below)
-            // sits on top of it in ImGui's draw order — drag, minimize,
-            // maximize, close need to work even while the user hasn't
-            // signed in. The title bar's breadcrumb collapses to
-            // "MetaVisage · Sign in" since no project is loaded yet
-            // (RenderTitleBar branches on showLoginScreen_).
-            const auto loginResult = LoginScreen::Render(loginState_,
-                                                          ImGui::GetTime());
+void AppWindow::TickOnce(int fbWidth, int fbHeight) {
+    if (!window_) return;
 
-            SyncOSWindowTitle();
-            RenderTitleBar();
-            if (loginResult.signInRequested) {
-                loginState_ = LoginScreen::State::Waiting;
-            }
-            if (loginResult.cancelRequested || loginResult.retryRequested) {
-                // Both reset back to Idle — Retry implies "browser didn't
-                // open, take me back to the Sign in button" until the auth
-                // backend differentiates them.
-                loginState_ = LoginScreen::State::Idle;
-            }
-            if (loginResult.closeRequested) {
-                showLoginScreen_ = false;
-            }
+    ImGui_ImplOpenGL3_NewFrame();
+    ImGui_ImplGlfw_NewFrame();
+    ImGui::NewFrame();
 
-            // Still poll worker thread state in case a morph started
-            // pre-login. Doesn't render anything; cleans up the thread
-            // when it finishes so closing the login resumes a coherent app.
-            PollMorphCompletion();
+    // Story 3.8.12 — when the login screen is showing, it must fully
+    // replace every other UI surface. Otherwise the foreground-drawlist
+    // primitives in Viewport::DrawOverlays (orientation gizmo, point
+    // labels, active-pane border) bleed through, and the GL 3D pass
+    // keeps writing pixels behind the login card. Short-circuit the
+    // entire frame body — render only the login surface and skip the
+    // app shell, viewports, sidebar, and modals.
+    if (showLoginScreen_) {
+        // Render login first so the title bar (Begin'd second below)
+        // sits on top of it in ImGui's draw order — drag, minimize,
+        // maximize, close need to work even while the user hasn't
+        // signed in. The title bar's breadcrumb collapses to
+        // "MetaVisage · Sign in" since no project is loaded yet
+        // (RenderTitleBar branches on showLoginScreen_).
+        const auto loginResult = LoginScreen::Render(loginState_,
+                                                      ImGui::GetTime());
 
-            ImGui::Render();
-            // Solid MvBg0 fill for the OS-window letterbox area outside the
-            // login card. The login screen itself is opaque and covers
-            // every pixel inside the viewport.
-            glViewport(0, 0, fbWidth, fbHeight);
-            glClearColor(MvStyle::MvBg0.x, MvStyle::MvBg0.y, MvStyle::MvBg0.z, 1.0f);
-            glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT);
-            ImGui_ImplOpenGL3_RenderDrawData(ImGui::GetDrawData());
-            glfwSwapBuffers(window_);
-            continue;
+        SyncOSWindowTitle();
+        RenderTitleBar();
+        if (loginResult.signInRequested) {
+            loginState_ = LoginScreen::State::Waiting;
+        }
+        if (loginResult.cancelRequested || loginResult.retryRequested) {
+            // Both reset back to Idle — Retry implies "browser didn't
+            // open, take me back to the Sign in button" until the auth
+            // backend differentiates them.
+            loginState_ = LoginScreen::State::Idle;
+        }
+        if (loginResult.closeRequested) {
+            showLoginScreen_ = false;
         }
 
-        // App shell (dockspace + menu bar + status bar) goes first so that
-        // docked windows — the future sidebar and the viewport — can reserve
-        // their dock slots before BuildLayout runs.
-        RenderAppShell();
-
-        if (viewportHost_) {
-            viewportHost_->BuildLayout(
-                fbWidth, fbHeight,
-                centralRectPos_.x, centralRectPos_.y,
-                centralRectSize_.x, centralRectSize_.y);
-            // Story 3.8.5 — Stage 3 viewport toolbar shows a 3-state status
-            // pill driven by the morph worker + project state. Mirror it
-            // into each viewport so the overlay can read without locking.
-            //   Processing → worker is running
-            //   Complete   → not running, but morph has been processed
-            //   Ready      → no morph done yet (or isProcessed false)
-            const bool processing = morphRunning_.load();
-            const bool processed  = project_ && project_->GetMorphData().isProcessed;
-            const Viewport::MorphStatus status =
-                processing ? Viewport::MorphStatus::Processing
-              : processed  ? Viewport::MorphStatus::Complete
-                           : Viewport::MorphStatus::Ready;
-            if (Viewport* vp = viewportHost_->GetPrimaryViewport()) {
-                vp->SetMorphStatus(status);
-            }
-            if (Viewport* vp = viewportHost_->GetSecondaryViewport()) {
-                vp->SetMorphStatus(status);
-            }
-        }
-        RenderFrame(fbWidth, fbHeight);
-
-        // Poll worker thread state before building the sidebar this frame so
-        // the progress bar + enable/disable of the Process Morph button
-        // reflect current worker status.
+        // Still poll worker thread state in case a morph started
+        // pre-login. Doesn't render anything; cleans up the thread
+        // when it finishes so closing the login resumes a coherent app.
         PollMorphCompletion();
 
-        // Stage sidebar docks into the left side of AppDockSpace. Kept after
-        // the dockspace is declared (inside RenderAppShell) and before modal
-        // rendering so per-frame writes to Project state propagate this frame.
-        {
-            // Story 3.8.8 — Stage 2 point list highlights whichever
-            // correspondence is selected in the viewport. Read from the
-            // primary viewport (selection is mirrored across panes by
-            // ViewportHost::SetSelectedPointIndex).
-            const int selectedPointIdx =
-                (viewportHost_ && viewportHost_->GetPrimaryViewport())
-                    ? viewportHost_->GetPrimaryViewport()->GetSelectedPointIndex()
-                    : -1;
-            auto actions = stageSidebar_.Render(project_.get(),
-                                                morphRunning_.load(),
-                                                morphProgress_.load(),
-                                                userPresets_,
-                                                selectedPointIdx);
-
-            if (actions.selectPointIndex && viewportHost_) {
-                viewportHost_->SetSelectedPointIndex(*actions.selectPointIndex);
-            }
-            if (actions.deletePointIndex && deletePointAt_) {
-                deletePointAt_(*actions.deletePointIndex);
-            }
-
-            if (actions.nextStageRequested && project_) {
-                const int cur = static_cast<int>(project_->GetCurrentStage());
-                if (cur < static_cast<int>(WorkflowStage::TouchUp)) {
-                    project_->SetCurrentStage(static_cast<WorkflowStage>(cur + 1));
-                    ApplyStageViewportMode();
-                }
-            }
-            if (actions.previousStageRequested && project_) {
-                const int cur = static_cast<int>(project_->GetCurrentStage());
-                if (cur > 0) {
-                    project_->SetCurrentStage(static_cast<WorkflowStage>(cur - 1));
-                    ApplyStageViewportMode();
-                }
-            }
-            if (actions.importMorphMeshRequested)  pendingAction_ = PendingAction::ImportMorphMesh;
-            if (actions.importTargetMeshRequested) pendingAction_ = PendingAction::ImportTargetMesh;
-            if (actions.exportMeshRequested)       pendingAction_ = PendingAction::ExportMesh;
-            if (actions.useDefaultMorphMeshRequested) UseDefaultMorphMesh();
-            if (!actions.importTextureSlot.empty()) ImportTextureForSlot(actions.importTextureSlot);
-            if (actions.resetTransformRequested && project_) {
-                if (undoStack_) {
-                    undoStack_->Push(std::make_unique<TransformUndoAction>(
-                        project_.get(),
-                        project_->GetTargetMesh().transform,
-                        Transform()));
-                }
-                project_->GetTargetMesh().transform = Transform();
-                project_->GetAlignmentData().targetMeshTransform = Transform();
-            }
-            if (actions.transformEditCompleted && project_ && undoStack_) {
-                undoStack_->Push(std::make_unique<TransformUndoAction>(
-                    project_.get(),
-                    actions.transformEditBefore,
-                    actions.transformEditAfter));
-            }
-            if (actions.clearAllPointsRequested && project_) {
-                project_->GetPointReferenceData().correspondences.clear();
-            }
-            if (actions.processMorphRequested) StartMorph();
-            if (actions.cancelMorphRequested)  CancelMorph();
-            if (actions.acceptMorphRequested)  AcceptMorph();
-            // finalize is a Sprint 4 no-op (Export handles end-of-workflow).
-
-            // Story 4.4 — Wrap preset card row actions.
-            if (actions.savePresetRequested) {
-                std::vector<std::string> takenNames;
-                takenNames.reserve(userPresets_.size());
-                for (const auto& p : userPresets_) takenNames.push_back(p.name);
-                savePresetModal_.Open("Save Preset", /*editingId=*/"",
-                                      /*name=*/"", /*desc=*/"", /*glyph=*/"",
-                                      std::move(takenNames));
-            }
-            if (actions.renamePresetRequested && !actions.targetPresetId.empty()) {
-                const WrapPreset* target = nullptr;
-                for (const auto& p : userPresets_) {
-                    if (p.id == actions.targetPresetId) { target = &p; break; }
-                }
-                if (target) {
-                    std::vector<std::string> takenNames;
-                    for (const auto& p : userPresets_) {
-                        // Exclude the preset being renamed from the collision list
-                        // — keeping its current name is a no-op rename.
-                        if (p.id != target->id) takenNames.push_back(p.name);
-                    }
-                    savePresetModal_.Open("Rename Preset", target->id,
-                                          target->name, target->description,
-                                          target->iconGlyph, std::move(takenNames));
-                }
-            }
-            if (actions.deletePresetRequested && !actions.targetPresetId.empty()) {
-                const WrapPreset* target = nullptr;
-                for (const auto& p : userPresets_) {
-                    if (p.id == actions.targetPresetId) { target = &p; break; }
-                }
-                if (target) {
-                    const std::string presetId = target->id;
-                    confirmModal_.Open(
-                        "Delete preset?",
-                        std::format("Delete preset '{}'? This cannot be undone.",
-                                    target->name),
-                        [this, presetId]() {
-                            PresetStore::Delete(presetId);
-                            userPresets_ = PresetStore::LoadAll();
-                        },
-                        "Delete");
-                }
-            }
-            if (actions.replacePresetRequested && !actions.targetPresetId.empty() && project_) {
-                for (const auto& p : userPresets_) {
-                    if (p.id != actions.targetPresetId) continue;
-                    // Build the replacement preset on the side; only mutate
-                    // userPresets_ after Save succeeds so a write failure
-                    // (full disk, permission denied) doesn't leave the
-                    // in-memory list out of sync with what's on disk.
-                    WrapPreset updated = p;
-                    updated.params = WrapParams::FromMorphData(project_->GetMorphData());
-                    if (PresetStore::Save(updated)) {
-                        userPresets_ = PresetStore::LoadAll();
-                        statusMessage_ = std::format("Replaced preset '{}'", updated.name);
-                    } else {
-                        errorModal_.Open(std::format(
-                            "Could not save preset '{}' to disk. "
-                            "Check %APPDATA%\\MetaVisage\\presets is writable.",
-                            updated.name));
-                    }
-                    break;
-                }
-            }
-
-            // Mirror Stage 3 mask-UI state onto the primary viewport so LMB,
-            // renderer overlay, and brush radius track sidebar toggles each
-            // frame without a separate signal bus.
-            if (viewportHost_ && project_) {
-                if (Viewport* vp = viewportHost_->GetPrimaryViewport()) {
-                    const bool inMorph = project_->GetCurrentStage() == WorkflowStage::Morph;
-                    vp->SetMaskPaintingMode(inMorph && actions.maskPaintingActive);
-                    vp->SetShowMask(inMorph && actions.maskShow);
-                    vp->SetMaskBrushRadius(actions.maskBrushRadius);
-                    vp->SetMaskEraseMode(actions.maskEraseMode);
-                    if (inMorph) {
-                        vp->SetMaskData(&project_->GetMorphData().vertexMask);
-                        // Push the preview-mode combo selection through to the
-                        // renderer. The sidebar writes MorphData::previewMode
-                        // directly; without this mirror call the dropdown
-                        // updates state but never rebinds the renderer.
-                        vp->SetMorphPreviewMode(project_->GetMorphData().previewMode);
-                    }
-                }
-            }
-
-            // Mirror Stage 4 sculpt state onto the primary viewport every
-            // frame so brush type/radius/strength/falloff/symmetry stay in
-            // sync with the sidebar sliders.
-            if (viewportHost_ && project_ &&
-                project_->GetCurrentStage() == WorkflowStage::TouchUp) {
-                if (Viewport* vp = viewportHost_->GetPrimaryViewport()) {
-                    const auto& s = project_->GetSculptState();
-                    vp->SetBrushType(s.activeBrush);
-                    vp->SetBrushRadius(s.brushRadius);
-                    vp->SetBrushStrength(s.brushStrength);
-                    vp->SetBrushFalloff(s.falloff);
-                    vp->SetSculptSymmetry(s.symmetryEnabled, s.symmetryAxis);
-                    vp->SetShowTargetOverlay(s.showTargetOverlay);
-                }
-            }
-
-            // Mask edit commands — operate directly on MorphData; upload new
-            // colours to the renderer so the overlay updates in-place.
-            if ((actions.clearMaskRequested || actions.invertMaskRequested) && project_) {
-                MorphData& md = project_->GetMorphData();
-                if (actions.clearMaskRequested) {
-                    std::fill(md.vertexMask.begin(), md.vertexMask.end(), false);
-                }
-                if (actions.invertMaskRequested) {
-                    for (size_t i = 0; i < md.vertexMask.size(); ++i) {
-                        md.vertexMask[i] = !md.vertexMask[i];
-                    }
-                }
-                if (viewportHost_) {
-                    if (Viewport* vp = viewportHost_->GetPrimaryViewport()) {
-                        // Pick whichever mesh the mask is currently being
-                        // rendered on (mirrors Viewport::GetMaskMesh).
-                        Mesh* m = md.isProcessed && md.deformedMorphMesh
-                                      ? md.deformedMorphMesh.get()
-                                      : project_->GetMorphMesh().mesh.get();
-                        if (m) vp->UploadMaskColors(m, md.vertexMask);
-                    }
-                }
-            }
-        }
-
-        // First frame after init: surface the Welcome modal if we have no
-        // project content yet. Skipped if Ctrl+N / an opened project has
-        // already populated state.
-        if (!welcomeShownOnLaunch_) {
-            welcomeShownOnLaunch_ = true;
-            if (project_ && project_->GetMorphMesh().filepath.empty() &&
-                project_->GetPath().empty()) {
-                welcomeModal_.Open();
-            }
-        }
-
-        DispatchPendingAction();
-        RenderModals();
-
-        // Story 3.8.12 — login screen takes over the entire frame at the
-        // top of this loop (see early-continue branch above). When that
-        // branch fires we never reach this point.
-
         ImGui::Render();
-
+        // Solid MvBg0 fill for the OS-window letterbox area outside the
+        // login card. The login screen itself is opaque and covers
+        // every pixel inside the viewport.
         glViewport(0, 0, fbWidth, fbHeight);
-        // OS framebuffer clear matches MvBg0 (deep navy). Anywhere ImGui
-        // doesn't paint and the viewport's GL pass doesn't cover (1-2 px
-        // gaps between the host window's NoBackground area and adjacent
-        // docked windows) used to leak the legacy 30/255 ImGui dark-grey
-        // through, which read as "#1e1e1e gray bars" between the stepper /
-        // dockspace / status bar. Clearing to MvBg0 makes those gaps
-        // invisible against the design palette.
         glClearColor(MvStyle::MvBg0.x, MvStyle::MvBg0.y, MvStyle::MvBg0.z, 1.0f);
         glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT);
-
-        if (viewportHost_) viewportHost_->RenderGL(fbHeight);
-
         ImGui_ImplOpenGL3_RenderDrawData(ImGui::GetDrawData());
-
         glfwSwapBuffers(window_);
+        return;
     }
+
+    // App shell (dockspace + menu bar + status bar) goes first so that
+    // docked windows — the future sidebar and the viewport — can reserve
+    // their dock slots before BuildLayout runs.
+    RenderAppShell();
+
+    if (viewportHost_) {
+        viewportHost_->BuildLayout(
+            fbWidth, fbHeight,
+            centralRectPos_.x, centralRectPos_.y,
+            centralRectSize_.x, centralRectSize_.y);
+        // Story 3.8.5 — Stage 3 viewport toolbar shows a 3-state status
+        // pill driven by the morph worker + project state. Mirror it
+        // into each viewport so the overlay can read without locking.
+        //   Processing → worker is running
+        //   Complete   → not running, but morph has been processed
+        //   Ready      → no morph done yet (or isProcessed false)
+        const bool processing = morphRunning_.load();
+        const bool processed  = project_ && project_->GetMorphData().isProcessed;
+        const Viewport::MorphStatus status =
+            processing ? Viewport::MorphStatus::Processing
+          : processed  ? Viewport::MorphStatus::Complete
+                       : Viewport::MorphStatus::Ready;
+        if (Viewport* vp = viewportHost_->GetPrimaryViewport()) {
+            vp->SetMorphStatus(status);
+        }
+        if (Viewport* vp = viewportHost_->GetSecondaryViewport()) {
+            vp->SetMorphStatus(status);
+        }
+    }
+    RenderFrame(fbWidth, fbHeight);
+
+    // Poll worker thread state before building the sidebar this frame so
+    // the progress bar + enable/disable of the Process Morph button
+    // reflect current worker status.
+    PollMorphCompletion();
+
+    // Stage sidebar docks into the left side of AppDockSpace. Kept after
+    // the dockspace is declared (inside RenderAppShell) and before modal
+    // rendering so per-frame writes to Project state propagate this frame.
+    {
+        // Story 3.8.8 — Stage 2 point list highlights whichever
+        // correspondence is selected in the viewport. Read from the
+        // primary viewport (selection is mirrored across panes by
+        // ViewportHost::SetSelectedPointIndex).
+        const int selectedPointIdx =
+            (viewportHost_ && viewportHost_->GetPrimaryViewport())
+                ? viewportHost_->GetPrimaryViewport()->GetSelectedPointIndex()
+                : -1;
+        auto actions = stageSidebar_.Render(project_.get(),
+                                            morphRunning_.load(),
+                                            morphProgress_.load(),
+                                            userPresets_,
+                                            selectedPointIdx);
+
+        if (actions.selectPointIndex && viewportHost_) {
+            viewportHost_->SetSelectedPointIndex(*actions.selectPointIndex);
+        }
+        if (actions.deletePointIndex && deletePointAt_) {
+            deletePointAt_(*actions.deletePointIndex);
+        }
+
+        if (actions.nextStageRequested && project_) {
+            const int cur = static_cast<int>(project_->GetCurrentStage());
+            if (cur < static_cast<int>(WorkflowStage::TouchUp)) {
+                project_->SetCurrentStage(static_cast<WorkflowStage>(cur + 1));
+                ApplyStageViewportMode();
+            }
+        }
+        if (actions.previousStageRequested && project_) {
+            const int cur = static_cast<int>(project_->GetCurrentStage());
+            if (cur > 0) {
+                project_->SetCurrentStage(static_cast<WorkflowStage>(cur - 1));
+                ApplyStageViewportMode();
+            }
+        }
+        if (actions.importMorphMeshRequested)  pendingAction_ = PendingAction::ImportMorphMesh;
+        if (actions.importTargetMeshRequested) pendingAction_ = PendingAction::ImportTargetMesh;
+        if (actions.exportMeshRequested)       pendingAction_ = PendingAction::ExportMesh;
+        if (actions.useDefaultMorphMeshRequested) UseDefaultMorphMesh();
+        if (!actions.importTextureSlot.empty()) ImportTextureForSlot(actions.importTextureSlot);
+        if (actions.resetTransformRequested && project_) {
+            if (undoStack_) {
+                undoStack_->Push(std::make_unique<TransformUndoAction>(
+                    project_.get(),
+                    project_->GetTargetMesh().transform,
+                    Transform()));
+            }
+            project_->GetTargetMesh().transform = Transform();
+            project_->GetAlignmentData().targetMeshTransform = Transform();
+        }
+        if (actions.transformEditCompleted && project_ && undoStack_) {
+            undoStack_->Push(std::make_unique<TransformUndoAction>(
+                project_.get(),
+                actions.transformEditBefore,
+                actions.transformEditAfter));
+        }
+        if (actions.clearAllPointsRequested && project_) {
+            project_->GetPointReferenceData().correspondences.clear();
+        }
+        if (actions.processMorphRequested) StartMorph();
+        if (actions.cancelMorphRequested)  CancelMorph();
+        if (actions.acceptMorphRequested)  AcceptMorph();
+        // finalize is a Sprint 4 no-op (Export handles end-of-workflow).
+
+        // Story 4.4 — Wrap preset card row actions.
+        if (actions.savePresetRequested) {
+            std::vector<std::string> takenNames;
+            takenNames.reserve(userPresets_.size());
+            for (const auto& p : userPresets_) takenNames.push_back(p.name);
+            savePresetModal_.Open("Save Preset", /*editingId=*/"",
+                                  /*name=*/"", /*desc=*/"", /*glyph=*/"",
+                                  std::move(takenNames));
+        }
+        if (actions.renamePresetRequested && !actions.targetPresetId.empty()) {
+            const WrapPreset* target = nullptr;
+            for (const auto& p : userPresets_) {
+                if (p.id == actions.targetPresetId) { target = &p; break; }
+            }
+            if (target) {
+                std::vector<std::string> takenNames;
+                for (const auto& p : userPresets_) {
+                    // Exclude the preset being renamed from the collision list
+                    // — keeping its current name is a no-op rename.
+                    if (p.id != target->id) takenNames.push_back(p.name);
+                }
+                savePresetModal_.Open("Rename Preset", target->id,
+                                      target->name, target->description,
+                                      target->iconGlyph, std::move(takenNames));
+            }
+        }
+        if (actions.deletePresetRequested && !actions.targetPresetId.empty()) {
+            const WrapPreset* target = nullptr;
+            for (const auto& p : userPresets_) {
+                if (p.id == actions.targetPresetId) { target = &p; break; }
+            }
+            if (target) {
+                const std::string presetId = target->id;
+                confirmModal_.Open(
+                    "Delete preset?",
+                    std::format("Delete preset '{}'? This cannot be undone.",
+                                target->name),
+                    [this, presetId]() {
+                        PresetStore::Delete(presetId);
+                        userPresets_ = PresetStore::LoadAll();
+                    },
+                    "Delete");
+            }
+        }
+        if (actions.replacePresetRequested && !actions.targetPresetId.empty() && project_) {
+            for (const auto& p : userPresets_) {
+                if (p.id != actions.targetPresetId) continue;
+                // Build the replacement preset on the side; only mutate
+                // userPresets_ after Save succeeds so a write failure
+                // (full disk, permission denied) doesn't leave the
+                // in-memory list out of sync with what's on disk.
+                WrapPreset updated = p;
+                updated.params = WrapParams::FromMorphData(project_->GetMorphData());
+                if (PresetStore::Save(updated)) {
+                    userPresets_ = PresetStore::LoadAll();
+                    statusMessage_ = std::format("Replaced preset '{}'", updated.name);
+                } else {
+                    errorModal_.Open(std::format(
+                        "Could not save preset '{}' to disk. "
+                        "Check %APPDATA%\\MetaVisage\\presets is writable.",
+                        updated.name));
+                }
+                break;
+            }
+        }
+
+        // Mirror Stage 3 mask-UI state onto the primary viewport so LMB,
+        // renderer overlay, and brush radius track sidebar toggles each
+        // frame without a separate signal bus.
+        if (viewportHost_ && project_) {
+            if (Viewport* vp = viewportHost_->GetPrimaryViewport()) {
+                const bool inMorph = project_->GetCurrentStage() == WorkflowStage::Morph;
+                vp->SetMaskPaintingMode(inMorph && actions.maskPaintingActive);
+                vp->SetShowMask(inMorph && actions.maskShow);
+                vp->SetMaskBrushRadius(actions.maskBrushRadius);
+                vp->SetMaskEraseMode(actions.maskEraseMode);
+                if (inMorph) {
+                    vp->SetMaskData(&project_->GetMorphData().vertexMask);
+                    // Push the preview-mode combo selection through to the
+                    // renderer. The sidebar writes MorphData::previewMode
+                    // directly; without this mirror call the dropdown
+                    // updates state but never rebinds the renderer.
+                    vp->SetMorphPreviewMode(project_->GetMorphData().previewMode);
+                }
+            }
+        }
+
+        // Mirror Stage 4 sculpt state onto the primary viewport every
+        // frame so brush type/radius/strength/falloff/symmetry stay in
+        // sync with the sidebar sliders.
+        if (viewportHost_ && project_ &&
+            project_->GetCurrentStage() == WorkflowStage::TouchUp) {
+            if (Viewport* vp = viewportHost_->GetPrimaryViewport()) {
+                const auto& s = project_->GetSculptState();
+                vp->SetBrushType(s.activeBrush);
+                vp->SetBrushRadius(s.brushRadius);
+                vp->SetBrushStrength(s.brushStrength);
+                vp->SetBrushFalloff(s.falloff);
+                vp->SetSculptSymmetry(s.symmetryEnabled, s.symmetryAxis);
+                vp->SetShowTargetOverlay(s.showTargetOverlay);
+            }
+        }
+
+        // Mask edit commands — operate directly on MorphData; upload new
+        // colours to the renderer so the overlay updates in-place.
+        if ((actions.clearMaskRequested || actions.invertMaskRequested) && project_) {
+            MorphData& md = project_->GetMorphData();
+            if (actions.clearMaskRequested) {
+                std::fill(md.vertexMask.begin(), md.vertexMask.end(), false);
+            }
+            if (actions.invertMaskRequested) {
+                for (size_t i = 0; i < md.vertexMask.size(); ++i) {
+                    md.vertexMask[i] = !md.vertexMask[i];
+                }
+            }
+            if (viewportHost_) {
+                if (Viewport* vp = viewportHost_->GetPrimaryViewport()) {
+                    // Pick whichever mesh the mask is currently being
+                    // rendered on (mirrors Viewport::GetMaskMesh).
+                    Mesh* m = md.isProcessed && md.deformedMorphMesh
+                                  ? md.deformedMorphMesh.get()
+                                  : project_->GetMorphMesh().mesh.get();
+                    if (m) vp->UploadMaskColors(m, md.vertexMask);
+                }
+            }
+        }
+    }
+
+    // First frame after init: surface the Welcome modal if we have no
+    // project content yet. Skipped if Ctrl+N / an opened project has
+    // already populated state.
+    if (!welcomeShownOnLaunch_) {
+        welcomeShownOnLaunch_ = true;
+        if (project_ && project_->GetMorphMesh().filepath.empty() &&
+            project_->GetPath().empty()) {
+            welcomeModal_.Open();
+        }
+    }
+
+    DispatchPendingAction();
+    RenderModals();
+
+    // Story 3.8.12 — login screen takes over the entire frame at the
+    // top of TickOnce (see early-return branch above). When that branch
+    // fires we never reach this point.
+
+    ImGui::Render();
+
+    glViewport(0, 0, fbWidth, fbHeight);
+    // OS framebuffer clear matches MvBg0 (deep navy). Anywhere ImGui
+    // doesn't paint and the viewport's GL pass doesn't cover (1-2 px
+    // gaps between the host window's NoBackground area and adjacent
+    // docked windows) used to leak the legacy 30/255 ImGui dark-grey
+    // through, which read as "#1e1e1e gray bars" between the stepper /
+    // dockspace / status bar. Clearing to MvBg0 makes those gaps
+    // invisible against the design palette.
+    glClearColor(MvStyle::MvBg0.x, MvStyle::MvBg0.y, MvStyle::MvBg0.z, 1.0f);
+    glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT);
+
+    if (viewportHost_) viewportHost_->RenderGL(fbHeight);
+
+    ImGui_ImplOpenGL3_RenderDrawData(ImGui::GetDrawData());
+
+    glfwSwapBuffers(window_);
 }
 
 void AppWindow::RenderAppShell() {
