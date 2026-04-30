@@ -68,11 +68,10 @@ struct SculptState {
                     showTargetOverlay(false) {}
 };
 
+// Surviving algorithm enum. RBF_TPS / RBF_GAUSSIAN / RBF_MULTIQUADRIC / ARAP
+// were dropped in Sprint 4 (Wrap Engine Redesign). The serializer coerces
+// any legacy ordinal back to NRICP so v1.0.0 .mmproj files keep loading.
 enum class DeformationAlgorithm {
-    RBF_TPS,
-    RBF_GAUSSIAN,
-    RBF_MULTIQUADRIC,
-    ARAP,
     NRICP
 };
 

@@ -1,6 +1,7 @@
 #ifndef APPWINDOW_H
 #define APPWINDOW_H
 
+#include "core/WrapPreset.h"
 #include "ui/LoginScreen.h"
 #include "ui/Modals.h"
 #include "ui/StageSidebar.h"
@@ -110,6 +111,13 @@ private:
     std::unique_ptr<UndoStack> undoStack_;
     std::string projectPath_;
 
+    // Story 4.4 — user-saved Wrap Engine presets, loaded once on Initialize
+    // from %APPDATA%\MetaVisage\presets and refreshed after every Save /
+    // Rename / Delete flow. Built-in presets (Quick / Fantasy) are NOT in
+    // this vector — they live in WrapPreset::BuiltIns(). The sidebar is
+    // handed a const reference each Render() call.
+    std::vector<WrapPreset> userPresets_;
+
     PendingAction pendingAction_ = PendingAction::None;
     std::string statusMessage_;
 
@@ -142,6 +150,11 @@ private:
     WelcomeModalState welcomeModal_;
     ExportModalState exportModal_;
     ShortcutsModalState shortcutsModal_;
+
+    // Story 4.4 — Save / Rename Wrap preset modal. Single state struct
+    // covers both flows; editingPresetId distinguishes new (empty) from
+    // rename (id of the user preset being edited).
+    SavePresetModalState savePresetModal_;
     bool welcomeShownOnLaunch_ = false;
 
     StageSidebar stageSidebar_;

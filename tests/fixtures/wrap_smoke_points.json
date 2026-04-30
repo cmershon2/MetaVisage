@@ -1,0 +1,9 @@
+{
+  "schema_version": 1,
+  "description": "Story 4.6 — Wrap Engine behavioural-parity smoke fixture. Four vertex indices on the bundled MetaHuman head used as correspondence anchors for both source and target. Target mesh is the same head with a small Y-translation applied via the target Transform; the wrap should produce a uniform displacement close to the offset for both presets.",
+  "vertex_indices": [0, 1500, 7500, 15000],
+  "target_offset_y": 0.5,
+  "target_offset_unit_note": "Mesh-local units; the bundled MetaHuman head loads in centimetres so 0.5 ≈ 5mm.",
+  "test_code_authoritative": true,
+  "test_code_authoritative_note": "tests/smoke/wrap_parity.cpp hard-codes these same values for build-time stability — this file documents intent."
+}

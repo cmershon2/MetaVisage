@@ -2,9 +2,11 @@
 #define METAVISAGE_UI_STAGESIDEBAR_H
 
 #include "core/Transform.h"
+#include "core/WrapPreset.h"
 
 #include <optional>
 #include <string>
+#include <vector>
 
 namespace MetaVisage {
 
@@ -29,6 +31,16 @@ public:
         bool clearAllPointsRequested = false;
         bool clearMaskRequested = false;
         bool invertMaskRequested = false;
+
+        // Stage 3 — preset card actions. AppWindow opens the corresponding
+        // modals in response. targetPresetId names the user preset the
+        // Rename / Delete / Replace request applies to (ignored for
+        // savePresetRequested, which always refers to "current params").
+        bool savePresetRequested    = false;
+        bool renamePresetRequested  = false;
+        bool deletePresetRequested  = false;
+        bool replacePresetRequested = false;
+        std::string targetPresetId;
 
         // Stage 1 extras
         bool useDefaultMorphMeshRequested = false;
@@ -68,14 +80,17 @@ public:
     // frame — the caller (AppWindow) dispatches them to the appropriate
     // command / worker. `selectedPointIndex` is read by Stage 2's point list
     // so the active row stays highlighted when the user picks a point in
-    // the viewport.
+    // the viewport. `userPresets` is read by Stage 3's preset card row;
+    // built-ins live in WrapPreset::BuiltIns() and are not in this list.
     Actions Render(Project* project, bool morphProcessing, float morphProgress,
+                   const std::vector<WrapPreset>& userPresets,
                    int selectedPointIndex = -1);
 
 private:
     void RenderAlignment(Project& project, Actions& out);
     void RenderPointReference(Project& project, Actions& out);
-    void RenderMorph(Project& project, bool processing, float progress, Actions& out);
+    void RenderMorph(Project& project, bool processing, float progress,
+                     const std::vector<WrapPreset>& userPresets, Actions& out);
     void RenderTouchUp(Project& project, Actions& out);
 
     // Stage 3 mask painting — state persists across frames. When painting is
@@ -101,10 +116,16 @@ private:
     // highlight the active row. Refreshed on each Render() call.
     int selectedPointIndexExternal_ = -1;
 
-    // Stage 3 — last preset stamped onto MorphData via the preset cards.
-    // 0 = Quick Wrap, 1 = Fantasy Wrap, -1 = Custom (any manual edit
-    // resets to this so the active card highlight stays accurate).
-    int lastAppliedPreset_ = -1;
+    // Stage 3 — id of the active preset card. Empty string means "no card
+    // highlighted" (the user has tweaked params away from every built-in,
+    // or no preset has been applied yet). Built-in ids: "quick", "fantasy"
+    // (see core/WrapPreset.cpp). Story 4.4 will add user preset ids.
+    //
+    // Auto-derived at the top of RenderMorph by parameter equality, so a
+    // freshly loaded project picks up the right card without explicit
+    // serialization of the active id, and editing a slider back to a
+    // preset's exact value re-highlights that card.
+    std::string activePresetId_;
 };
 
 } // namespace MetaVisage

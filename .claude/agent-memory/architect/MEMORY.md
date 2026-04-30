@@ -1,1 +1,3 @@
 - [MetaVisage Architecture Overview](project_arch_overview.md) — Layer map, Qt footprint audit, Sprint 3.5/3.6 boundary, rendering layer risks, domain-layer QString coupling
+- [Sprint 4 Story 4.1 Pre-Implementation Audit](sprint4_story41_audit.md) — RBFInterpolator reach (dead), MeshDeformer dispatch sites, enum comparison sites, ProjectSerializer backward-compat risk, exact user-visible string locations, test fixture state
+- [Sprint 4 Story 4.4 Pre-Implementation Audit](sprint4_story44_audit.md) — Paths::AppDataDir API, Modal harness pattern, 12-glyph picker set (byte-for-byte), new-project entry points, action dispatch block location, user-preset ownership convention, JSON I/O pattern, BeginPopupContextItem status

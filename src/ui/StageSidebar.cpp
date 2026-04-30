@@ -2,6 +2,7 @@
 #include "core/Mesh.h"
 #include "core/Project.h"
 #include "core/TextureData.h"
+#include "core/WrapPreset.h"
 #include "ui/MvIcons.h"
 #include "ui/MvInspectorPrimitives.h"
 #include "ui/MvStyle.h"
@@ -9,6 +10,7 @@
 #include <imgui.h>
 
 #include <cstdio>
+#include <cstring>
 
 #include <algorithm>
 #include <array>
@@ -62,6 +64,7 @@ Axis IndexToAxis(int i) {
 StageSidebar::Actions StageSidebar::Render(Project* project,
                                            bool morphProcessing,
                                            float morphProgress,
+                                           const std::vector<WrapPreset>& userPresets,
                                            int selectedPointIndex) {
     Actions out;
     selectedPointIndexExternal_ = selectedPointIndex;
@@ -115,7 +118,7 @@ StageSidebar::Actions StageSidebar::Render(Project* project,
     switch (stage) {
         case WorkflowStage::Alignment:      RenderAlignment(*project, out); break;
         case WorkflowStage::PointReference: RenderPointReference(*project, out); break;
-        case WorkflowStage::Morph:          RenderMorph(*project, morphProcessing, morphProgress, out); break;
+        case WorkflowStage::Morph:          RenderMorph(*project, morphProcessing, morphProgress, userPresets, out); break;
         case WorkflowStage::TouchUp:        RenderTouchUp(*project, out); break;
     }
 
@@ -752,61 +755,47 @@ void StageSidebar::RenderPointReference(Project& project, Actions& out) {
 // Stage 3 — Morph
 // ---------------------------------------------------------------------------
 
-// Built-in preset semantics per CLAUDE.md / product-vision.md:
-//   Fantasy Wrap — uses the default MorphData parameters that the NRICP
-//                  pipeline was tuned against. Tuned for dramatic features
-//                  (pointed ears, large noses, etc.).
-//   Quick Wrap   — Fantasy defaults with rigidity (gamma) bumped to 1.0,
-//                  which forces a tighter, more rigid wrap suitable for
-//                  human-like target meshes.
-//
-// Story 3.8.9's earlier attempt baked numbers from stage3.jsx into both
-// presets. Those values had no relationship to what the NRICP impl was
-// tuned for and produced visibly broken wraps; we revert to the
-// MorphData() constructor defaults as the canonical baseline so the
-// presets actually run.
-//
-// Sprint 4 (Wrap Engine Redesign) will replace this with persisted user
-// presets, so we deliberately don't grow a parameter struct here — both
-// presets are expressible as default ± a couple of overrides.
 namespace {
 
-void ApplyMorphPreset(MorphData& m, int presetIdx) {
-    // Reset all NRICP fields to constructor defaults — equivalent to
-    // applying Fantasy Wrap. We then overlay Quick Wrap's overrides if
-    // requested. Goes through the project's MorphData (caller passes a
-    // reference) so the renderer + serializer pick up the change.
-    const MorphData defaults;
-    m.algorithm                     = defaults.algorithm;
-    m.stiffness                     = defaults.stiffness;
-    m.smoothness                    = defaults.smoothness;
-    m.nricpStiffnessSteps           = defaults.nricpStiffnessSteps;
-    m.nricpAlphaInitial             = defaults.nricpAlphaInitial;
-    m.nricpAlphaFinal               = defaults.nricpAlphaFinal;
-    m.nricpIcpIterations            = defaults.nricpIcpIterations;
-    m.nricpNormalThreshold          = defaults.nricpNormalThreshold;
-    m.nricpLandmarkWeight           = defaults.nricpLandmarkWeight;
-    m.nricpEpsilon                  = defaults.nricpEpsilon;
-    m.nricpEnableBoundaryExclusion  = defaults.nricpEnableBoundaryExclusion;
-    m.nricpBoundaryExclusionHops    = defaults.nricpBoundaryExclusionHops;
-    m.nricpOptimizationIterations   = defaults.nricpOptimizationIterations;
-    m.nricpDpInitial                = defaults.nricpDpInitial;
-    m.nricpDpFinal                  = defaults.nricpDpFinal;
-    m.nricpGammaInitial             = defaults.nricpGammaInitial;
-    m.nricpGammaFinal               = defaults.nricpGammaFinal;
-    m.nricpSamplingInitial          = defaults.nricpSamplingInitial;
-    m.nricpSamplingFinal            = defaults.nricpSamplingFinal;
-    m.nricpNormalizeSampling        = defaults.nricpNormalizeSampling;
+// Truncate `text` so its rendered width fits within `maxWidth` using the
+// currently pushed ImGui font. Appends a horizontal-ellipsis glyph (U+2026)
+// when truncation occurs. UTF-8-aware: walks codepoints, never splits mid-
+// sequence — so user preset names like "Casey's Café" don't blow up.
+//
+// Caller is responsible for pushing the right font (MvStyle::ScopedFont)
+// before calling — ImGui::CalcTextSize uses the active font.
+std::string TruncateToWidth(const char* text, float maxWidth) {
+    if (!text || !text[0]) return {};
+    if (ImGui::CalcTextSize(text).x <= maxWidth) return text;
 
-    if (presetIdx == 0) {
-        // Quick Wrap — same as Fantasy plus rigidity locked to 1.0 on
-        // both ends of the schedule. Higher rigidity preserves the
-        // source mesh's shape, which is what indie devs want for
-        // realistic human heads.
-        m.nricpGammaInitial = 1.0f;
-        m.nricpGammaFinal   = 1.0f;
+    constexpr const char* kEllipsis = "\xE2\x80\xA6"; // U+2026
+    const float ellipsisW = ImGui::CalcTextSize(kEllipsis).x;
+    if (maxWidth <= ellipsisW) return kEllipsis;
+
+    const float budget = maxWidth - ellipsisW;
+    std::string out;
+    out.reserve(std::strlen(text) + 4);
+
+    // Append codepoints in place; on overshoot, roll back the last codepoint
+    // and stop. O(n) in the input length — no per-iteration allocation.
+    const char* cur = text;
+    while (*cur) {
+        const unsigned char b = static_cast<unsigned char>(*cur);
+        size_t bytes = 1;
+        if      ((b & 0xE0) == 0xC0) bytes = 2;
+        else if ((b & 0xF0) == 0xE0) bytes = 3;
+        else if ((b & 0xF8) == 0xF0) bytes = 4;
+
+        const size_t before = out.size();
+        out.append(cur, bytes);
+        if (ImGui::CalcTextSize(out.c_str()).x > budget) {
+            out.resize(before); // roll back the codepoint that overshot
+            break;
+        }
+        cur += bytes;
     }
-    // presetIdx == 1 → Fantasy Wrap — defaults already applied above.
+    out += kEllipsis;
+    return out;
 }
 
 // Returns true on click. Caller decides whether to apply the preset; the
@@ -864,27 +853,34 @@ bool DrawPresetCard(const char* idStr,
                     glyph);
     }
 
-    // Name (Body Md) — centred horizontally.
+    // 8 px on each side keeps the truncated text from butting up against
+    // the card border. Long preset names (user-provided via the Save modal)
+    // would otherwise overflow into adjacent cards — see the Sprint 4 user
+    // feedback on "Casey's Custom Preset" and the bundled descriptions.
+    constexpr float kTextPad = 8.0f;
+    const float maxTextW = availW - 2.0f * kTextPad;
+
+    // Name (Body Md) — centred horizontally, ellipsised on overflow.
     if (name && name[0]) {
         MvStyle::ScopedFont f(MvStyle::Font.BodyMd);
-        const ImVec2 ts = ImGui::CalcTextSize(name);
-        const ImVec4 nameColor =
-            disabled ? MvStyle::MvFg4 :
-            active   ? MvStyle::MvFg1 : MvStyle::MvFg1;
+        const std::string drawn = TruncateToWidth(name, maxTextW);
+        const ImVec2 ts = ImGui::CalcTextSize(drawn.c_str());
+        const ImVec4 nameColor = disabled ? MvStyle::MvFg4 : MvStyle::MvFg1;
         dl->AddText(ImVec2(pmin.x + (availW - ts.x) * 0.5f,
                            pmin.y + 36.0f),
                     ImGui::ColorConvertFloat4ToU32(nameColor),
-                    name);
+                    drawn.c_str());
     }
 
-    // Sub-label (MonoSm MvFg3).
+    // Sub-label (MonoSm MvFg3) — same treatment.
     if (sub && sub[0]) {
         MvStyle::ScopedFont f(MvStyle::Font.MonoSm);
-        const ImVec2 ts = ImGui::CalcTextSize(sub);
+        const std::string drawn = TruncateToWidth(sub, maxTextW);
+        const ImVec2 ts = ImGui::CalcTextSize(drawn.c_str());
         dl->AddText(ImVec2(pmin.x + (availW - ts.x) * 0.5f,
                            pmin.y + CardH - ts.y - 8.0f),
                     ImGui::ColorConvertFloat4ToU32(MvStyle::MvFg3),
-                    sub);
+                    drawn.c_str());
     }
 
     if (hovered && disabled) {
@@ -895,9 +891,31 @@ bool DrawPresetCard(const char* idStr,
 }
 } // namespace
 
-void StageSidebar::RenderMorph(Project& project, bool processing, float progress, Actions& out) {
+void StageSidebar::RenderMorph(Project& project, bool processing, float progress,
+                               const std::vector<WrapPreset>& userPresets,
+                               Actions& out) {
     namespace I = MvInspector;
     auto& morph = project.GetMorphData();
+
+    // Auto-derive the active preset card by parameter equality whenever the
+    // tracked id is empty — handles project load (no explicit serialization
+    // of the active id), the case where the user drags a slider back to a
+    // preset's exact value, and the just-after-save case where a new user
+    // preset becomes the canonical match for the current params. Built-ins
+    // get first dibs so a user preset that happens to duplicate a built-in
+    // doesn't shadow it. The param-edit clear path lower in this function
+    // clears the id; the next frame this re-checks.
+    if (activePresetId_.empty()) {
+        activePresetId_ = WrapPreset::FindMatchingBuiltInId(morph);
+        if (activePresetId_.empty()) {
+            for (const auto& preset : userPresets) {
+                if (preset.MatchesParamsOf(morph)) {
+                    activePresetId_ = preset.id;
+                    break;
+                }
+            }
+        }
+    }
 
     // ---- Header ---------------------------------------------------------
     I::DrawStageHeader("STAGE 03 / 04",
@@ -914,46 +932,88 @@ void StageSidebar::RenderMorph(Project& project, bool processing, float progress
                           ImGuiWindowFlags_NoBackground)) {
 
         // ---- Preset cards row ------------------------------------------
-        // Sprint 4 will replace these with persisted user presets; for now
-        // two built-ins (Quick Wrap / Fantasy Wrap) and a disabled "Save
-        // preset" placeholder per design.
+        // Card order: built-ins (Quick / Fantasy) → user-saved presets →
+        // "+ Save preset". Wraps to a new row every 3 cards so the row
+        // grows downward as the user accumulates presets — chosen over
+        // horizontal scroll because the design team's verdict pending,
+        // wrap-to-row keeps the layout readable without scroll-state
+        // bookkeeping (sprint-04.md Story 4.4 mitigation).
         I::DrawSectionLabel("PRESETS");
-        if (ImGui::BeginTable("##presetCards", 3,
+        const auto builtIns = WrapPreset::BuiltIns();
+        constexpr int kCardsPerRow = 3;
+
+        if (ImGui::BeginTable("##presetCards", kCardsPerRow,
                               ImGuiTableFlags_SizingStretchSame |
                               ImGuiTableFlags_NoPadOuterX)) {
-            ImGui::TableNextRow();
+            int cellIdx = 0;
+            auto AdvanceCell = [&]() {
+                if ((cellIdx % kCardsPerRow) == 0) ImGui::TableNextRow();
+                ImGui::TableNextColumn();
+                ++cellIdx;
+            };
 
-            ImGui::TableNextColumn();
-            if (DrawPresetCard("quick", "Quick Wrap",
-                               "Tight wrap", MV_ICON_TARGET,
-                               lastAppliedPreset_ == 0, /*disabled=*/false)) {
-                // Quick = defaults + rigidity 1.0 (rigid wrap for
-                // human-like targets).
-                ApplyMorphPreset(morph, /*presetIdx=*/0);
-                lastAppliedPreset_ = 0;
+            for (const auto& preset : builtIns) {
+                AdvanceCell();
+                const bool active = (activePresetId_ == preset.id);
+                if (DrawPresetCard(preset.id.c_str(),
+                                   preset.name.c_str(),
+                                   preset.description.c_str(),
+                                   preset.iconGlyph.c_str(),
+                                   active, /*disabled=*/false)) {
+                    preset.ApplyTo(morph);
+                    activePresetId_ = preset.id;
+                }
             }
 
-            ImGui::TableNextColumn();
-            if (DrawPresetCard("fantasy", "Fantasy Wrap",
-                               "Looser fit", MV_ICON_SPARKLES,
-                               lastAppliedPreset_ == 1, /*disabled=*/false)) {
-                // Fantasy = the canonical MorphData defaults the NRICP
-                // pipeline was tuned against.
-                ApplyMorphPreset(morph, /*presetIdx=*/1);
-                lastAppliedPreset_ = 1;
+            for (const auto& preset : userPresets) {
+                AdvanceCell();
+                const bool active = (activePresetId_ == preset.id);
+                if (DrawPresetCard(preset.id.c_str(),
+                                   preset.name.c_str(),
+                                   preset.description.empty()
+                                       ? "Custom" : preset.description.c_str(),
+                                   preset.iconGlyph.empty()
+                                       ? MV_ICON_TARGET : preset.iconGlyph.c_str(),
+                                   active, /*disabled=*/false)) {
+                    preset.ApplyTo(morph);
+                    activePresetId_ = preset.id;
+                }
+                // Right-click context menu — popup id is auto-derived from
+                // the card's last item (the InvisibleButton inside
+                // DrawPresetCard), so each user preset card gets its own
+                // popup despite the shared MenuItem labels.
+                if (ImGui::BeginPopupContextItem()) {
+                    if (ImGui::MenuItem("Rename...")) {
+                        out.renamePresetRequested = true;
+                        out.targetPresetId = preset.id;
+                    }
+                    if (ImGui::MenuItem("Replace with current parameters")) {
+                        out.replacePresetRequested = true;
+                        out.targetPresetId = preset.id;
+                    }
+                    ImGui::Separator();
+                    if (ImGui::MenuItem("Delete")) {
+                        out.deletePresetRequested = true;
+                        out.targetPresetId = preset.id;
+                    }
+                    ImGui::EndPopup();
+                }
             }
 
-            ImGui::TableNextColumn();
-            DrawPresetCard("save", "Save preset", "Custom", MV_ICON_PLUS,
-                           /*active=*/false, /*disabled=*/true);
+            AdvanceCell();
+            if (DrawPresetCard("save", "Save preset", "Custom", MV_ICON_PLUS,
+                               /*active=*/false, /*disabled=*/false)) {
+                out.savePresetRequested = true;
+            }
 
             ImGui::EndTable();
         }
 
         // ---- General parameters ----------------------------------------
-        // Track per-frame edits across the slider block so any manual
-        // tweak resets lastAppliedPreset_ → -1 and the active-card highlight
-        // disappears.
+        // Track per-frame edits across the slider block so any manual tweak
+        // clears activePresetId_ and the active-card highlight disappears.
+        // Next frame's auto-derive at the top of RenderMorph re-checks for
+        // a built-in match (handles the edit-back-to-default case).
         bool paramEdited = false;
         I::DrawSectionLabel("GENERAL");
         ImGui::PushItemWidth(ImGui::GetContentRegionAvail().x * 0.55f);
@@ -991,11 +1051,11 @@ void StageSidebar::RenderMorph(Project& project, bool processing, float progress
             ImGui::Dummy(ImVec2(0.0f, 4.0f));
             if (ImGui::Button("Reset to defaults", ImVec2(-FLT_MIN, 30.0f))) {
                 morph = MorphData();
-                lastAppliedPreset_ = -1;
+                activePresetId_.clear();
             }
         }
 
-        if (paramEdited) lastAppliedPreset_ = -1;
+        if (paramEdited) activePresetId_.clear();
 
         // ---- Process / cancel ------------------------------------------
         I::DrawSectionLabel("PROCESS");

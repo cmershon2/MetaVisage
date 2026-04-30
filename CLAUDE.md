@@ -27,12 +27,12 @@ Layered architecture — keep concerns separated across layers:
 ```
 Presentation   → ImGui shell (AppWindow, StageSidebar, Modals, ViewportHost, Viewport)
 Application    → Project (per-frame source of truth), StageManager, UndoStack
-Domain         → Mesh engine, deformation algorithm, sculpting engine
-Infrastructure → File I/O (MeshExporter, ProjectSerializer), Renderer (OpenGL),
+Domain         → Mesh engine, deformation algorithm, sculpting engine, WrapPreset
+Infrastructure → File I/O (MeshExporter, ProjectSerializer, PresetStore), Renderer (OpenGL),
                  system services (Config, HttpClient, SingleInstance, OpenUrl, Paths)
 ```
 
-Key components: Mesh Engine (load/validate/optimize/export), Deformation Algorithm (NRICP with Quick Wrap / Fantasy Wrap presets), Sculpting Engine (brush-based editing), Renderer (OpenGL), Project Manager (save/load `.mmproj`).
+Key components: Mesh Engine (load/validate/optimize/export), Wrap Engine (single-path solver with Quick Wrap / Fantasy Wrap built-in presets and user-saved preset persistence), Sculpting Engine (brush-based editing), Renderer (OpenGL), Project Manager (save/load `.mmproj`), Preset Store (`%APPDATA%\MetaVisage\presets\<id>.mvpreset.json` with `schema_version: 1`).
 
 **Per-frame state model**: `Project` is the single source of truth that the ImGui sidebars read and write each frame — no signal/slot bus. Sidebars surface action requests via the `StageSidebar::Actions` struct, which `AppWindow` consumes per frame and dispatches to the appropriate command, worker, or modal.
 
@@ -51,9 +51,10 @@ MetaVisage/
 ├── docs/               # Banner, KNOWN_ISSUES.md
 ├── include/            # Public headers, mirrored by src/ layout below
 │   ├── baking/         # TextureBaker, TextureWriter (PNG/TGA via stb)
-│   ├── core/           # Mesh, Project, Camera, Transform, Types, UndoStack, UndoActions
-│   ├── deformation/    # MeshDeformer, NRICPDeformer, RBFInterpolator
-│   ├── io/             # MeshExporter, ProjectSerializer
+│   ├── core/           # Mesh, Project, Camera, Transform, Types, UndoStack, UndoActions,
+│   │                   # WrapPreset (preset data model — built-ins + user-saved)
+│   ├── deformation/    # MeshDeformer, NRICPDeformer
+│   ├── io/             # MeshExporter, ProjectSerializer, PresetStore
 │   ├── rendering/      # Renderer, MeshRenderer, GizmoRenderer, PointRenderer, ShaderManager
 │   ├── sculpting/      # Brush base + Smooth/Grab/PushPull/Inflate/Mask brushes
 │   ├── thirdparty/     # stb_image, stb_image_write
@@ -64,7 +65,9 @@ MetaVisage/
 │                       # SecureStorage, BVH, Logger, RayCaster, SpatialHash
 ├── src/                # Implementation, mirroring include/ structure
 │   └── main.cpp        # GLFW window + ImGui init + main loop entry
-├── tests/              # Smoke test (load → serialize → reload → export)
+├── tests/              # CTest targets — three smoke executables share MetaVisageCore
+│   ├── fixtures/       # Pinned v1.0.0 .mmproj inputs + wrap_smoke_points.json
+│   └── smoke/          # launch_to_export, v1_backward_compat, wrap_parity
 ├── .claude/            # Slash skills, agents, hooks, rules, sprint context
 ├── CMakeLists.txt      # Build config (vcpkg toolchain expected)
 ├── build-msvc.ps1      # MSVC build helper with optional DLL staging
@@ -167,4 +170,7 @@ See @.claude/rules/git-workflow.md for git workflow.
 - **Morph Mesh** — the base MetaHuman head mesh being deformed
 - **Target Mesh** — the custom head model the morph mesh is wrapped to
 - **Point Correspondence** — matching points marking the same anatomical location on both meshes
-- **Quick Wrap / Fantasy Wrap** — v2.0 presets; Quick Wrap sets rigidity to 1 for human-like characters, Fantasy Wrap uses the default parameters for dramatic features (pointed ears, large noses)
+- **Wrap Engine** — the user-facing brand for the deformation solver (NRICP internally — don't surface that name to users per the algorithm-secrecy rule)
+- **Quick Wrap / Fantasy Wrap** — built-in v2.0 presets; Quick Wrap = `MorphData()` defaults + `nricpGammaInitial = nricpGammaFinal = 1.0` for human-like characters, Fantasy Wrap = pure `MorphData()` defaults for dramatic features (pointed ears, large noses). Both ship in `WrapPreset::BuiltIns()`.
+- **Wrap Preset** — `core::WrapPreset` snapshot: stable id, display name + description + Lucide icon glyph, `isBuiltIn` flag, and a `WrapParams` parameter snapshot. Built-ins live in code; user presets persist to disk via `PresetStore`.
+- **User Preset** — Wrap Preset saved by the user via the inspector's "+ Save preset" card. Stored at `%APPDATA%\MetaVisage\presets\<id>.mvpreset.json` with `schema_version: 1`. Right-click on the inspector card surfaces Rename / Replace with current parameters / Delete.

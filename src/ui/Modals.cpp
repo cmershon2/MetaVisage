@@ -705,6 +705,144 @@ void RenderExportModal(ExportModalState& state) {
 }
 
 // ---------------------------------------------------------------------------
+// Save / Rename Wrap Engine preset (Story 4.4)
+// ---------------------------------------------------------------------------
+
+namespace {
+
+std::string TrimSpaces(const std::string& s) {
+    auto first = s.find_first_not_of(" \t\n\r");
+    if (first == std::string::npos) return {};
+    auto last = s.find_last_not_of(" \t\n\r");
+    return s.substr(first, last - first + 1);
+}
+
+// 12 glyphs hand-picked from MvIcons.h for the picker grid (4 wide × 3 tall).
+// Story 4.5's icon-glyph regression smoke (when it lands) should walk this
+// array and verify each codepoint has a non-empty bitmap in the atlas.
+constexpr std::array<const char*, 12> kPresetGlyphPicker = {
+    MV_ICON_TARGET,    MV_ICON_SPARKLES,  MV_ICON_WAND,      MV_ICON_CIRCLE,
+    MV_ICON_SQUARE,    MV_ICON_BRUSH,     MV_ICON_SLIDERS,   MV_ICON_CROSSHAIR,
+    MV_ICON_MOVE_3D,   MV_ICON_CAMERA,    MV_ICON_IMAGE,     MV_ICON_SETTINGS,
+};
+
+} // namespace
+
+void SavePresetModalState::Open(const std::string& t,
+                                const std::string& editingId,
+                                const std::string& initName,
+                                const std::string& initDesc,
+                                const std::string& initGlyph,
+                                std::vector<std::string> taken) {
+    title           = t;
+    editingPresetId = editingId;
+    name            = initName;
+    description     = initDesc;
+    iconGlyph       = initGlyph.empty() ? std::string(MV_ICON_TARGET) : initGlyph;
+    takenNames      = std::move(taken);
+    confirmed       = false;
+    pendingOpen     = true;
+}
+
+void RenderSavePresetModal(SavePresetModalState& state) {
+    HandlePendingOpen("##SavePresetModal", state.pendingOpen);
+
+    const auto center = ImGui::GetMainViewport()->GetCenter();
+    ImGui::SetNextWindowPos(center, ImGuiCond_Appearing, ImVec2(0.5f, 0.5f));
+    ImGui::SetNextWindowSize(ImVec2(440, 0), ImGuiCond_Appearing);
+
+    if (!ImGui::BeginPopupModal("##SavePresetModal", nullptr,
+                                ImGuiWindowFlags_AlwaysAutoResize |
+                                ImGuiWindowFlags_NoSavedSettings)) {
+        return;
+    }
+    ImGui::PushStyleVar(ImGuiStyleVar_FrameBorderSize, 1.0f);
+
+    // Title bar
+    ImGui::TextUnformatted(state.title.empty() ? "Save Preset" : state.title.c_str());
+    ImGui::Separator();
+
+    // Name field
+    ImGui::TextUnformatted("Name");
+    char nameBuf[64];
+    std::snprintf(nameBuf, sizeof(nameBuf), "%s", state.name.c_str());
+    ImGui::PushItemWidth(-FLT_MIN);
+    if (ImGui::InputText("##presetName", nameBuf, sizeof(nameBuf))) {
+        state.name = nameBuf;
+    }
+    ImGui::PopItemWidth();
+
+    // Validation feedback
+    const std::string trimmedName = TrimSpaces(state.name);
+    const bool nameMissing = trimmedName.empty();
+    bool nameTaken = false;
+    for (const auto& taken : state.takenNames) {
+        if (taken == trimmedName) { nameTaken = true; break; }
+    }
+    if (nameMissing) {
+        ImGui::TextColored(MvStyle::MvDanger, "Name is required.");
+    } else if (nameTaken) {
+        ImGui::TextColored(MvStyle::MvDanger,
+                           "A preset with that name already exists.");
+    }
+
+    // Description (optional)
+    ImGui::Dummy(ImVec2(0, 6));
+    ImGui::TextUnformatted("Description (optional)");
+    char descBuf[256];
+    std::snprintf(descBuf, sizeof(descBuf), "%s", state.description.c_str());
+    ImGui::PushItemWidth(-FLT_MIN);
+    if (ImGui::InputText("##presetDesc", descBuf, sizeof(descBuf))) {
+        state.description = descBuf;
+    }
+    ImGui::PopItemWidth();
+
+    // Icon picker — 4×3 grid of Lucide glyphs. Selected glyph gets the
+    // primary-blue button background.
+    ImGui::Dummy(ImVec2(0, 6));
+    ImGui::TextUnformatted("Icon");
+    if (ImGui::BeginTable("##iconPicker", 4,
+                          ImGuiTableFlags_SizingStretchSame |
+                          ImGuiTableFlags_NoPadOuterX)) {
+        for (int i = 0; i < static_cast<int>(kPresetGlyphPicker.size()); ++i) {
+            if (i % 4 == 0) ImGui::TableNextRow();
+            ImGui::TableNextColumn();
+            const char* glyph = kPresetGlyphPicker[i];
+            const bool selected = (state.iconGlyph == glyph);
+            ImGui::PushID(i);
+            if (selected) ImGui::PushStyleColor(ImGuiCol_Button, MvStyle::MvBlue500);
+            if (MvStyle::Font.Icon) ImGui::PushFont(MvStyle::Font.Icon);
+            if (ImGui::Button(glyph, ImVec2(-FLT_MIN, 36.0f))) {
+                state.iconGlyph = glyph;
+            }
+            if (MvStyle::Font.Icon) ImGui::PopFont();
+            if (selected) ImGui::PopStyleColor();
+            ImGui::PopID();
+        }
+        ImGui::EndTable();
+    }
+
+    // Footer
+    ImGui::Dummy(ImVec2(0, 10));
+    const bool canConfirm = !nameMissing && !nameTaken && !state.iconGlyph.empty();
+    if (!canConfirm) ImGui::BeginDisabled();
+    if (ImGui::Button("Save", ImVec2(120, 0))) {
+        state.name = trimmedName;       // canonicalize on the way out
+        state.confirmed = true;
+        ImGui::CloseCurrentPopup();
+    }
+    if (!canConfirm) ImGui::EndDisabled();
+    ImGui::SameLine();
+    if (ImGui::Button("Cancel", ImVec2(120, 0))) {
+        state.confirmed = false;
+        ImGui::CloseCurrentPopup();
+    }
+
+    ImGui::PopStyleVar(); // FrameBorderSize
+    ImGui::EndPopup();
+}
+
+// ---------------------------------------------------------------------------
 // Shortcuts
 // ---------------------------------------------------------------------------
 
