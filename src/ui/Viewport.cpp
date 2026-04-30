@@ -497,6 +497,32 @@ void Viewport::OnKey(int key, int /*scancode*/, int action, int mods) {
             }
             break;
 
+        // Story 5.3 — Stage 4 brush hotkeys. Mirror the order in the
+        // sidebar's brush card grid: 1=Smooth, 2=Grab, 3=PushPull,
+        // 4=Inflate. The sidebar reads SculptState::activeBrush each
+        // frame, so just writing it here propagates to both the active
+        // card highlight and the renderer's brush dispatcher.
+        case GLFW_KEY_1:
+            if (inTouchUp && project_) {
+                project_->GetSculptState().activeBrush = BrushType::Smooth;
+            }
+            break;
+        case GLFW_KEY_2:
+            if (inTouchUp && project_) {
+                project_->GetSculptState().activeBrush = BrushType::Grab;
+            }
+            break;
+        case GLFW_KEY_3:
+            if (inTouchUp && project_) {
+                project_->GetSculptState().activeBrush = BrushType::PushPull;
+            }
+            break;
+        case GLFW_KEY_4:
+            if (inTouchUp && project_) {
+                project_->GetSculptState().activeBrush = BrushType::Inflate;
+            }
+            break;
+
         case GLFW_KEY_ESCAPE:
             if (transformMode_ != TransformMode::None) {
                 CancelTransform();

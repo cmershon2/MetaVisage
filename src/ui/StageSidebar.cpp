@@ -1292,11 +1292,14 @@ void StageSidebar::RenderTouchUp(Project& project, Actions& out) {
             const char* sub;
             const char* glyph;
         };
+        // Sub-labels lead with the brush hotkey ([1]-[4]) per Story 5.3 —
+        // discoverability is the goal; the actual key handler lives in
+        // Viewport::OnKey and only fires while Stage 4 is active.
         static const BrushDef kBrushes[4] = {
-            { BrushType::Smooth,   "Smooth",    "Average vertices",   MV_ICON_BRUSH         },
-            { BrushType::Grab,     "Grab",      "Drag with cursor",   MV_ICON_HAND          },
-            { BrushType::PushPull, "Push/Pull", "Along surface normal", MV_ICON_MOVE_VERTICAL },
-            { BrushType::Inflate,  "Inflate",   "Outward from each",  MV_ICON_EXPAND        },
+            { BrushType::Smooth,   "Smooth",    "[1] Average",         MV_ICON_BRUSH         },
+            { BrushType::Grab,     "Grab",      "[2] Drag with cursor", MV_ICON_HAND          },
+            { BrushType::PushPull, "Push/Pull", "[3] Along normal",    MV_ICON_MOVE_VERTICAL },
+            { BrushType::Inflate,  "Inflate",   "[4] Outward",         MV_ICON_EXPAND        },
         };
 
         if (ImGui::BeginTable("##brushGrid", 2,
