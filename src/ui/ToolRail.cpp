@@ -55,8 +55,17 @@ constexpr float kButtonGap  = 4.0f;
 
 // Returns true if the user clicked the button this frame. Consumes one
 // 40 px-tall row at the supplied yPos within the rail's BeginChild.
+//
+// `previewTex` is optional (Story 5.3 follow-up): when non-zero, an RGBA
+// texture is rendered in place of the Lucide glyph at 32 px centred in
+// the 40 px button. Active-state rendering switches from a filled blue
+// rectangle to a blue border ring — the PNG mesh+arrow shouldn't fight
+// an MvBlue500 overlay (the arrow itself is MvBlue500 and would
+// disappear into a flat-blue button bg). Used by the Stage 4 brush
+// rail to mirror the brush-preview thumbnails from the sidebar cards.
 bool RenderToolButton(ImDrawList* dl, ImVec2 railOrigin, float yPos,
-                      const Tool& tool, bool active, bool stub) {
+                      const Tool& tool, bool active, bool stub,
+                      ImTextureID previewTex = 0) {
     const float xPad = (WidthPx - kButtonSize) * 0.5f;
     ImGui::SetCursorPos(ImVec2(xPad, yPos));
     const ImVec2 btnMin = ImGui::GetCursorScreenPos();
@@ -70,7 +79,17 @@ bool RenderToolButton(ImDrawList* dl, ImVec2 railOrigin, float yPos,
     ImGui::PopID();
 
     if (active) {
-        dl->AddRectFilled(btnMin, btnMax, Col(MvStyle::MvBlue500), 6.0f);
+        if (previewTex) {
+            // Border-ring active treatment for preview buttons — keeps
+            // the PNG legible against the rail's normal MvBg2 fill while
+            // still signalling "selected" via the blue stroke. Matches
+            // the inspector preset card's active style at
+            // StageSidebar.cpp::DrawPresetCard.
+            dl->AddRectFilled(btnMin, btnMax, Col(MvStyle::MvBg2), 6.0f);
+            dl->AddRect(btnMin, btnMax, Col(MvStyle::MvBlue500), 6.0f, 0, 1.5f);
+        } else {
+            dl->AddRectFilled(btnMin, btnMax, Col(MvStyle::MvBlue500), 6.0f);
+        }
     } else if (hovered && !stub) {
         dl->AddRectFilled(btnMin, btnMax, Col(MvStyle::MvBg3), 6.0f);
     }
@@ -78,16 +97,28 @@ bool RenderToolButton(ImDrawList* dl, ImVec2 railOrigin, float yPos,
     const ImVec2 iconCenter((btnMin.x + btnMax.x) * 0.5f,
                             (btnMin.y + btnMax.y) * 0.5f);
     ImU32 iconCol;
-    if (active)      iconCol = IM_COL32(0x05, 0x13, 0x22, 0xFF); // dark on bright blue
-    else if (stub)   iconCol = Col(MvStyle::MvFg4);
-    else             iconCol = Col(MvStyle::MvFg2);
+    if (active && !previewTex) iconCol = IM_COL32(0x05, 0x13, 0x22, 0xFF); // dark on bright blue
+    else if (stub)             iconCol = Col(MvStyle::MvFg4);
+    else                       iconCol = Col(MvStyle::MvFg2);
 
-    // Draw the Lucide glyph centred in the button. The font is baked at
-    // 16 px (MvStyle::TypeSize::* — see MvStyle.cpp); CalcTextSizeA
-    // measures the rasterized glyph so we can centre exactly. Falls back
-    // to nothing if the icon font failed to load — the button still
-    // takes its hit area, just without the glyph.
-    if (tool.glyph && MvStyle::Font.Icon) {
+    if (previewTex) {
+        // PNG preview path. Renders at 32 px centred — keeps a 4 px
+        // breathing margin to the 40 px button edge so the active
+        // border ring stays readable.
+        constexpr float kPreviewSize = 32.0f;
+        const ImVec2 imgMin(iconCenter.x - kPreviewSize * 0.5f,
+                            iconCenter.y - kPreviewSize * 0.5f);
+        const ImVec2 imgMax(imgMin.x + kPreviewSize, imgMin.y + kPreviewSize);
+        const ImU32 tint = stub ? IM_COL32(255, 255, 255, 128) : IM_COL32_WHITE;
+        dl->AddImage(previewTex, imgMin, imgMax,
+                     ImVec2(0, 0), ImVec2(1, 1), tint);
+    } else if (tool.glyph && MvStyle::Font.Icon) {
+        // Draw the Lucide glyph centred in the button. The font is
+        // baked at 16 px (MvStyle::TypeSize::* — see MvStyle.cpp);
+        // CalcTextSizeA measures the rasterized glyph so we can centre
+        // exactly. Falls back to nothing if the icon font failed to
+        // load — the button still takes its hit area, just without
+        // the glyph.
         constexpr float IconSize = 18.0f;
         ImFont* font = MvStyle::Font.Icon;
         const ImVec2 ts = font->CalcTextSizeA(IconSize, FLT_MAX, 0.0f, tool.glyph);
@@ -186,7 +217,18 @@ Result Render(WorkflowStage stage, Project* project, Viewport* viewport,
     float y = HeaderHeight;
     for (int i = 0; i < toolCount; ++i) {
         const bool active = (tools[i].kind == activeKind);
-        if (RenderToolButton(dl, origin, y, tools[i], active, /*stub=*/false) && viewport) {
+        // Story 5.3 follow-up — when on Stage 4, the loop iteration
+        // index `i` aligns with MvStyle::Asset.BrushPreviewTextureIds[]
+        // (the kStage4Tools array is ordered Smooth/Grab/PushPull/
+        // Inflate to match the texture array). Zero handle means
+        // "load failed" and falls back to the Lucide glyph.
+        ImTextureID previewTex = 0;
+        if (isStage4 && MvStyle::Asset.BrushPreviewTextureIds[i]) {
+            previewTex = (ImTextureID)(intptr_t)
+                         MvStyle::Asset.BrushPreviewTextureIds[i];
+        }
+        if (RenderToolButton(dl, origin, y, tools[i], active,
+                             /*stub=*/false, previewTex) && viewport) {
             if (isStage1) {
                 viewport->SetTransformMode(static_cast<TransformMode>(tools[i].kind));
             } else {
