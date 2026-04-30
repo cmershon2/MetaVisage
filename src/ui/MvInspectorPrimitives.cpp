@@ -109,6 +109,27 @@ void DrawSectionLabel(const char* title) {
 }
 
 // =============================================================================
+// 2b. Sub-section label — Story 5.1
+// =============================================================================
+void DrawSubSectionLabel(const char* title) {
+    if (!title || !title[0]) return;
+
+    ImGui::Dummy(ImVec2(0.0f, 6.0f));
+
+    constexpr float SubLabelIndent = 10.0f;
+    ImGui::Indent(SubLabelIndent);
+    {
+        MvStyle::ScopedFont f(MvStyle::Font.MonoSm);
+        ImGui::PushStyleColor(ImGuiCol_Text, MvStyle::MvFg4);
+        ImGui::TextUnformatted(title);
+        ImGui::PopStyleColor();
+    }
+    ImGui::Unindent(SubLabelIndent);
+
+    ImGui::Dummy(ImVec2(0.0f, 2.0f));
+}
+
+// =============================================================================
 // 3. File slot
 // =============================================================================
 FileSlotResult DrawFileSlot(const char* filename,

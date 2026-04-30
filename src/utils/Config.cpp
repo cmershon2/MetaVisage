@@ -93,6 +93,19 @@ void Config::Load() {
     }
 
     licenseJwt_ = ReadEncryptedString(j, "license_jwt");
+
+    // Story 5.1 — UI state. Missing block / unknown keys silently fall
+    // through to defaults; bad value types are skipped, not crashed.
+    if (auto ui = j.find("ui_state"); ui != j.end() && ui->is_object()) {
+        if (auto cs = ui->find("collapsed_sections");
+            cs != ui->end() && cs->is_object()) {
+            for (auto entry = cs->begin(); entry != cs->end(); ++entry) {
+                if (entry.value().is_boolean()) {
+                    collapsedSections_[entry.key()] = entry.value().get<bool>();
+                }
+            }
+        }
+    }
 }
 
 void Config::Save() const {
@@ -124,6 +137,17 @@ void Config::Save() const {
     }
     if (licenseJwt_) {
         if (auto enc = SecureStorage::EncryptString(*licenseJwt_)) j["license_jwt"] = *enc;
+    }
+
+    // Story 5.1 — only emit ui_state if at least one section has been
+    // explicitly recorded; keeps fresh configs minimal.
+    if (!collapsedSections_.empty()) {
+        json sections = json::object();
+        for (const auto& [key, expanded] : collapsedSections_) {
+            sections[key] = expanded;
+        }
+        j["ui_state"] = json::object();
+        j["ui_state"]["collapsed_sections"] = std::move(sections);
     }
 
     std::ofstream out(path);
@@ -182,6 +206,19 @@ void Config::SetLicenseJwt(const std::string& jwt) {
 
 void Config::ClearLicenseJwt() {
     licenseJwt_.reset();
+    Save();
+}
+
+bool Config::GetCollapsedSection(const std::string& key, bool defaultExpanded) const {
+    auto it = collapsedSections_.find(key);
+    if (it == collapsedSections_.end()) return defaultExpanded;
+    return it->second;
+}
+
+void Config::SetCollapsedSection(const std::string& key, bool expanded) {
+    auto it = collapsedSections_.find(key);
+    if (it != collapsedSections_.end() && it->second == expanded) return;
+    collapsedSections_[key] = expanded;
     Save();
 }
 

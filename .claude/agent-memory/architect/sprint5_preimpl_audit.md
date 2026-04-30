@@ -11,14 +11,31 @@ type: project
 - ADVANCED section: single `ImGui::CollapsingHeader("Advanced")` at line 1036, flat list with all remaining params (sampling, rigidity, damping, inner iters, epsilon, boundary exclusion, boundary hops)
 - "Reset to defaults" button at line 1058 is INSIDE the Advanced collapsing header — needs relocation to always-visible per master plan
 
+**RenderMorph block boundaries** (confirmed line numbers, `src/ui/StageSidebar.cpp`):
+- Process / Cancel block: lines 1066–1097 (`I::DrawSectionLabel("PROCESS")` through closing `!canProcess` hint brace)
+- Inline result summary: lines 1099–1110 (`if (morph.isProcessed)` block)
+- Vertex Mask block: lines 1112–1167 (`if (morphMeshReady)` + `else`), gated on `morphMeshReady`
+- `ImGui::EndChild()` at line 1171; footer from line 1173
+
+**MvInspectorPrimitives — DrawSectionLabel exact rendering** (`src/ui/MvInspectorPrimitives.cpp:75–109`):
+- Signature: `void DrawSectionLabel(const char* title)` — namespace `MetaVisage::MvInspector`
+- Dummy(0,8) → 1 px `MvLine2` hairline (full content width) → Dummy(0,8)
+- 6×6 px `MvBlue500` filled square, vertically centred on MonoSm cap height (+1 px bias)
+- Dummy(14px, fs) + SameLine(0,0) → label in `Font.MonoSm`, color `MvFg3`
+- Dummy(0,4) after
+
 **MvInspectorPrimitives gap** (`include/ui/MvInspectorPrimitives.h`):
 - Only 7 helpers exist: DrawStageHeader, DrawSectionLabel, DrawFileSlot, DrawAxisInput, DrawTransformGroup, DrawValidationRow, DrawInspectorFooter
 - No sub-section / nested collapsible primitive
 - Closest: DrawSectionLabel (flat, lines 39–40) — a new DrawSubSectionLabel would be needed
 
-**Config persistence gap** (`include/utils/Config.h`):
+**Config persistence gap** (`include/utils/Config.h`, `src/utils/Config.cpp`):
 - Fields: window geometry, recent projects, access token, refresh token, license JWT only
 - No UI-state JSON section, no collapsed-state persistence
+- JSON flavor: plain `nlohmann::json` (NOT ordered_json) — key order in Save() follows statement order
+- Save() builds `j["window"]`, `j["recent_projects"]`, then `j["auth"]`, then `j["license_jwt"]` (lines 102–127)
+- Load() reads same keys via `j.find(key)` + `it->value(field, default)` pattern (lines 77–95)
+- SetWindowGeometry, AddRecentProject, ClearRecentProjects, SetTokens/ClearTokens, SetLicenseJwt/ClearLicenseJwt each call private Save() immediately — writes are synchronous/best-effort
 - To add: new `std::map<std::string, bool> collapsedSections_` member + getter/setter pair under a `"ui_state"` JSON key
 
 **Why:** Master plan demands persistent collapsed state across sessions — currently there is nowhere to store it.

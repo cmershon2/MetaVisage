@@ -6,6 +6,7 @@
 #include "ui/MvIcons.h"
 #include "ui/MvInspectorPrimitives.h"
 #include "ui/MvStyle.h"
+#include "utils/Config.h"
 
 #include <imgui.h>
 
@@ -1015,101 +1016,10 @@ void StageSidebar::RenderMorph(Project& project, bool processing, float progress
             ImGui::EndTable();
         }
 
-        // ---- General parameters ----------------------------------------
-        // Track per-frame edits across the slider block so any manual tweak
-        // clears activePresetId_ and the active-card highlight disappears.
-        // Next frame's auto-derive at the top of RenderMorph re-checks for
-        // a built-in match (handles the edit-back-to-default case).
-        bool paramEdited = false;
-        I::DrawSectionLabel("GENERAL");
-        ImGui::PushItemWidth(ImGui::GetContentRegionAvail().x * 0.55f);
-        if (ImGui::SliderInt("Stiffness steps",     &morph.nricpStiffnessSteps, 1, 10))      paramEdited = true;
-        if (ImGui::SliderFloat("Stiffness (start)", &morph.nricpAlphaInitial,   1.0f, 500.0f, "%.1f")) paramEdited = true;
-        if (ImGui::SliderFloat("Stiffness (end)",   &morph.nricpAlphaFinal,     0.1f, 200.0f, "%.1f")) paramEdited = true;
-        if (ImGui::SliderInt("Iterations / step",   &morph.nricpIcpIterations,  1, 20))      paramEdited = true;
-        if (ImGui::SliderFloat("Normal threshold",  &morph.nricpNormalThreshold, 5.0f, 120.0f, "%.0f\xC2\xB0")) paramEdited = true;
-        if (ImGui::SliderFloat("Landmark weight",   &morph.nricpLandmarkWeight, 0.0f, 100.0f, "%.1f")) paramEdited = true;
-        ImGui::PopItemWidth();
-
-        // ---- Advanced parameters --------------------------------------
-        ImGui::Dummy(ImVec2(0.0f, 4.0f));
-        if (ImGui::CollapsingHeader("Advanced")) {
-            ImGui::PushItemWidth(ImGui::GetContentRegionAvail().x * 0.55f);
-            if (ImGui::SliderFloat("Control density (start)", &morph.nricpSamplingInitial, 0.0f, 1.0f, "%.3f")) paramEdited = true;
-            if (ImGui::SliderFloat("Control density (end)",   &morph.nricpSamplingFinal,   0.0f, 1.0f, "%.3f")) paramEdited = true;
-            if (ImGui::Checkbox("Normalize sampling",         &morph.nricpNormalizeSampling)) paramEdited = true;
-
-            if (ImGui::SliderFloat("Rigidity (start)",        &morph.nricpGammaInitial,    0.0f, 5.0f, "%.2f")) paramEdited = true;
-            if (ImGui::SliderFloat("Rigidity (end)",          &morph.nricpGammaFinal,      0.0f, 5.0f, "%.2f")) paramEdited = true;
-
-            if (ImGui::SliderFloat("Step damping (start)",    &morph.nricpDpInitial,       0.1f, 1.0f, "%.2f")) paramEdited = true;
-            if (ImGui::SliderFloat("Step damping (end)",      &morph.nricpDpFinal,         0.1f, 1.0f, "%.2f")) paramEdited = true;
-
-            if (ImGui::SliderInt("Inner iterations",          &morph.nricpOptimizationIterations, 1, 10)) paramEdited = true;
-            if (ImGui::InputFloat("Convergence threshold",    &morph.nricpEpsilon, 0.0f, 0.0f, "%.5f")) paramEdited = true;
-
-            if (ImGui::Checkbox("Exclude mesh boundaries",    &morph.nricpEnableBoundaryExclusion)) paramEdited = true;
-            ImGui::BeginDisabled(!morph.nricpEnableBoundaryExclusion);
-            if (ImGui::SliderInt("Boundary hops",             &morph.nricpBoundaryExclusionHops, 0, 10)) paramEdited = true;
-            ImGui::EndDisabled();
-            ImGui::PopItemWidth();
-
-            ImGui::Dummy(ImVec2(0.0f, 4.0f));
-            if (ImGui::Button("Reset to defaults", ImVec2(-FLT_MIN, 30.0f))) {
-                morph = MorphData();
-                activePresetId_.clear();
-            }
-        }
-
-        if (paramEdited) activePresetId_.clear();
-
-        // ---- Process / cancel ------------------------------------------
-        I::DrawSectionLabel("PROCESS");
-        if (processing) {
-            char label[64];
-            std::snprintf(label, sizeof(label), "Processing\xE2\x80\xA6 %.0f%%",
-                          progress * 100.0f);
-            ImGui::ProgressBar(progress, ImVec2(-FLT_MIN, 0), label);
-            if (ImGui::Button("Cancel", ImVec2(-FLT_MIN, 30.0f))) {
-                out.cancelMorphRequested = true;
-            }
-        } else {
-            const bool canProcess = project.GetMorphMesh().isLoaded
-                                 && project.GetTargetMesh().isLoaded;
-            ImGui::BeginDisabled(!canProcess);
-            // Primary blue Process button — the main action of the stage.
-            ImGui::PushStyleColor(ImGuiCol_Button,        MvStyle::MvBlue500);
-            ImGui::PushStyleColor(ImGuiCol_ButtonHovered, MvStyle::MvBlue400);
-            ImGui::PushStyleColor(ImGuiCol_ButtonActive,  MvStyle::MvBlue600);
-            ImGui::PushStyleColor(ImGuiCol_Text,
-                                  ImVec4(0x05/255.f, 0x13/255.f, 0x22/255.f, 1.f));
-            if (ImGui::Button("Process Morph", ImVec2(-FLT_MIN, 32.0f))) {
-                out.processMorphRequested = true;
-            }
-            ImGui::PopStyleColor(4);
-            ImGui::EndDisabled();
-            if (!canProcess) {
-                MvStyle::ScopedFont f(MvStyle::Font.BodySm);
-                ImGui::PushStyleColor(ImGuiCol_Text, MvStyle::MvFg4);
-                ImGui::TextWrapped("Load both meshes before processing.");
-                ImGui::PopStyleColor();
-            }
-        }
-
-        // ---- Inline result summary -------------------------------------
-        // The viewport stats overlay surfaces the same numbers in the GL
-        // pane; the inspector still echoes them here so users with the
-        // overlay hidden (e.g. via dual-monitor split) still see them.
-        if (morph.isProcessed) {
-            ImGui::Dummy(ImVec2(0.0f, 6.0f));
-            MvStyle::ScopedFont f(MvStyle::Font.Mono);
-            ImGui::PushStyleColor(ImGuiCol_Text, MvStyle::MvFg2);
-            ImGui::Text("Max disp.  %.3f mm", morph.maxDisplacement);
-            ImGui::Text("Avg disp.  %.3f mm", morph.avgDisplacement);
-            ImGui::PopStyleColor();
-        }
-
-        // ---- Vertex mask (existing functionality, restyled) ------------
+        // ---- Vertex mask (Story 5.1 — promoted to top of body) --------
+        // Masking is the most-used Stage 3 control once a morph is in
+        // flight, so it deserves first slot per the master plan layout.
+        // Existing mesh-ready guard preserved (no mesh = nothing to mask).
         const bool morphMeshReady = project.GetMorphMesh().isLoaded || morph.isProcessed;
         if (morphMeshReady) {
             I::DrawSectionLabel("VERTEX MASK");
@@ -1164,6 +1074,143 @@ void StageSidebar::RenderMorph(Project& project, bool processing, float progress
             // no mesh is loaded yet.
             out.maskPaintingActive = false;
             out.maskShow           = false;
+        }
+
+        // ---- Parameter edit tracking + collapsible-section helper -----
+        // Track per-frame edits across the slider blocks below so any
+        // manual tweak clears activePresetId_ and the active-card
+        // highlight disappears. Next frame's auto-derive at the top of
+        // RenderMorph re-checks for a built-in match (handles the
+        // edit-back-to-default case).
+        bool paramEdited = false;
+
+        // Story 5.1 — collapsed/expanded state persists in
+        // %APPDATA%\MetaVisage\config.json under ui_state.collapsed_sections.
+        // SetNextItemOpen(_, ImGuiCond_Once) seeds ImGui's internal storage
+        // on the first frame; subsequent toggles are caught by comparing
+        // CollapsingHeader's return value to the saved state and writing
+        // the diff back to Config.
+        auto DrawCollapsibleSection = [](const char* configKey,
+                                         const char* label,
+                                         bool defaultExpanded) -> bool {
+            const bool wasOpen =
+                Config::Instance().GetCollapsedSection(configKey, defaultExpanded);
+            ImGui::SetNextItemOpen(wasOpen, ImGuiCond_Once);
+            const bool isOpen = ImGui::CollapsingHeader(label);
+            if (isOpen != wasOpen) {
+                Config::Instance().SetCollapsedSection(configKey, isOpen);
+            }
+            return isOpen;
+        };
+
+        // ---- General (Story 5.1 — collapsible, default expanded) ------
+        if (DrawCollapsibleSection("morph.general", "General",
+                                   /*defaultExpanded=*/true)) {
+            ImGui::PushItemWidth(ImGui::GetContentRegionAvail().x * 0.55f);
+            if (ImGui::SliderInt("Stiffness steps",     &morph.nricpStiffnessSteps, 1, 10))      paramEdited = true;
+            if (ImGui::SliderFloat("Stiffness (start)", &morph.nricpAlphaInitial,   1.0f, 500.0f, "%.1f")) paramEdited = true;
+            if (ImGui::SliderFloat("Stiffness (end)",   &morph.nricpAlphaFinal,     0.1f, 200.0f, "%.1f")) paramEdited = true;
+            if (ImGui::SliderInt("Iterations / step",   &morph.nricpIcpIterations,  1, 20))      paramEdited = true;
+            if (ImGui::SliderFloat("Normal threshold",  &morph.nricpNormalThreshold, 5.0f, 120.0f, "%.0f\xC2\xB0")) paramEdited = true;
+            if (ImGui::SliderFloat("Landmark weight",   &morph.nricpLandmarkWeight, 0.0f, 100.0f, "%.1f")) paramEdited = true;
+            ImGui::PopItemWidth();
+
+            // Interior Geometry sub-section
+            I::DrawSubSectionLabel("INTERIOR GEOMETRY");
+            ImGui::PushItemWidth(ImGui::GetContentRegionAvail().x * 0.55f);
+            if (ImGui::Checkbox("Exclude mesh boundaries",
+                                &morph.nricpEnableBoundaryExclusion)) paramEdited = true;
+            ImGui::BeginDisabled(!morph.nricpEnableBoundaryExclusion);
+            if (ImGui::SliderInt("Boundary hops",
+                                 &morph.nricpBoundaryExclusionHops, 0, 10)) paramEdited = true;
+            ImGui::EndDisabled();
+            ImGui::PopItemWidth();
+        }
+
+        // ---- Advanced (Story 5.1 — three sub-sections, default closed) -
+        if (DrawCollapsibleSection("morph.advanced", "Advanced",
+                                   /*defaultExpanded=*/false)) {
+            // Optimization sub-section
+            I::DrawSubSectionLabel("OPTIMIZATION");
+            ImGui::PushItemWidth(ImGui::GetContentRegionAvail().x * 0.55f);
+            if (ImGui::SliderInt("Inner iterations",       &morph.nricpOptimizationIterations, 1, 10)) paramEdited = true;
+            if (ImGui::SliderFloat("Step damping (start)", &morph.nricpDpInitial,              0.1f, 1.0f, "%.2f")) paramEdited = true;
+            if (ImGui::SliderFloat("Step damping (end)",   &morph.nricpDpFinal,                0.1f, 1.0f, "%.2f")) paramEdited = true;
+            if (ImGui::InputFloat("Convergence threshold", &morph.nricpEpsilon, 0.0f, 0.0f, "%.5f")) paramEdited = true;
+            ImGui::PopItemWidth();
+
+            // Rigidity sub-section
+            I::DrawSubSectionLabel("RIGIDITY");
+            ImGui::PushItemWidth(ImGui::GetContentRegionAvail().x * 0.55f);
+            if (ImGui::SliderFloat("Rigidity (start)", &morph.nricpGammaInitial, 0.0f, 5.0f, "%.2f")) paramEdited = true;
+            if (ImGui::SliderFloat("Rigidity (end)",   &morph.nricpGammaFinal,   0.0f, 5.0f, "%.2f")) paramEdited = true;
+            ImGui::PopItemWidth();
+
+            // Control Node Sampling sub-section
+            I::DrawSubSectionLabel("CONTROL NODE SAMPLING");
+            ImGui::PushItemWidth(ImGui::GetContentRegionAvail().x * 0.55f);
+            if (ImGui::SliderFloat("Control density (start)", &morph.nricpSamplingInitial, 0.0f, 1.0f, "%.3f")) paramEdited = true;
+            if (ImGui::SliderFloat("Control density (end)",   &morph.nricpSamplingFinal,   0.0f, 1.0f, "%.3f")) paramEdited = true;
+            if (ImGui::Checkbox("Normalize sampling",         &morph.nricpNormalizeSampling)) paramEdited = true;
+            ImGui::PopItemWidth();
+        }
+
+        // ---- Reset to Defaults (Story 5.1 — relocated outside Advanced) -
+        // Previously hidden inside the collapsed Advanced section; now
+        // always visible so a tweaked-too-far parameter set is one click
+        // from a known-good baseline regardless of which sections are open.
+        ImGui::Dummy(ImVec2(0.0f, 4.0f));
+        if (ImGui::Button("Reset to defaults", ImVec2(-FLT_MIN, 30.0f))) {
+            morph = MorphData();
+            activePresetId_.clear();
+        }
+
+        if (paramEdited) activePresetId_.clear();
+
+        // ---- Process / cancel ------------------------------------------
+        I::DrawSectionLabel("PROCESS");
+        if (processing) {
+            char label[64];
+            std::snprintf(label, sizeof(label), "Processing\xE2\x80\xA6 %.0f%%",
+                          progress * 100.0f);
+            ImGui::ProgressBar(progress, ImVec2(-FLT_MIN, 0), label);
+            if (ImGui::Button("Cancel", ImVec2(-FLT_MIN, 30.0f))) {
+                out.cancelMorphRequested = true;
+            }
+        } else {
+            const bool canProcess = project.GetMorphMesh().isLoaded
+                                 && project.GetTargetMesh().isLoaded;
+            ImGui::BeginDisabled(!canProcess);
+            // Primary blue Process button — the main action of the stage.
+            ImGui::PushStyleColor(ImGuiCol_Button,        MvStyle::MvBlue500);
+            ImGui::PushStyleColor(ImGuiCol_ButtonHovered, MvStyle::MvBlue400);
+            ImGui::PushStyleColor(ImGuiCol_ButtonActive,  MvStyle::MvBlue600);
+            ImGui::PushStyleColor(ImGuiCol_Text,
+                                  ImVec4(0x05/255.f, 0x13/255.f, 0x22/255.f, 1.f));
+            if (ImGui::Button("Process Morph", ImVec2(-FLT_MIN, 32.0f))) {
+                out.processMorphRequested = true;
+            }
+            ImGui::PopStyleColor(4);
+            ImGui::EndDisabled();
+            if (!canProcess) {
+                MvStyle::ScopedFont f(MvStyle::Font.BodySm);
+                ImGui::PushStyleColor(ImGuiCol_Text, MvStyle::MvFg4);
+                ImGui::TextWrapped("Load both meshes before processing.");
+                ImGui::PopStyleColor();
+            }
+        }
+
+        // ---- Inline result summary -------------------------------------
+        // The viewport stats overlay surfaces the same numbers in the GL
+        // pane; the inspector still echoes them here so users with the
+        // overlay hidden (e.g. via dual-monitor split) still see them.
+        if (morph.isProcessed) {
+            ImGui::Dummy(ImVec2(0.0f, 6.0f));
+            MvStyle::ScopedFont f(MvStyle::Font.Mono);
+            ImGui::PushStyleColor(ImGuiCol_Text, MvStyle::MvFg2);
+            ImGui::Text("Max disp.  %.3f mm", morph.maxDisplacement);
+            ImGui::Text("Avg disp.  %.3f mm", morph.avgDisplacement);
+            ImGui::PopStyleColor();
         }
 
         ImGui::Dummy(ImVec2(0.0f, 12.0f));

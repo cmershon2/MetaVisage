@@ -40,6 +40,15 @@ void DrawStageHeader(const char* eyebrow,
 void DrawSectionLabel(const char* title);
 
 // ---------------------------------------------------------------------------
+// 2b. Sub-section label — Story 5.1. Smaller, indented variant for nested
+//     hierarchies inside CollapsingHeaders (Stage 3's General > Interior
+//     Geometry, Advanced > Optimization / Rigidity / Sampling). No hairline
+//     rule, no blue dot — those are reserved for top-level sections so the
+//     visual hierarchy stays one level deep. MonoSm uppercase, MvFg4.
+// ---------------------------------------------------------------------------
+void DrawSubSectionLabel(const char* title);
+
+// ---------------------------------------------------------------------------
 // 3. File slot — MvBg1 container with folder icon, mono filename or
 //    placeholder, optional sub-line ("OBJ · 1.4 MB"), and an Import button
 //    underneath. The button style flips to primary blue when `isPrimary`.
