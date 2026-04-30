@@ -762,8 +762,14 @@ namespace {
 // when truncation occurs. UTF-8-aware: walks codepoints, never splits mid-
 // sequence — so user preset names like "Casey's Café" don't blow up.
 //
-// Caller is responsible for pushing the right font (MvStyle::ScopedFont)
-// before calling — ImGui::CalcTextSize uses the active font.
+// PRECONDITION: caller MUST push the font they want measured against
+// (MvStyle::ScopedFont or ImGui::PushFont) before calling. The function
+// uses ImGui::CalcTextSize which reads the active font from ImGuiContext —
+// pass a font as a parameter and you'll get sized-against-the-default-font
+// truncation, which is almost certainly not what the call site wants.
+//
+// Today's call sites (DrawPresetCard name + sub-label) both wrap the call
+// in a ScopedFont block. Add a similar wrap before any new call.
 std::string TruncateToWidth(const char* text, float maxWidth) {
     if (!text || !text[0]) return {};
     if (ImGui::CalcTextSize(text).x <= maxWidth) return text;

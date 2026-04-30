@@ -232,15 +232,41 @@ bool PresetStore::Save(const WrapPreset& preset) {
     }
 
     OrderedJson root;
+    const fs::path path = fs::path(dir) / (preset.id + kFileExtension);
+
+    // Preserve created_at across Rename / Replace flows. If a file already
+    // exists at this id, peek at its created_at field and reuse it; otherwise
+    // stamp IsoNow() (true creation timestamp). Without this, every Save
+    // overwrote created_at with the rename/replace time — silent today
+    // because no UI surfaces the field, but breaks any future "sort by date"
+    // listing. (PR #22 review feedback.)
+    std::string createdAt;
+    {
+        std::error_code existsEc;
+        if (std::filesystem::exists(path, existsEc) && !existsEc) {
+            std::ifstream existing(path);
+            if (existing.is_open()) {
+                std::stringstream buf;
+                buf << existing.rdbuf();
+                try {
+                    const auto existingRoot = OrderedJson::parse(buf.str());
+                    createdAt = GetStr(existingRoot, "created_at");
+                } catch (...) {
+                    // Malformed existing file — fall through to IsoNow().
+                }
+            }
+        }
+    }
+    if (createdAt.empty()) createdAt = IsoNow();
+
     root["schema_version"] = kSchemaVersion;
     root["id"]             = preset.id;
     root["name"]           = preset.name;
     root["description"]    = preset.description;
     root["icon_glyph"]     = preset.iconGlyph;
-    root["created_at"]     = IsoNow();
+    root["created_at"]     = createdAt;
     root["params"]         = SerializeParams(preset.params);
 
-    const fs::path path = fs::path(dir) / (preset.id + kFileExtension);
     std::ofstream out(path);
     if (!out.is_open()) {
         MV_LOG_ERROR(std::format("PresetStore::Save: cannot open {} for writing",
