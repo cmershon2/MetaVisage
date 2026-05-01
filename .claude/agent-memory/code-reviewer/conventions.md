@@ -1,6 +1,6 @@
 ---
 name: Codebase Conventions
-description: Established patterns, anti-patterns, and recurring review notes observed across Sprints 3.5–3.7 PRs
+description: Established patterns, anti-patterns, and recurring review notes observed across Sprints 3.5–5 PRs
 type: project
 ---
 
@@ -125,3 +125,23 @@ Several call sites use `ImGui::CalcTextSize(str)` without a surrounding `ScopedF
 - `PresetStore::Save` always writes `created_at = IsoNow()` — the timestamp is refreshed on every Save call, so a Rename or Replace flow updates `created_at` to the time of the mutation rather than the original creation time. This is a minor semantic issue; the field is not exposed in the UI today. If `created_at` is ever surfaced (e.g., preset sort order) it should be preserved across mutations by reading the existing value from disk first.
 
 - `IsValidUserPresetId` was added in PR #22 to guard `PresetStore::Save` and `Delete` against path-traversal via malformed JSON `id` fields. IDs must match `user-[0-9a-f]{8}`. Both `Save` and `LoadAll` validate the id before constructing any filesystem path. This was the single blocking finding from the PR #22 review cycle.
+
+## Sprint 5 Patterns (PR #24)
+
+### Config.SetCollapsedSection — Synchronous Write-on-Toggle
+`Config::SetCollapsedSection` calls `Save()` immediately on every state change. This matches the pre-existing pattern for all other Config setters (`SetTokens`, `SetLicenseJwt`, etc.). Do NOT flag as a write-per-frame concern — the lambda `DrawCollapsibleSection` only calls `SetCollapsedSection` when the open/closed state actually changes (`isOpen != wasOpen`), not on every frame.
+
+### DrawCollapsibleSection Lambda — ImGuiCond_Once Seeding
+The lambda uses `ImGui::SetNextItemOpen(wasOpen, ImGuiCond_Once)` to seed ImGui's internal TreeNode storage on the first frame the node is encountered. On subsequent frames ImGui ignores the seed and tracks the state itself. The wasOpen-vs-isOpen diff is caught post-render and written back to Config. This is the correct pattern for persistent collapsible sections — do not flag.
+
+### corrIndices/corrPoints Scope Lift (NRICPDeformer)
+In `Solve()`, `corrIndices` and `corrPoints` were moved from inner ICP loop scope to outer stiffness-step scope for `MaybeDumpResiduals`. `FindCorrespondences` clears and refills both vectors on every call, so behavior is identical in production. If `cancelled_` fires mid-loop, `return {}` exits before the dump is called — the empty vectors are never passed to `MaybeDumpResiduals`.
+
+### BrushPreviewTextureIds Index Order is Load-Bearing
+`MvStyle::Asset.BrushPreviewTextureIds[4]` index order (0=Smooth, 1=Grab, 2=PushPull, 3=Inflate) must match `kBrushes` in `StageSidebar.cpp::RenderTouchUp` AND `kStage4Tools` in `ToolRail.cpp`. Both arrays are currently ordered identically. Any reordering of either array is a latent ordering bug — the PNG assignment in `MvStyle.cpp::LoadAssets` must also be updated.
+
+### GetWindow() Accessor — Test-Only Escape Hatch
+`AppWindow::GetWindow()` exposes the raw `GLFWwindow*` for `imgui_test_engine` harness use only. The comment explicitly warns production code not to touch the GLFW handle directly. Do not flag as an encapsulation violation in future reviews.
+
+### ToolRail.cpp — isStage4 Index Assumption
+In `ToolRail::Render`, the loop index `i` is used to index `BrushPreviewTextureIds[i]` only when `isStage4` is true. The guard is `isStage4 && i < 4` implicitly (loop runs over `kStage4Tools` which has exactly 4 entries). Safe, but if `kStage4Tools` ever grows beyond 4, the `BrushPreviewTextureIds` array must be expanded in parallel.

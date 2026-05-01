@@ -55,6 +55,16 @@ public:
     Camera* GetCamera() { return camera_.get(); }
     const Camera& GetCameraConst() const { return *camera_; }
 
+    // Story 5.4 — stable role identifier embedded in the viewport's
+    // toolbar window ID so imgui_test_engine can address it without
+    // knowing a runtime pointer. ViewportHost sets the secondary pane
+    // to "secondary"; the default ("primary") covers single-pane stages
+    // and the primary pane in dual mode. Two viewports must NEVER share
+    // the same role at the same time — ImGui would collide on the
+    // toolbar window's persistent ID.
+    void SetRoleId(const char* role) { roleId_ = role; }
+    const char* GetRoleId() const { return roleId_; }
+
     void SetShadingMode(ShadingMode mode);
     ShadingMode GetShadingMode() const;
 
@@ -213,6 +223,8 @@ private:
     MorphStatus morphStatus_ = MorphStatus::Ready;  // Story 3.8.5 — Stage 3 toolbar status pill
     bool isActive_ = false;
     std::string viewportLabel_;
+    // Story 5.4 — see SetRoleId comment.
+    const char* roleId_ = "primary";
 
     // Point reference
     int selectedPointIndex_ = -1;

@@ -184,6 +184,19 @@ private:
     // After deformation, enforce exact position coincidence within each weld group
     void EnforceWeldConstraints(std::vector<Vector3>& positions);
 
+    // Story 5.2 — Cottage-cheese-face diagnostic dump. Active only when the
+    // environment variable METAVISAGE_DUMP_RESIDUALS is set to "1". Writes
+    // a per-vertex CSV (vertex_id, residual_magnitude, is_landmark,
+    // is_excluded) to %TEMP%/metavisage_residuals_<epoch_ms>_step<N>.csv
+    // at the end of each stiffness step so the follow-up root-cause spike
+    // can correlate residual spikes to landmark vs. boundary-adjacent
+    // vertices. No-op (and zero overhead beyond a getenv() call) when the
+    // flag is unset, so production runs are unaffected.
+    void MaybeDumpResiduals(int stiffnessStep,
+                            const std::vector<Vector3>& positions,
+                            const std::vector<int>& corrIndices,
+                            const std::vector<Vector3>& corrPoints) const;
+
     // Source mesh data
     std::vector<Vector3> sourceVertices_;
     std::vector<Vector3> sourceNormals_;

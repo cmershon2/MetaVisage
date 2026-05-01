@@ -19,10 +19,15 @@
   - **Effort**: ~15–20 points (~1.5 weeks solo)
   - **Value**: Completes the Qt exit begun in Sprint 3.5; shrinks installer; removes final Qt build-tool dependency
 
-- [ ] **Investigate "cottage cheese face" morph artifacts**
+- [/] **Investigate "cottage cheese face" morph artifacts** *(Sprint 5, in progress — Story 5.2 shipped Outcome B stopgap)*
   - Users report geometry stretching at correspondence point locations after morphing. Needs diagnostic work: determine whether this is an NRICP parameter-tuning issue, a point-density issue, or a normal-recomputation bug.
   - **Effort**: ~1–2 weeks (investigation + fix)
   - **Value**: Directly affects output quality — the feature users pay for
+
+- [ ] **Cottage-cheese-face — root-cause spike** *(follow-up to Sprint 5 Story 5.2 Outcome B)*
+  - Sprint 5 Story 5.2 shipped the stopgap UI warning (landmark-weight / stiffness-final ratio > 0.5) plus diagnostic dump scaffolding gated by `METAVISAGE_DUMP_RESIDUALS=1` (writes `%TEMP%\metavisage_residuals_<epochMs>_step<N>.csv` per stiffness step). The full root-cause spike still needs to run: (1) reproduce reliably with dense landmark clusters, (2) inspect residual dumps for landmark-vs-boundary correlation, (3) test the three audit-flagged hypotheses — landmark-weight floor relative to alpha at [src/deformation/NRICPDeformer.cpp:764–790](../../../src/deformation/NRICPDeformer.cpp#L764), UV-seam BFS over-exclusion at [NRICPDeformer.cpp:198–286](../../../src/deformation/NRICPDeformer.cpp#L198), excluded-vertex landmark contribution mismatch at [NRICPDeformer.cpp:350, 387](../../../src/deformation/NRICPDeformer.cpp#L350), (4) ship the fix + a regression case in `smoke_wrap_parity` covering the dense-landmark reproduction, (5) tighten or remove the inspector warning threshold once the underlying bug is closed.
+  - **Effort**: ~1 week (investigation + fix + regression test)
+  - **Value**: Closes the root cause and lets us drop the stopgap warning; restores Quick Wrap as a no-warning default for typical landmark-weight values.
 
 - [ ] **Auto-save and crash recovery**
   - Periodic project snapshots to a `.mvautosave` sidecar file. On launch after unclean shutdown, offer to restore.

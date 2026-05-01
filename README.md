@@ -7,7 +7,8 @@ An open-source desktop application for automated MetaHuman mesh morphing. Wrap M
 - **Four-stage workflow**: Alignment, Point Reference, Morph, Touch Up
 - **Non-rigid surface registration** for high-quality mesh wrapping
 - **Wrap presets**: Quick Wrap (rigid, for human-like targets) and Fantasy Wrap (looser, for dramatic features) ship as built-ins; users can save their own tuned parameter sets as named presets with a 12-glyph picker, then rename / replace / delete via right-click on the preset card
-- **Sculpting tools**: Smooth, Grab, Push/Pull, and Inflate brushes for manual refinement
+- **Hierarchical Stage 3 inspector**: collapsible General + Advanced parameter sections with sub-sections (Interior Geometry, Optimization, Rigidity, Control Node Sampling); collapsed/expanded state persists across sessions
+- **Sculpting tools**: Smooth, Grab, Push/Pull, and Inflate brushes for manual refinement, with visual brush-effect previews and `1`/`2`/`3`/`4` hotkeys
 - **Symmetry support**: Mirrored point placement and sculpting
 - **Blender-style controls**: Familiar orbit/pan/zoom camera and G/R/S transform shortcuts
 - **Multiple formats**: Import/export FBX, OBJ, and GLTF meshes
@@ -29,7 +30,7 @@ An open-source desktop application for automated MetaHuman mesh morphing. Wrap M
 - **C++20** compiler — MSVC 2019+ (19.30+) or MinGW with C++20 support
 - OpenGL 4.3+
 - vcpkg for dependencies (manifest pinned in [vcpkg.json](vcpkg.json)):
-  - GLFW3, Dear ImGui (with `glfw-binding` + `opengl3-binding`), GLEW
+  - GLFW3, Dear ImGui (with `glfw-binding` + `opengl3-binding` + `docking-experimental` + `test-engine`), GLEW
   - nlohmann/json, native-file-dialog-extended (NFD), libcurl
   - Assimp, Eigen3
 - **No Qt dependency.** Earlier versions linked `Qt6::Core` transitionally; Sprint 3.7 removed it entirely. The CMake configure-time guard fails the build if any Qt target is reintroduced.
@@ -47,9 +48,13 @@ mkdir build && cd build
 cmake .. -DCMAKE_TOOLCHAIN_FILE="%VCPKG_ROOT%/scripts/buildsystems/vcpkg.cmake" -G "Visual Studio 17 2022" -A x64
 cmake --build . --config Release
 
-# Run the smoke test suite (load → serialize → reload → export round-trip,
-# v1.0.0 backward-compat regression, and Wrap Engine behavioural-parity)
+# Run the full smoke suite (load → serialize → reload → export round-trip,
+# v1.0.0 backward-compat regression, Wrap Engine behavioural-parity, and
+# imgui_test_engine click-through smoke against the live AppWindow)
 ctest -C Release
+
+# Or filter to just the imgui_test_engine UI lane
+ctest -C Release -L ui
 
 # Launch
 ./bin/Release/MetaVisage.exe
@@ -84,15 +89,17 @@ A MetaHuman head mesh (LOD0) is included in `assets/models/MetaHumanHeadLod0.obj
 ```
 MetaVisage/
 ├── assets/           # Fonts (Inter / JetBrains Mono / Saira / Lucide), shaders,
-│                     # gizmo models, default MetaHuman head, app icons, logo mark
+│                     # gizmo models, default MetaHuman head, app icons, logo mark,
+│                     # Stage 4 brush-effect preview PNGs (assets/brushes/)
 ├── docs/             # Banner, KNOWN_ISSUES.md
 ├── include/          # Public headers — baking/, core/, deformation/, io/,
 │                     # rendering/, sculpting/, thirdparty/, ui/, utils/
 ├── src/              # Implementation (mirrors include/ structure) + main.cpp
-├── tests/            # Headless CTest suite — three smoke executables plus
-│                     # pinned v1.0.0 fixtures (load → serialize → export,
-│                     # v1.0.0 backward-compat regression, Wrap Engine
-│                     # behavioural-parity over Quick + Fantasy presets)
+├── tests/            # CTest suite — four smoke executables plus pinned v1.0.0
+│                     # fixtures: load → serialize → export round-trip, v1.0.0
+│                     # backward-compat regression, Wrap Engine behavioural-parity
+│                     # over Quick + Fantasy presets, and an imgui_test_engine
+│                     # click-through smoke against the live AppWindow
 ├── .claude/          # Sprint plans, retros, agents, hooks, skills (dev tooling)
 ├── CMakeLists.txt    # Build configuration
 ├── vcpkg.json        # Pinned dependency manifest
@@ -103,7 +110,7 @@ MetaVisage/
 └── LICENSE           # MIT License
 ```
 
-The UI lives under `include/ui/` & `src/ui/`: shell hosts (`AppWindow`, `Viewport`, `ViewportHost`, `StageSidebar`, `StageStepper`, `ToolRail`, `Modals`, `FileDialogs`, `LoginScreen`) plus the design-system primitives (`MvStyle` for tokens, `MvIcons` for the Lucide icon font, `MvInspectorPrimitives` for shared rows/sections).
+The UI lives under `include/ui/` & `src/ui/`: shell hosts (`AppWindow`, `Viewport`, `ViewportHost`, `StageSidebar`, `StageStepper`, `ToolRail`, `Modals`, `FileDialogs`, `LoginScreen`) plus the design-system primitives (`MvStyle` for tokens + brand asset texture handles, `MvIcons` for the Lucide icon font, `MvInspectorPrimitives` for shared section / sub-section / row helpers).
 
 ## Contributing
 

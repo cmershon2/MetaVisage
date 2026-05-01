@@ -55,9 +55,22 @@ public:
     void Run();
     void Shutdown();
 
+    // Story 5.4 — single-frame entry point used by Run() and by the
+    // imgui_test_engine smoke-UI harness. Caller is responsible for polling
+    // GLFW events and querying the framebuffer size; everything else (ImGui
+    // frame setup, app shell, viewport, sidebar, modals, GL render, swap)
+    // happens here.
+    void TickOnce(int fbWidth, int fbHeight);
+
     ViewportHost* GetViewportHost() { return viewportHost_.get(); }
     Project* GetProject() { return project_.get(); }
     UndoStack* GetUndoStack() { return undoStack_.get(); }
+
+    // Story 5.4 — exposed so the imgui_test_engine smoke harness can
+    // query framebuffer size + drive its own tick loop. Production code
+    // should not touch the GLFW handle directly; AppWindow remains the
+    // owner.
+    GLFWwindow* GetWindow() { return window_; }
 
 private:
     void RenderFrame(int fbWidth, int fbHeight);

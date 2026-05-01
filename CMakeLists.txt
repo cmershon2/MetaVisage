@@ -355,3 +355,40 @@ add_test(NAME smoke_wrap_parity
          COMMAND metavisage_smoke_wrap_parity
          WORKING_DIRECTORY ${CMAKE_RUNTIME_OUTPUT_DIRECTORY})
 set_tests_properties(smoke_wrap_parity PROPERTIES TIMEOUT 60)
+
+# ---------------------------------------------------------------------------
+# imgui_test_engine smoke-UI lane (Story 5.4)
+# ---------------------------------------------------------------------------
+# Drives the live AppWindow through three click-through scenarios via
+# imgui_test_engine — stage stepper, login screen toggle cycle, viewport
+# toolbar shading-mode toggles. Catches the click-through and modal-toggle
+# bug classes the Sprint 3.6 / 3.7 / 3.8 retros all flagged. Real GLFW
+# window pops up briefly during ctest (no headless mode); deps inherit
+# through MetaVisageCore's PUBLIC link set (imgui::imgui pulls in the
+# folded-in test-engine library — see vcpkg.json's imgui[test-engine]
+# feature). AppWindow.cpp is compiled into the smoke directly because
+# the main exe owns it (CMakeLists.txt line 208) — pulling it into the
+# core library would force the smoke to also drag main.cpp's startup
+# code, which it doesn't need.
+add_executable(metavisage_smoke_ui
+    tests/smoke/ui_smoke.cpp
+    src/ui/AppWindow.cpp
+)
+target_link_libraries(metavisage_smoke_ui
+    PRIVATE
+        ${PROJECT_NAME}Core
+)
+if(MSVC)
+    target_compile_options(metavisage_smoke_ui PRIVATE /W4)
+else()
+    target_compile_options(metavisage_smoke_ui PRIVATE -Wall -Wextra)
+endif()
+
+add_test(NAME smoke_ui
+         COMMAND metavisage_smoke_ui
+         WORKING_DIRECTORY ${CMAKE_RUNTIME_OUTPUT_DIRECTORY})
+# 90 s CTest budget = 60 s harness deadline + 30 s init/teardown buffer.
+# Filterable via `ctest -L ui` for local iteration.
+set_tests_properties(smoke_ui PROPERTIES
+    LABELS ui
+    TIMEOUT 90)

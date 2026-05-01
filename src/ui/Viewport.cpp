@@ -478,22 +478,53 @@ void Viewport::OnKey(int key, int /*scancode*/, int action, int mods) {
             }
             break;
 
+        // Sprint 5 hotfix — the previous handler updated Viewport's local
+        // brushRadius_ via SetBrushRadius() and fired the (never-wired)
+        // OnBrushRadiusChanged callback. AppWindow's per-frame Stage 4
+        // mirror immediately overwrote the press with the unchanged
+        // project_->GetSculptState().brushRadius from the last frame, so
+        // the keybind silently no-op'd. Writing project state directly
+        // mirrors the 1-4 brush-switch hotkey pattern below; the next
+        // frame's sync propagates the new value back into Viewport's
+        // local copy + the StageSidebar slider position.
         case GLFW_KEY_LEFT_BRACKET:
-            if (inTouchUp) {
-                float r = GetBrushRadius();
-                float step = std::max(0.1f, r * 0.1f);
-                float nr = std::max(0.1f, r - step);
-                SetBrushRadius(nr);
-                if (OnBrushRadiusChanged) OnBrushRadiusChanged(nr);
+            if (inTouchUp && project_) {
+                auto& s = project_->GetSculptState();
+                const float step = std::max(0.1f, s.brushRadius * 0.1f);
+                s.brushRadius = std::max(0.1f, s.brushRadius - step);
             }
             break;
         case GLFW_KEY_RIGHT_BRACKET:
-            if (inTouchUp) {
-                float r = GetBrushRadius();
-                float step = std::max(0.1f, r * 0.1f);
-                float nr = std::min(100.0f, r + step);
-                SetBrushRadius(nr);
-                if (OnBrushRadiusChanged) OnBrushRadiusChanged(nr);
+            if (inTouchUp && project_) {
+                auto& s = project_->GetSculptState();
+                const float step = std::max(0.1f, s.brushRadius * 0.1f);
+                s.brushRadius = std::min(100.0f, s.brushRadius + step);
+            }
+            break;
+
+        // Story 5.3 — Stage 4 brush hotkeys. Mirror the order in the
+        // sidebar's brush card grid: 1=Smooth, 2=Grab, 3=PushPull,
+        // 4=Inflate. The sidebar reads SculptState::activeBrush each
+        // frame, so just writing it here propagates to both the active
+        // card highlight and the renderer's brush dispatcher.
+        case GLFW_KEY_1:
+            if (inTouchUp && project_) {
+                project_->GetSculptState().activeBrush = BrushType::Smooth;
+            }
+            break;
+        case GLFW_KEY_2:
+            if (inTouchUp && project_) {
+                project_->GetSculptState().activeBrush = BrushType::Grab;
+            }
+            break;
+        case GLFW_KEY_3:
+            if (inTouchUp && project_) {
+                project_->GetSculptState().activeBrush = BrushType::PushPull;
+            }
+            break;
+        case GLFW_KEY_4:
+            if (inTouchUp && project_) {
+                project_->GetSculptState().activeBrush = BrushType::Inflate;
             }
             break;
 
@@ -951,8 +982,13 @@ void Viewport::DrawTopCenterToolbar(float x, float y, float w, float h) {
                                          : WorkflowStage::Alignment;
     const bool isStage3 = (stage == WorkflowStage::Morph);
 
+    // Story 5.4 — role-based window ID (e.g. "##VpToolbar_primary") so
+    // imgui_test_engine can address the toolbar deterministically. The
+    // earlier pointer-stamped ID worked at runtime but was untestable
+    // because the address changed every launch. Roles must stay unique
+    // across simultaneously-rendered viewports — see Viewport::SetRoleId.
     char wid[64];
-    std::snprintf(wid, sizeof(wid), "##VpToolbar_%p", static_cast<void*>(this));
+    std::snprintf(wid, sizeof(wid), "##VpToolbar_%s", roleId_ ? roleId_ : "primary");
 
     ImGui::SetNextWindowPos(ImVec2(x + w * 0.5f, y + 14.0f),
                             ImGuiCond_Always, ImVec2(0.5f, 0.0f));

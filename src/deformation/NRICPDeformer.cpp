@@ -2,8 +2,12 @@
 #include "utils/BVH.h"
 #include "utils/Logger.h"
 #include <algorithm>
+#include <chrono>
 #include <cmath>
+#include <cstdlib>
+#include <filesystem>
 #include <format>
+#include <fstream>
 #include <limits>
 #include <map>
 #include <numeric>
@@ -1217,6 +1221,13 @@ std::vector<Vector3> NRICPDeformer::Solve() {
             }
         }
 
+        // Story 5.2 — lifted out of the inner ICP loop so the latest
+        // correspondence set is still in scope when we dump residuals at
+        // the end of each stiffness step. FindCorrespondences clears and
+        // refills these every call, so behaviour is unchanged.
+        std::vector<int> corrIndices;
+        std::vector<Vector3> corrPoints;
+
         for (int iter = 0; iter < params_.icpIterations; ++iter) {
             if (cancelled_ && cancelled_->load()) {
                 MV_LOG_INFO("NRICP: Cancelled by user");
@@ -1227,8 +1238,6 @@ std::vector<Vector3> NRICPDeformer::Solve() {
             ComputeNormals(currentPositions, currentNormals);
 
             // Find ICP correspondences (parallelized)
-            std::vector<int> corrIndices;
-            std::vector<Vector3> corrPoints;
             FindCorrespondences(currentPositions, currentNormals, normalThresholdCos,
                               corrIndices, corrPoints);
 
@@ -1329,6 +1338,11 @@ std::vector<Vector3> NRICPDeformer::Solve() {
                 }
             }
         }
+
+        // Story 5.2 — diagnostic dump for the cottage-cheese-face spike.
+        // Fires once per stiffness step using the latest correspondence
+        // set. No-op unless METAVISAGE_DUMP_RESIDUALS=1.
+        MaybeDumpResiduals(s, currentPositions, corrIndices, corrPoints);
     }
 
     if (progressCallback_) {
@@ -1357,6 +1371,78 @@ std::vector<Vector3> NRICPDeformer::Solve() {
     }
 
     return currentPositions;
+}
+
+void NRICPDeformer::MaybeDumpResiduals(int stiffnessStep,
+                                        const std::vector<Vector3>& positions,
+                                        const std::vector<int>& corrIndices,
+                                        const std::vector<Vector3>& corrPoints) const {
+    // Story 5.2 — gated entirely by env var. Single getenv() in the hot
+    // path is fine; only the dump-writing branch does any real work.
+    const char* flag = std::getenv("METAVISAGE_DUMP_RESIDUALS");
+    if (!flag || std::string_view(flag) != "1") return;
+
+    // Build a sparse-vertex -> dense-corr-index map so per-vertex lookup
+    // is O(1) rather than O(corrIndices.size()) in the dump loop.
+    std::vector<int> corrSlotByVertex(positions.size(), -1);
+    for (size_t k = 0; k < corrIndices.size(); ++k) {
+        const int v = corrIndices[k];
+        if (v >= 0 && v < static_cast<int>(positions.size())) {
+            corrSlotByVertex[v] = static_cast<int>(k);
+        }
+    }
+
+    // Landmark lookup (small N, vector scan is fine).
+    auto isLandmark = [&](int vertexId) {
+        for (const auto& [lvi, _] : landmarks_) {
+            if (lvi == vertexId) return true;
+        }
+        return false;
+    };
+
+    namespace fs = std::filesystem;
+    fs::path outDir;
+    try {
+        outDir = fs::temp_directory_path();
+    } catch (const std::exception& e) {
+        MV_LOG_WARNING(std::format("NRICP: residual dump failed — temp dir unavailable: {}", e.what()));
+        return;
+    }
+
+    const auto epochMs = std::chrono::duration_cast<std::chrono::milliseconds>(
+        std::chrono::system_clock::now().time_since_epoch()).count();
+
+    const fs::path filename = outDir /
+        std::format("metavisage_residuals_{}_step{}.csv", epochMs, stiffnessStep);
+
+    std::ofstream out(filename);
+    if (!out.is_open()) {
+        MV_LOG_WARNING(std::format("NRICP: residual dump failed — could not open {}",
+                                    filename.string()));
+        return;
+    }
+
+    out << "vertex_id,residual_magnitude,is_landmark,is_excluded\n";
+
+    const size_t N = positions.size();
+    for (size_t i = 0; i < N; ++i) {
+        const int slot = corrSlotByVertex[i];
+        float residual = -1.0f; // sentinel: no correspondence found
+        if (slot >= 0) {
+            const Vector3 d(positions[i].x - corrPoints[slot].x,
+                            positions[i].y - corrPoints[slot].y,
+                            positions[i].z - corrPoints[slot].z);
+            residual = std::sqrt(d.x*d.x + d.y*d.y + d.z*d.z);
+        }
+        const bool excluded =
+            (i < excludedVertices_.size() && excludedVertices_[i]) ||
+            (i < userExcludedVertices_.size() && userExcludedVertices_[i]);
+        out << i << ',' << residual << ','
+            << (isLandmark(static_cast<int>(i)) ? 1 : 0) << ','
+            << (excluded ? 1 : 0) << '\n';
+    }
+
+    MV_LOG_INFO(std::format("NRICP: residual dump written to {}", filename.string()));
 }
 
 } // namespace MetaVisage

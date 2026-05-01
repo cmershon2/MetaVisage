@@ -7,7 +7,7 @@ allowed-tools: Read, Write, Edit, Glob
 
 # Sprint Retrospective
 
-## Pre-Flight DoD Check (Story 4.7)
+## Pre-Flight DoD Check (Story 4.7 + Story 5.5)
 
 **This check runs first, before any other step in this skill.** It exists to
 break a recurring anti-pattern flagged in the Sprint 3.6 / 3.7 / 3.8 retros:
@@ -15,29 +15,42 @@ sprint outcomes were marked "Complete" or "Implementation Complete" before the
 PR review and manual UI smoke had actually run, so the retro analyzed an
 outcome that hadn't been validated.
 
+The check has two clauses:
+- **Clause A** (Story 4.7): catches the canonical case — `Status: Complete`
+  with unchecked validation DoD items.
+- **Clause B** (Story 5.5): catches the bypass case the Sprint 4 retro
+  surfaced — every committed story shipped (`[x]`) but `Status` was left at
+  `Planned` / `In Progress`, slipping past Clause A while validation is still
+  genuinely pending.
+
 ### Steps
 
 1. Locate the active sprint file at `.claude/context/sprints/sprint-{number}.md`.
    The number is supplied either by the user (`/sprint-retrospective 04`) or
    inferred from the highest-numbered sprint file present.
 2. Read the file's `## Sprint Outcome` section. Parse the `**Status**:` line.
-3. **If `Status` is `Planned` or `In Progress`**: the retro is being run mid-
-   sprint or before close-out. Skip the rest of this pre-flight check and
-   proceed normally. (Ad-hoc retros on incomplete sprints are still
-   supported.)
-4. **If `Status` is `Complete` or `Implementation Complete`**: read the
-   `## Definition of Done` checklist. Scan every list item that begins with
-   `- [ ]` (unchecked) for any of these substrings, case-insensitive:
+3. Read the `## Sprint Backlog` table. Count rows where the `Status` column is
+   `[x]` (shipped) vs. `[ ]` / `[/]` (pending or in-progress). Store
+   `allStoriesShipped = true` if every backlog row is `[x]`.
+4. Read the `## Definition of Done` checklist. Build a list of unchecked items
+   (`- [ ]` lines) whose text contains any of these substrings,
+   case-insensitive — call this `blockingUnchecked`:
    - `"PR opened"` *or* `"/review-pr"` *or* `"blocking findings resolved"`
    - `"manual UI smoke"` *or* `"Phase D"` *or* `"manual smoke"`
    - `"sprint outcome notes updated"`
-5. **If any of those substrings appear in an unchecked DoD item**, REFUSE to
-   proceed. Print a message naming each blocking item verbatim and stop
-   execution. The user must either (a) tick the boxes once they're actually
-   done, or (b) revert the Status field to `In Progress` to bypass the
-   check legitimately for an ad-hoc retro.
+5. **Clause A — Status Complete**: if `Status` is `Complete` or
+   `Implementation Complete`, REFUSE if `blockingUnchecked` is non-empty.
+   Use the Clause A refusal template.
+6. **Clause B — Validation-pending bypass**: if `Status` is `Planned` or
+   `In Progress` **and** `allStoriesShipped` is `true` **and**
+   `blockingUnchecked` is non-empty, REFUSE with the Clause B template.
+   This catches the Sprint 4 retro's "ran retro before PR cleared review"
+   anti-pattern.
+7. **Otherwise** (ad-hoc mid-sprint retro on incomplete work, or all DoD
+   validation items already ticked): skip the rest of this pre-flight check
+   and proceed normally.
 
-### Refusal message template
+### Refusal message — Clause A (Status: Complete)
 
 ```
 Cannot run /sprint-retrospective on sprint-{N}.md (Status: Complete) — the
@@ -54,8 +67,31 @@ items because the Sprint 3.6 / 3.7 / 3.8 retros all flagged this as a
 recurring anti-pattern (Sprint 4 Action Item #3).
 ```
 
-Only after this check passes (or is skipped because Status is not Complete)
-do you proceed to the retrospective generation steps below.
+### Refusal message — Clause B (Validation-pending bypass)
+
+```
+Cannot run /sprint-retrospective on sprint-{N}.md — every committed story is
+shipped but the following validation Definition of Done items are still
+unchecked:
+
+  - [ ] {first blocking item, copied verbatim}
+  - [ ] {second blocking item}
+  ...
+
+All stories shipped; Status is "{Planned|In Progress}" but DoD validation
+items are pending. Either:
+  (a) flip Status to "Complete" and tick the boxes once the work is genuinely
+      done, or
+  (b) set a story's status to "[/]" (in-progress) if implementation work is
+      genuinely still open, so this is a legitimate ad-hoc mid-sprint retro.
+
+This gate (Story 5.5) closes the bypass that Sprint 4's retro identified in
+Story 4.7's original Clause A: leaving Status at "Planned" or "In Progress"
+to slip past the Complete-status check while validation is still pending.
+```
+
+Only after both clauses pass (or are skipped because preconditions don't
+match) do you proceed to the retrospective generation steps below.
 
 ## File Location
 
