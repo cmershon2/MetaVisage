@@ -11,6 +11,7 @@
 
 #include <filesystem>
 #include <format>
+#include <iterator>
 #include <string>
 
 namespace MetaVisage::MvStyle {
@@ -303,13 +304,21 @@ void LoadAssets() {
     // Story 5.3 — Stage 4 brush preview thumbnails. Filenames are
     // load-bearing: the order here MUST match kBrushes in
     // StageSidebar.cpp::RenderTouchUp (Smooth / Grab / PushPull / Inflate).
-    static constexpr const char* kBrushPreviewFilenames[4] = {
+    static constexpr const char* kBrushPreviewFilenames[] = {
         "smooth_preview.png",
         "grab_preview.png",
         "pushpull_preview.png",
         "inflate_preview.png",
     };
-    for (int i = 0; i < 4; ++i) {
+    // PR #24 review nit — compile-time guard so the filename list and
+    // the texture-handle array can't drift in size. The loop below is
+    // the single load site; ToolRail.cpp has a sibling assert pinning
+    // BrushPreviewTextureIds against kStage4Tools.
+    static_assert(std::size(kBrushPreviewFilenames) ==
+                      std::size(Asset.BrushPreviewTextureIds),
+                  "kBrushPreviewFilenames and BrushPreviewTextureIds must "
+                  "stay the same length");
+    for (size_t i = 0; i < std::size(kBrushPreviewFilenames); ++i) {
         Asset.BrushPreviewTextureIds[i] =
             UploadPngAsTexture(assetsRoot / "brushes" / kBrushPreviewFilenames[i]);
     }
@@ -320,7 +329,7 @@ void Shutdown() {
         GLuint t = Asset.LogoTextureId;
         glDeleteTextures(1, &t);
     }
-    for (int i = 0; i < 4; ++i) {
+    for (size_t i = 0; i < std::size(Asset.BrushPreviewTextureIds); ++i) {
         if (Asset.BrushPreviewTextureIds[i]) {
             GLuint t = Asset.BrushPreviewTextureIds[i];
             glDeleteTextures(1, &t);

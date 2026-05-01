@@ -47,6 +47,16 @@ public:
     // "morph.interior_geometry"). The default is consulted only when the
     // key has never been written (first launch or new section); later
     // writes are persisted in the JSON ui_state.collapsed_sections block.
+    //
+    // PR #24 review nit — Setter performance contract: SetCollapsedSection
+    // calls Save() synchronously on every state change, which opens +
+    // writes + closes %APPDATA%\MetaVisage\config.json. Callers MUST
+    // gate the call (e.g. `if (newState != savedState)`) so the setter
+    // only fires once per gesture, not once per frame. The
+    // DrawCollapsibleSection lambda in StageSidebar.cpp::RenderMorph is
+    // the canonical pattern; replicate it for new collapsible callers.
+    // Do not call this from any per-frame hot path or scroll-resized
+    // sub-window without the gate — synchronous I/O at >1 Hz will stutter.
     bool GetCollapsedSection(const std::string& key, bool defaultExpanded) const;
     void SetCollapsedSection(const std::string& key, bool expanded);
 

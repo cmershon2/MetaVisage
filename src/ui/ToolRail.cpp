@@ -9,6 +9,7 @@
 #include <imgui.h>
 
 #include <cstdio>
+#include <iterator>
 
 namespace MetaVisage::ToolRail {
 
@@ -49,6 +50,16 @@ constexpr Tool kStage4Tools[] = {
     { "Push/Pull", nullptr, static_cast<int>(BrushType::PushPull), MV_ICON_MOVE_VERTICAL },
     { "Inflate",   nullptr, static_cast<int>(BrushType::Inflate),  MV_ICON_EXPAND        },
 };
+
+// PR #24 review nit — compile-time guard against the implicit ordering
+// coupling between kStage4Tools and MvStyle::Asset.BrushPreviewTextureIds.
+// The Render() loop indexes BrushPreviewTextureIds[i] by the same `i`
+// that walks kStage4Tools; if either array's size drifts, the next
+// build fails loudly instead of the toolrail silently mis-mapping (or
+// out-of-bounds reading) brush thumbnails.
+static_assert(std::size(kStage4Tools) == std::size(MvStyle::Asset.BrushPreviewTextureIds),
+              "kStage4Tools and MvStyle::Asset.BrushPreviewTextureIds must "
+              "stay aligned in size and brush order");
 
 constexpr float kButtonSize = 40.0f;
 constexpr float kButtonGap  = 4.0f;

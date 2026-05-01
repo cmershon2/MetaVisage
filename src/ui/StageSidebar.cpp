@@ -21,6 +21,16 @@ namespace MetaVisage {
 
 namespace {
 
+// Story 5.2 (Outcome B) — landmark-weight / final-stiffness ratio above
+// which the Stage 3 inspector renders the "cottage cheese" warning row
+// (see RenderMorph). Initial threshold per the sprint plan; should be
+// refined empirically once the diagnostic dump
+// (METAVISAGE_DUMP_RESIDUALS=1) yields real residual data from
+// reproduction cases. Hoisted from the function body per PR #24 review
+// so the follow-up root-cause spike can find it via grep without
+// reading through RenderMorph's body.
+constexpr float kLandmarkRatioWarnThreshold = 0.5f;
+
 const char* StageName(WorkflowStage s) {
     switch (s) {
         case WorkflowStage::Alignment:      return "Alignment";
@@ -1191,13 +1201,10 @@ void StageSidebar::RenderMorph(Project& project, bool processing, float progress
         // ---- Cottage-cheese-face stopgap (Story 5.2 Outcome B) ---------
         // High landmark weight relative to final stiffness leaves the
         // landmark term over-weighted at the last stiffness level, which
-        // matches the reported local-stretching artifact. Threshold (0.5)
-        // is the initial estimate per the sprint plan; will be refined
-        // empirically once the diagnostic dump
-        // (METAVISAGE_DUMP_RESIDUALS=1) yields real residual data from
-        // reproduction cases. The warning is informational — Process is
-        // not blocked.
-        constexpr float kLandmarkRatioWarnThreshold = 0.5f;
+        // matches the reported local-stretching artifact. Threshold lives
+        // in the anonymous namespace at the top of this file — PR #24
+        // review nit so the follow-up root-cause spike can grep for it.
+        // The warning is informational — Process is not blocked.
         const float ratio = morph.nricpAlphaFinal > 0.0f
             ? morph.nricpLandmarkWeight / morph.nricpAlphaFinal
             : 0.0f;

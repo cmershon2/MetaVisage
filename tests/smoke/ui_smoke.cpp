@@ -57,6 +57,16 @@ namespace {
 // Lambda captures complicate the IM_REGISTER_TEST macro path; a single
 // translation-unit-scoped pointer is the cleanest way to thread state
 // into the TestFunc without juggling user-data pointers.
+//
+// PR #24 review nit — convention for new scenarios: any test that
+// dereferences g_app MUST guard with `if (!g_app || !g_app-><...>)`
+// + IM_CHECK(false) at the top (see ViewportShadingModes for the
+// pattern). Pure-ImGui scenarios that only call ImGui::* APIs (e.g.
+// FindWindowByName, ItemClick) don't need the guard — the engine
+// itself is bound at Start() and won't tick if the AppWindow is gone.
+// The harness sets g_app = &app before Start() and clears it after
+// Shutdown(), so it's never null mid-test in practice; the guard
+// exists for defence-in-depth, not as a routine null check.
 AppWindow* g_app = nullptr;
 
 void DismissWelcomeModalIfOpen(ImGuiTestContext* ctx) {
