@@ -478,22 +478,27 @@ void Viewport::OnKey(int key, int /*scancode*/, int action, int mods) {
             }
             break;
 
+        // Sprint 5 hotfix — the previous handler updated Viewport's local
+        // brushRadius_ via SetBrushRadius() and fired the (never-wired)
+        // OnBrushRadiusChanged callback. AppWindow's per-frame Stage 4
+        // mirror immediately overwrote the press with the unchanged
+        // project_->GetSculptState().brushRadius from the last frame, so
+        // the keybind silently no-op'd. Writing project state directly
+        // mirrors the 1-4 brush-switch hotkey pattern below; the next
+        // frame's sync propagates the new value back into Viewport's
+        // local copy + the StageSidebar slider position.
         case GLFW_KEY_LEFT_BRACKET:
-            if (inTouchUp) {
-                float r = GetBrushRadius();
-                float step = std::max(0.1f, r * 0.1f);
-                float nr = std::max(0.1f, r - step);
-                SetBrushRadius(nr);
-                if (OnBrushRadiusChanged) OnBrushRadiusChanged(nr);
+            if (inTouchUp && project_) {
+                auto& s = project_->GetSculptState();
+                const float step = std::max(0.1f, s.brushRadius * 0.1f);
+                s.brushRadius = std::max(0.1f, s.brushRadius - step);
             }
             break;
         case GLFW_KEY_RIGHT_BRACKET:
-            if (inTouchUp) {
-                float r = GetBrushRadius();
-                float step = std::max(0.1f, r * 0.1f);
-                float nr = std::min(100.0f, r + step);
-                SetBrushRadius(nr);
-                if (OnBrushRadiusChanged) OnBrushRadiusChanged(nr);
+            if (inTouchUp && project_) {
+                auto& s = project_->GetSculptState();
+                const float step = std::max(0.1f, s.brushRadius * 0.1f);
+                s.brushRadius = std::min(100.0f, s.brushRadius + step);
             }
             break;
 
