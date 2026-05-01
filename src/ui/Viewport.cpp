@@ -977,8 +977,13 @@ void Viewport::DrawTopCenterToolbar(float x, float y, float w, float h) {
                                          : WorkflowStage::Alignment;
     const bool isStage3 = (stage == WorkflowStage::Morph);
 
+    // Story 5.4 — role-based window ID (e.g. "##VpToolbar_primary") so
+    // imgui_test_engine can address the toolbar deterministically. The
+    // earlier pointer-stamped ID worked at runtime but was untestable
+    // because the address changed every launch. Roles must stay unique
+    // across simultaneously-rendered viewports — see Viewport::SetRoleId.
     char wid[64];
-    std::snprintf(wid, sizeof(wid), "##VpToolbar_%p", static_cast<void*>(this));
+    std::snprintf(wid, sizeof(wid), "##VpToolbar_%s", roleId_ ? roleId_ : "primary");
 
     ImGui::SetNextWindowPos(ImVec2(x + w * 0.5f, y + 14.0f),
                             ImGuiCond_Always, ImVec2(0.5f, 0.0f));

@@ -83,3 +83,38 @@ Three primary culprit locations in `src/deformation/NRICPDeformer.cpp`:
 **CTest pattern** (all three existing smokes): `add_executable` → `target_link_libraries(PRIVATE MetaVisageCore)` → optional `add_custom_command POST_BUILD` for fixture staging → `add_test(NAME ... COMMAND ... WORKING_DIRECTORY ${CMAKE_RUNTIME_OUTPUT_DIRECTORY})` → optional `set_tests_properties(... PROPERTIES TIMEOUT 60)`. No LABELS on any existing smoke target.
 
 **How to apply:** Sprint 5 story scoping should account for these gaps as prerequisite work before the test lane can be written.
+
+## Story 5.4 — Widget ID Map (for ImGuiTestContext::ItemClick)
+
+### Scenario 1: Stage Stepper progression
+
+- Stepper renders via `ImGui::BeginChild("##MvStageStepper", ...)` (StageStepper.cpp:80)
+- Each pill is `ImGui::PushID(i)` + `ImGui::InvisibleButton("##stepBtn", ...)` + `ImGui::PopID()` (StageStepper.cpp:117–121)
+- Stage number text ("01"/"02"/etc.) is `ImDrawList::AddText` — not a widget label
+- Paths within the child: `"##MvStageStepper/0/##stepBtn"` through `"##MvStageStepper/3/##stepBtn"`
+- Full path requires the enclosing top-level window name — needs verification at StageStepper::Render call site (AppWindow.cpp:1063)
+- Gating: forward click to `i == currentStage+1` requires `project->CanProceedToNextStage() == true`; backward jumps are always clickable
+
+### Scenario 2: Login screen Sign in → Cancel
+
+- Toggle on via Help menu: `ImGui::MenuItem("Login Screen (Dev)", nullptr, showLoginScreen_)` (AppWindow.cpp:1486)
+  - ItemClick path: `"<MainWindowName>/Help/Login Screen (Dev)"`
+- Login window: `ImGui::Begin("##MvLoginScreen", nullptr, flags)` (LoginScreen.cpp:129)
+- Idle state Sign in button: `ImGui::Button("Sign in with browser", ImVec2(btnW, 48.0f))` (LoginScreen.cpp:311)
+  - Path: `"##MvLoginScreen/Sign in with browser"`
+- Waiting state Cancel button: `ImGui::Button("Cancel", ImVec2(BtnW, 28.0f))` (LoginScreen.cpp:494)
+  - Path: `"##MvLoginScreen/Cancel"`
+- NO Cancel button in Idle state — footer right side intentionally empty (LoginScreen.cpp:489 comment)
+  - Sign in → Cancel cycle requires: click "Sign in with browser" first (transitions to Waiting), then click "Cancel"
+- Other buttons in Waiting state: `ImGui::Button("Copy", ...)` (LoginScreen.cpp:404) → `"##MvLoginScreen/Copy"`, `ImGui::InvisibleButton("##loginClose", ...)` (LoginScreen.cpp:547) → `"##MvLoginScreen/##loginClose"`
+
+### Scenario 3: Viewport toolbar shading-mode toggles
+
+- BLOCKER: toolbar window name is pointer-stamped at runtime — `std::snprintf(wid, sizeof(wid), "##VpToolbar_%p", static_cast<void*>(this))` (Viewport.cpp:981)
+  - Cannot write a stable `ItemClick` path without either (a) changing the window name to a fixed string, or (b) using fuzzy/label-based lookup
+- Button IDs within the window (via `ToolbarIconButton` at Viewport.cpp:900–908, called with `PushID(idGlyph)`):
+  - `"solid/##b"` — Solid mode (Viewport.cpp:1022)
+  - `"wire/##b"` — Wireframe mode (Viewport.cpp:1027)
+  - `"tex/##b"` — Textured mode (Viewport.cpp:1032)
+  - Note: Heatmap is NOT in the toolbar; it is Stage 3-only and surfaced differently
+- Shading mode buttons are real `ImGui::InvisibleButton` (test-engine can hit them by ID once window is located)

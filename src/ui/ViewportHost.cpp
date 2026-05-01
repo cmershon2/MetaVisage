@@ -10,7 +10,12 @@ namespace MetaVisage {
 
 ViewportHost::ViewportHost()
     : left_(std::make_unique<Viewport>()),
-      right_(std::make_unique<Viewport>()) {}
+      right_(std::make_unique<Viewport>()) {
+    // Story 5.4 — give each pane a stable role so the per-viewport
+    // toolbar window IDs (##VpToolbar_primary / ##VpToolbar_secondary)
+    // are deterministic across runs. left_ keeps the default "primary".
+    right_->SetRoleId("secondary");
+}
 
 ViewportHost::~ViewportHost() = default;
 

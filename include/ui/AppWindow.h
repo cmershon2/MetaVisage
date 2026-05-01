@@ -66,6 +66,12 @@ public:
     Project* GetProject() { return project_.get(); }
     UndoStack* GetUndoStack() { return undoStack_.get(); }
 
+    // Story 5.4 — exposed so the imgui_test_engine smoke harness can
+    // query framebuffer size + drive its own tick loop. Production code
+    // should not touch the GLFW handle directly; AppWindow remains the
+    // owner.
+    GLFWwindow* GetWindow() { return window_; }
+
 private:
     void RenderFrame(int fbWidth, int fbHeight);
 
