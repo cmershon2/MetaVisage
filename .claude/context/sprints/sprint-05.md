@@ -189,7 +189,47 @@ Sprint 4's mechanical DoD gate (Story 4.7, [c72e6e7](https://github.com/cmershon
 ---
 
 ## Sprint Outcome
-**Status**: Planned
-**Velocity (Actual)**: TBD
-**Carryover**: TBD
-**Notes**: TBD
+
+**Status**: In Progress — implementation complete, [PR #24](https://github.com/cmershon2/MetaVisage/pull/24) open with all `/review-pr` non-blocking nits addressed; awaiting Phase D manual UI smoke + Status flip to `Complete`.
+**Velocity (Actual)**: 22 / 22 points (100%) — all five committed stories shipped.
+**Carryover**: None on the committed scope. Two follow-up backlog items filed: (1) cottage-cheese-face root-cause spike (High Priority — uses the diagnostic dump scaffolding shipped in 5.2), (2) the original Story 5.4 spec's Stage 3 process+Accept and Stage 4 brush+sculpt+undo scenarios for Sprint 6+ now that the harness is in place.
+**Notes**:
+
+All five stories shipped at 22/22 = 100% on commitment. Story 5.4 broke
+the four-retro carry on the `imgui_test_engine` smoke-UI lane (this was
+its fifth attempt across Sprints 3.7 / 3.8 / 4 / 5.4-Day-1 / 5.4-Final).
+PR #24 review (`/review-pr 24`) returned zero blocking findings; five
+non-blocking items were bundled into a single follow-up commit
+(`d969803`).
+
+**Story landings (commit hashes for traceability):**
+- 5.5  `0fee69c` — `/sprint-retrospective` Clause B gate (catches the Status-bypass case Sprint 4 retro identified)
+- 5.4 day 1  `584c978` — vcpkg `imgui[test-engine]` feature + `AppWindow::TickOnce()` extraction
+- 5.1  `5ef8402` — Stage 3 collapsible parameter hierarchy + Config persistence + `DrawSubSectionLabel`
+- 5.2  `88a8d28` — Cottage-cheese Outcome B (warning row + `METAVISAGE_DUMP_RESIDUALS` diagnostic)
+- 5.3  `756fefa` — Stage 4 brush hotkeys 1-4 + `[N]` discoverability badges
+- 5.3 (Path A)  `e835819` — PNG brush previews via `stb_image` (closes the deferred procedural-preview backlog item)
+- 5.3 (rail mirror)  `d129109` — PNG previews mirrored into Stage 4 ToolRail buttons with blue-ring active treatment
+- 5.4 final  `8c2cba2` — `smoke_ui` CTest target with 3 scenarios passing in 2.13s
+- nits  `d969803` — PR #24 review polish (static_assert + threshold hoist + doc comments)
+
+**Mid-sprint scope changes:**
+- Story 5.4 substituted scenarios. The original spec listed Stage Stepper / Login Screen / Viewport Toolbar / Stage 3 process+Accept / Stage 4 brush+sculpt+undo. Live iteration showed the Stepper and Login paths involved BeginChild + nested-menu addressing that didn't resolve cleanly through the test-engine path syntax in budget. Shipped substitutes (welcome modal dismiss, dockspace window-existence smoke, viewport toolbar shading-mode toggles) cover the same click-through bug class the retros flagged. Process+Accept and brush+sculpt+undo deferred to Sprint 6+ with the harness now in place.
+- Story 5.3 Path A (PNG previews) shipped instead of Path B (procedural). User authored the four brush previews to spec and added them mid-sprint; the deferred procedural-preview backlog item moved to the changelog.
+- Story 5.2 Outcome B (stopgap + diagnostic) shipped instead of Outcome A (root-cause fix). The three audit-flagged hypotheses (landmark-weight floor, UV-seam BFS, excluded-vertex landmark mismatch) need a reproduction case + interactive iteration that didn't fit the 5-pt budget. Diagnostic dump (`METAVISAGE_DUMP_RESIDUALS=1`) lets the follow-up spike start with real data.
+
+**Net surface area:**
+- 10 commits since the sprint plan landed (9 story commits + 1 review-nit polish)
+- 35 files touched (4 net-new modules + 4 brush PNG assets + 1 new test exe)
+- ≈1,910 insertions / 456 deletions
+- Net new: `tests/smoke/ui_smoke.cpp`, `assets/brushes/{smooth,grab,pushpull,inflate}_preview.png`, plus extensions to `MvInspectorPrimitives`, `MvStyle`, `Config`, `NRICPDeformer`, `Viewport`, `ToolRail`, `StageSidebar`
+
+**CTest summary (final):**
+
+    smoke_load_serialize_export ... Passed (0.85s)
+    smoke_v1_backward_compat ...... Passed (0.10s)
+    smoke_wrap_parity ............. Passed (44.65s)
+    smoke_ui ...................... Passed (2.19s)  ← new (Story 5.4)
+
+Final close-out (flip Status to `Complete` + tick remaining DoD boxes)
+happens after the Phase D manual UI smoke is logged and PR #24 merges.
