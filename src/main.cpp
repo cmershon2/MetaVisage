@@ -1,4 +1,5 @@
 #include "ui/AppWindow.h"
+#include "licensing/LicenseManager.h"
 #include "utils/Config.h"
 #include "utils/Logger.h"
 #include "utils/Paths.h"
@@ -6,20 +7,53 @@
 
 #include <GLFW/glfw3.h>
 
-int main(int /*argc*/, char** /*argv*/) {
+#include <string>
+#include <string_view>
+
+int main(int argc, char** argv) {
     MetaVisage::Logger::Instance().Initialize(MetaVisage::Paths::LogDir());
     MV_LOG_INFO("MetaVisage v2.0.0 starting");
 
     MetaVisage::Config::Instance().Load();
 
+    // Sprint 6 Story 6.2 -- the OS launches us with argv[1] = the
+    // metavisage:// deep-link URI when the scheme handler fires. Parse it
+    // before SingleInstance so the second-instance forwarding path can
+    // hand the full URI to the first instance via the named-pipe payload.
+    std::string deepLink;
+    if (argc > 1 && argv[1]) {
+        std::string_view arg(argv[1]);
+        if (arg.size() > 13 && arg.substr(0, 13) == "metavisage://") {
+            deepLink.assign(arg);
+            MV_LOG_INFO("main: deep-link URI received via argv[1]");
+        }
+    }
+
     MetaVisage::SingleInstance singleInstance;
-    // Raise-to-front for a second launch is a UI-thread concern; the callback
-    // just logs until AppWindow exposes a way to focus from a worker thread.
-    if (!singleInstance.TryAcquire("raise", [](const std::string& /*payload*/) {
-            MV_LOG_INFO("SingleInstance: second launch signalled");
+    // Payload to the first instance: the full URI on a deep-link launch,
+    // otherwise the legacy "raise" sentinel. The onRaise callback runs on
+    // SingleInstance's listener thread; LicenseManager::QueueDeepLink is
+    // thread-safe and the main thread drains the queue each frame.
+    const std::string payload = deepLink.empty() ? std::string("raise") : deepLink;
+    if (!singleInstance.TryAcquire(payload, [](const std::string& msg) {
+            constexpr std::string_view kScheme = "metavisage://";
+            if (msg.size() > kScheme.size() &&
+                msg.substr(0, kScheme.size()) == kScheme) {
+                MetaVisage::LicenseManager::Instance().QueueDeepLink(msg);
+            } else {
+                MV_LOG_INFO("SingleInstance: second launch signalled");
+            }
         })) {
         MV_LOG_INFO("MetaVisage already running; exiting second instance");
         return 0;
+    }
+
+    // Cold-launch deep-link: a brand-new process started with the URI in
+    // argv[1] never reaches the named-pipe forwarding path, so queue
+    // directly on the LicenseManager (drained by AppWindow::TickOnce on
+    // the first frame).
+    if (!deepLink.empty()) {
+        MetaVisage::LicenseManager::Instance().QueueDeepLink(deepLink);
     }
 
     MetaVisage::AppWindow appWindow;

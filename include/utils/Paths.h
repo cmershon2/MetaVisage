@@ -18,6 +18,13 @@ std::string ConfigFile();
 // assets that ship next to the binary (e.g. assets/models/). Empty on error.
 std::string ExecutableDir();
 
+// Full path to the running MetaVisage executable (forward-slash form).
+// Used by LicenseManager::EnsureSchemeRegistered to write the
+// `shell\open\command` value for the metavisage:// URL handler. Empty on
+// error. Callers that write to the Windows registry should convert to
+// backslashes at the call site since the OS prefers native separators.
+std::string ExecutablePath();
+
 } // namespace MetaVisage::Paths
 
 #endif

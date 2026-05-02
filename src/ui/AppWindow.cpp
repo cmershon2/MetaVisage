@@ -686,6 +686,14 @@ void AppWindow::TickOnce(int fbWidth, int fbHeight) {
     // entire frame body -- render only the login surface and skip the
     // app shell, viewports, sidebar, and modals.
     auto& licenseMgr = LicenseManager::Instance();
+    // Sprint 6 Story 6.2 -- drain any deep-link queued from main.cpp's
+    // argv[1] parser or SingleInstance's onRaise callback before we read
+    // the auth state, so a successful state validation lands in the same
+    // frame instead of leaving the LoginScreen visible for an extra tick.
+    // TickTimeout fires the 5-minute auth-flow watchdog if the user
+    // abandoned the browser.
+    licenseMgr.DrainPendingDeepLink();
+    licenseMgr.TickTimeout();
     const auto authState = licenseMgr.GetState();
     const bool gateLogin =
         authState == LicenseManager::AuthState::Unauthenticated ||

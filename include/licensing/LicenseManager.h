@@ -1,6 +1,8 @@
 #ifndef METAVISAGE_LICENSING_LICENSEMANAGER_H
 #define METAVISAGE_LICENSING_LICENSEMANAGER_H
 
+#include <chrono>
+#include <mutex>
 #include <optional>
 #include <string>
 
@@ -45,12 +47,29 @@ public:
 
     AuthState GetState() const { return state_; }
 
-    // Story 6.2 wires the browser launch + state token; 6.1 just transitions
-    // AuthState so the LoginScreen flips to its Waiting view.
+    // Generates a CSPRNG state token, opens the system browser to
+    // <api>/desktop-auth/init?state=<token>, and transitions to
+    // Authenticating. Browser-launch failure stays in Unauthenticated and
+    // logs a warning -- the user can retry from the LoginScreen.
     void BeginAuthFlow();
 
     // Aborts an in-flight auth flow; returns to Unauthenticated.
     void CancelAuthFlow();
+
+    // Story 6.2 -- thread-safe deep-link queue. Called from main.cpp's
+    // argv[1] parser (cold launch) and from SingleInstance's onRaise
+    // callback (already-running launch fires from a worker thread). The
+    // URI is queued and consumed on the main thread next frame.
+    void QueueDeepLink(std::string uri);
+
+    // Main-thread drain. Called once per frame from AppWindow::TickOnce
+    // before the auth-state read so transitions land in the same frame.
+    void DrainPendingDeepLink();
+
+    // Main-thread timeout watchdog. If the auth flow has been
+    // Authenticating for more than 5 minutes, transitions back to
+    // Unauthenticated. Called once per frame from AppWindow::TickOnce.
+    void TickTimeout();
 
     // Drops cached tokens and returns to Unauthenticated. Story 6.6 wires
     // the License Status dialog Sign Out button to this.
@@ -72,14 +91,32 @@ private:
 
     void TransitionTo(AuthState next);
 
+    // Story 6.2 helpers (main thread only).
+    void HandleDeepLink(const std::string& uri);
+    std::string GenerateStateToken() const;
+    void EnsureSchemeRegistered();
+
     AuthState state_ = AuthState::Unauthenticated;
     bool initialized_ = false;
+    bool schemeRegistered_ = false;
 
     // Populated by Initialize() from the encrypted Config cache. Stories
     // 6.2-6.4 read/write these fields directly so the public API stays small.
     std::optional<std::string> accessToken_;
     std::optional<std::string> refreshToken_;
     std::optional<std::string> licenseJwt_;
+
+    // Story 6.2 -- in-flight auth flow state. authFlowState_ is the
+    // single-use CSPRNG token compared against the deep-link's `state`
+    // parameter; cleared after validation. authFlowStartedAt_ drives the
+    // 5-minute timeout watchdog.
+    std::string authFlowState_;
+    std::optional<std::chrono::steady_clock::time_point> authFlowStartedAt_;
+
+    // Listener-thread -> main-thread deep-link queue. Held briefly during
+    // QueueDeepLink (writer) and DrainPendingDeepLink (reader).
+    std::mutex deepLinkMutex_;
+    std::optional<std::string> pendingDeepLink_;
 };
 
 }  // namespace MetaVisage
