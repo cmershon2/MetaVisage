@@ -694,6 +694,7 @@ void AppWindow::TickOnce(int fbWidth, int fbHeight) {
     // three run before we read the auth state.
     licenseMgr.DrainPendingDeepLink();
     licenseMgr.DrainPendingExchange();
+    licenseMgr.DrainPendingRefresh();
     licenseMgr.TickTimeout();
     if (auto err = licenseMgr.ConsumeLastError(); err && !err->empty()) {
         errorModal_.Open(*err);

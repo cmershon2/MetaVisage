@@ -3,6 +3,7 @@
 
 #include <atomic>
 #include <chrono>
+#include <condition_variable>
 #include <mutex>
 #include <optional>
 #include <string>
@@ -80,6 +81,21 @@ public:
     // via ConsumeLastError).
     void DrainPendingExchange();
 
+    // Story 6.4 -- main-thread drain for the 24h /api/desktop/token
+    // refresh worker. Persists the new tokens, parses tier/conversions
+    // from the JWT payload, and reacts to 403/404 (-> Inactive) and
+    // refresh-token-invalid 401 (-> Unauthenticated, force re-auth).
+    void DrainPendingRefresh();
+
+    // Story 6.6 read accessors -- populated by ApplyAuthSuccess /
+    // DrainPendingRefresh / cached-JWT bootstrap. Empty / zero values
+    // before the first successful exchange.
+    std::string GetTier() const;
+    int GetConversionsUsed() const;
+    int GetConversionsLimit() const;
+    std::string GetConversionsResetAt() const;
+    std::string GetUserEmail() const;
+
     // Returns + clears any user-facing error string queued by
     // DrainPendingExchange / DrainPendingDeepLink. AppWindow polls this
     // each frame and surfaces results via errorModal_. Empty optional
@@ -119,9 +135,17 @@ private:
     // Story 6.3 helpers.
     void StartExchange(const std::string& code);  // main thread; spawns worker
     bool VerifyJwt(const std::string& jwt) const; // pure compute; safe anywhere
+    void LoadClaimsFromJwt(const std::string& jwt); // tier + conversions
     void SetLastError(std::string message);       // any thread (mutex'd)
     static constexpr int kExchangeMaxAttempts = 4;
     static constexpr int kExchangeBudgetSeconds = 30;
+
+    // Story 6.4 helpers -- 24h refresh thread.
+    void StartRefreshThread();   // launched once when entering Authenticated
+    void StopRefreshThread();    // called from Shutdown
+    void RefreshThreadFn();      // worker body
+    void NotifyRefreshNow();     // wakes the thread to fire immediately
+    static constexpr auto kRefreshInterval = std::chrono::hours(24);
 
     AuthState state_ = AuthState::Unauthenticated;
     bool initialized_ = false;
@@ -173,6 +197,41 @@ private:
     // at exchange time (per QA Round 2 Decision 3 -- email lives on the
     // exchange response body, not in the JWT payload).
     std::string userEmail_;
+
+    // Story 6.4 -- claims parsed from the JWT payload. Refreshed on every
+    // successful exchange / refresh; persists across launches because the
+    // JWT itself is cached.
+    std::string tier_ = "free";
+    int conversionsUsed_ = 0;
+    int conversionsLimit_ = 0;
+    std::string conversionsResetAt_;
+
+    // Story 6.4 -- refresh worker. Wakes every 24h (or sooner via
+    // NotifyRefreshNow) until stopRefresh_ flips. Result is published to
+    // pendingRefreshResult_ + refreshFinished_; main thread drains via
+    // DrainPendingRefresh.
+    enum class RefreshOutcome {
+        Success,        // 200 -- new tokens persisted
+        Inactive,       // 403/404 -- subscription terminated
+        AuthInvalid,    // 401 + supabase refresh failed -- force re-auth
+        TransportFail,  // 0/5xx persistent / 429 over budget -- keep state
+    };
+    struct RefreshResult {
+        RefreshOutcome outcome = RefreshOutcome::TransportFail;
+        int httpStatus = 0;
+        std::string accessToken;
+        std::string refreshToken;
+        std::string licenseJwt;
+        std::string errorMessage;
+    };
+    std::thread refreshThread_;
+    std::atomic<bool> stopRefresh_{false};
+    std::atomic<bool> refreshFinished_{false};
+    std::mutex refreshCvMutex_;
+    std::condition_variable refreshCv_;
+    bool refreshFireImmediate_ = false;  // guarded by refreshCvMutex_
+    std::mutex refreshResultMutex_;
+    std::optional<RefreshResult> pendingRefreshResult_;
 };
 
 }  // namespace MetaVisage

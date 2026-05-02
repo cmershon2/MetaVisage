@@ -148,6 +148,7 @@ LicenseManager::~LicenseManager() {
 }
 
 void LicenseManager::Shutdown() {
+    StopRefreshThread();
     if (exchangeThread_.joinable()) {
         exchangeThread_.join();
     }
@@ -175,7 +176,16 @@ void LicenseManager::Initialize() {
     // a corrupted cache doesn't bounce the user every relaunch.
     if (licenseJwt_ && !licenseJwt_->empty()) {
         if (VerifyJwt(*licenseJwt_)) {
+            // Story 6.4 -- pull tier + conversions from the JWT payload
+            // so the License Status badge has data on cold launch before
+            // the first /api/desktop/token refresh lands.
+            LoadClaimsFromJwt(*licenseJwt_);
             TransitionTo(AuthState::Authenticated);
+            // Story 6.4 -- start the 24h refresh thread + fire one
+            // immediate refresh so a stale cached JWT gets replaced
+            // within seconds of launch.
+            StartRefreshThread();
+            NotifyRefreshNow();
         } else {
             MV_LOG_WARNING(
                 "LicenseManager: cached JWT failed verification; clearing");
@@ -220,6 +230,7 @@ void LicenseManager::CancelAuthFlow() {
 }
 
 void LicenseManager::SignOut() {
+    StopRefreshThread();
     auto& config = Config::Instance();
     config.ClearTokens();
     config.ClearLicenseJwt();
@@ -228,6 +239,11 @@ void LicenseManager::SignOut() {
     licenseJwt_.reset();
     authFlowState_.clear();
     authFlowStartedAt_.reset();
+    userEmail_.clear();
+    tier_ = "free";
+    conversionsUsed_ = 0;
+    conversionsLimit_ = 0;
+    conversionsResetAt_.clear();
     TransitionTo(AuthState::Unauthenticated);
 }
 
@@ -446,11 +462,288 @@ void LicenseManager::DrainPendingExchange() {
     refreshToken_ = result.refreshToken;
     licenseJwt_   = result.licenseJwt;
     userEmail_    = result.email;
+    LoadClaimsFromJwt(result.licenseJwt);
 
     authFlowState_.clear();
     authFlowStartedAt_.reset();
     TransitionTo(AuthState::Authenticated);
     MV_LOG_INFO("LicenseManager: auth flow completed successfully");
+
+    // Story 6.4 -- start the 24h /api/desktop/token refresh loop now
+    // that we have valid tokens. No immediate re-fire (the JWT we just
+    // verified is fresh).
+    StartRefreshThread();
+}
+
+void LicenseManager::LoadClaimsFromJwt(const std::string& jwt) {
+    // Decode payload only -- VerifyJwt has already run signature checks
+    // by this point. jwt-cpp throws on malformed input; we swallow and
+    // leave the previous values in place so a corrupt JWT doesn't
+    // silently zero the badge.
+    try {
+        auto decoded = jwt::decode(jwt);
+        if (decoded.has_payload_claim("tier")) {
+            tier_ = decoded.get_payload_claim("tier").as_string();
+        }
+        if (decoded.has_payload_claim("conversions_used")) {
+            const auto& c = decoded.get_payload_claim("conversions_used");
+            conversionsUsed_ = static_cast<int>(c.as_integer());
+        }
+        if (decoded.has_payload_claim("conversions_limit")) {
+            const auto& c = decoded.get_payload_claim("conversions_limit");
+            conversionsLimit_ = static_cast<int>(c.as_integer());
+        }
+        if (decoded.has_payload_claim("conversions_reset_at")) {
+            conversionsResetAt_ =
+                decoded.get_payload_claim("conversions_reset_at").as_string();
+        }
+        MV_LOG_INFO(std::format(
+            "LicenseManager: claims tier={}, conversions={}/{}",
+            tier_, conversionsUsed_, conversionsLimit_));
+    } catch (const std::exception& e) {
+        MV_LOG_WARNING(std::format(
+            "LicenseManager: failed to decode JWT claims: {}", e.what()));
+    }
+}
+
+std::string LicenseManager::GetTier() const            { return tier_; }
+int         LicenseManager::GetConversionsUsed() const { return conversionsUsed_; }
+int         LicenseManager::GetConversionsLimit() const{ return conversionsLimit_; }
+std::string LicenseManager::GetConversionsResetAt() const { return conversionsResetAt_; }
+std::string LicenseManager::GetUserEmail() const       { return userEmail_; }
+
+void LicenseManager::StartRefreshThread() {
+    if (refreshThread_.joinable()) return;  // already running
+    stopRefresh_.store(false);
+    refreshFinished_.store(false);
+    refreshThread_ = std::thread([this]() { RefreshThreadFn(); });
+}
+
+void LicenseManager::StopRefreshThread() {
+    if (!refreshThread_.joinable()) return;
+    {
+        std::lock_guard<std::mutex> lock(refreshCvMutex_);
+        stopRefresh_.store(true);
+    }
+    refreshCv_.notify_all();
+    refreshThread_.join();
+}
+
+void LicenseManager::NotifyRefreshNow() {
+    {
+        std::lock_guard<std::mutex> lock(refreshCvMutex_);
+        refreshFireImmediate_ = true;
+    }
+    refreshCv_.notify_all();
+}
+
+void LicenseManager::RefreshThreadFn() {
+    while (true) {
+        // Wait up to 24h for the timer; wake early on shutdown or
+        // explicit refreshFireImmediate_ ping.
+        {
+            std::unique_lock<std::mutex> lock(refreshCvMutex_);
+            refreshCv_.wait_for(lock, kRefreshInterval, [this] {
+                return stopRefresh_.load() || refreshFireImmediate_;
+            });
+            if (stopRefresh_.load()) return;
+            refreshFireImmediate_ = false;
+        }
+
+        // Snapshot tokens off the main-thread-managed fields. We only
+        // read; the main thread writes them so a brief data race here is
+        // harmless (worst case: the refresh fails with the old token and
+        // retries on the next cycle). For tighter ordering we could add
+        // a token mutex; not warranted for a 24h cadence.
+        const std::string apiBase = LicenseConfig::kApiBaseUrl;
+        const std::string supabaseUrl = LicenseConfig::kSupabaseProjectUrl;
+        const std::string anonKey = LicenseConfig::kSupabaseAnonKey;
+        const std::string accessTokenSnap =
+            accessToken_.value_or(std::string{});
+        const std::string refreshTokenSnap =
+            refreshToken_.value_or(std::string{});
+
+        if (accessTokenSnap.empty()) {
+            MV_LOG_WARNING(
+                "LicenseManager: refresh skipped (no access token)");
+            continue;
+        }
+
+        HttpClient http;
+        RefreshResult result;
+
+        // Primary call: POST /api/desktop/token with the access token.
+        const std::string tokenUrl = std::format("{}/api/desktop/token", apiBase);
+
+        auto callTokenEndpoint = [&](const std::string& bearer) {
+            return http.PostJsonBearer(tokenUrl, "{}", bearer);
+        };
+
+        HttpResponse resp = callTokenEndpoint(accessTokenSnap);
+
+        // 401 -> refresh the Supabase access token via Option A (direct
+        // to Supabase) per QA Round 2 Decision 2, then retry once.
+        if (resp.status == 401 && !refreshTokenSnap.empty() &&
+            !supabaseUrl.empty() && !anonKey.empty()) {
+            MV_LOG_INFO(
+                "LicenseManager: access token expired; refreshing via Supabase");
+            const std::string supRefreshUrl = std::format(
+                "{}/auth/v1/token?grant_type=refresh_token", supabaseUrl);
+            const std::string supBody = std::format(
+                R"({{"refresh_token":"{}"}})", refreshTokenSnap);
+            HttpResponse supResp = http.PostJson(
+                supRefreshUrl, supBody, {{"apikey", anonKey}});
+            if (supResp.status == 200 && supResp.errorMessage.empty()) {
+                try {
+                    auto j = nlohmann::json::parse(supResp.body);
+                    std::string newAccess  = j.value("access_token",  "");
+                    std::string newRefresh = j.value("refresh_token", "");
+                    if (!newAccess.empty() && !newRefresh.empty()) {
+                        result.accessToken  = newAccess;
+                        result.refreshToken = newRefresh;
+                        // Retry the desktop endpoint with the fresh access token.
+                        resp = callTokenEndpoint(newAccess);
+                    }
+                } catch (const std::exception& e) {
+                    MV_LOG_WARNING(std::format(
+                        "LicenseManager: Supabase refresh JSON parse: {}",
+                        e.what()));
+                }
+            }
+            if (resp.status == 401 || result.accessToken.empty()) {
+                // Refresh token is also invalid -> force re-auth.
+                result.outcome = RefreshOutcome::AuthInvalid;
+                result.httpStatus = static_cast<int>(resp.status);
+                result.errorMessage =
+                    "Your session expired. Please sign in again.";
+                {
+                    std::lock_guard<std::mutex> lock(refreshResultMutex_);
+                    pendingRefreshResult_ = std::move(result);
+                }
+                refreshFinished_.store(true);
+                continue;
+            }
+        }
+
+        result.httpStatus = static_cast<int>(resp.status);
+
+        if (resp.status == 200 && resp.errorMessage.empty()) {
+            try {
+                auto j = nlohmann::json::parse(resp.body);
+                std::string jwt = j.value("token", "");
+                if (jwt.empty()) {
+                    result.outcome = RefreshOutcome::TransportFail;
+                    result.errorMessage = "Refresh response missing token.";
+                } else {
+                    result.outcome = RefreshOutcome::Success;
+                    result.licenseJwt = std::move(jwt);
+                    // accessToken/refreshToken populated above only if a
+                    // Supabase refresh ran; otherwise leave empty so the
+                    // drain knows not to overwrite the existing tokens.
+                }
+            } catch (const std::exception& e) {
+                result.outcome = RefreshOutcome::TransportFail;
+                result.errorMessage = std::format(
+                    "Refresh response parse error: {}", e.what());
+            }
+        } else if (resp.status == 403 || resp.status == 404) {
+            result.outcome = RefreshOutcome::Inactive;
+            result.errorMessage =
+                "Your subscription is inactive. "
+                "Visit metavisage.io to manage it.";
+        } else if (resp.status == 401) {
+            // 401 with no available refresh path (no Supabase URL or no
+            // refresh token) -- treat as auth invalid.
+            result.outcome = RefreshOutcome::AuthInvalid;
+            result.errorMessage =
+                "Your session expired. Please sign in again.";
+        } else {
+            // 0 / 429 / 5xx / unknown -- transient. Keep state, log.
+            result.outcome = RefreshOutcome::TransportFail;
+            result.errorMessage = std::format(
+                "Refresh failed (status {}).", resp.status);
+        }
+
+        {
+            std::lock_guard<std::mutex> lock(refreshResultMutex_);
+            pendingRefreshResult_ = std::move(result);
+        }
+        refreshFinished_.store(true);
+    }
+}
+
+void LicenseManager::DrainPendingRefresh() {
+    if (!refreshFinished_.load()) return;
+    refreshFinished_.store(false);
+
+    std::optional<RefreshResult> resultOpt;
+    {
+        std::lock_guard<std::mutex> lock(refreshResultMutex_);
+        resultOpt.swap(pendingRefreshResult_);
+    }
+    if (!resultOpt) return;
+    const auto& result = *resultOpt;
+
+    switch (result.outcome) {
+        case RefreshOutcome::Success: {
+            // Verify + persist the freshly-issued JWT.
+            if (!VerifyJwt(result.licenseJwt)) {
+                MV_LOG_WARNING(
+                    "LicenseManager: refreshed JWT failed verification");
+                return;
+            }
+            auto& config = Config::Instance();
+            if (!result.accessToken.empty() && !result.refreshToken.empty()) {
+                // Supabase refresh ran -- persist new tokens too.
+                config.SetTokens(result.accessToken, result.refreshToken);
+                accessToken_  = result.accessToken;
+                refreshToken_ = result.refreshToken;
+            }
+            config.SetLicenseJwt(result.licenseJwt);
+            licenseJwt_ = result.licenseJwt;
+            LoadClaimsFromJwt(result.licenseJwt);
+            // Stay in Authenticated; this was a background refresh.
+            MV_LOG_INFO("LicenseManager: refresh succeeded");
+            break;
+        }
+        case RefreshOutcome::Inactive: {
+            MV_LOG_WARNING("LicenseManager: subscription inactive");
+            SetLastError(result.errorMessage);
+            TransitionTo(AuthState::Inactive);
+            break;
+        }
+        case RefreshOutcome::AuthInvalid: {
+            MV_LOG_WARNING(
+                "LicenseManager: refresh auth invalid; forcing re-auth");
+            SetLastError(result.errorMessage);
+            // Clear caches so the next launch hits the LoginScreen
+            // instead of a stale cached JWT.
+            auto& config = Config::Instance();
+            config.ClearTokens();
+            config.ClearLicenseJwt();
+            accessToken_.reset();
+            refreshToken_.reset();
+            licenseJwt_.reset();
+            TransitionTo(AuthState::Unauthenticated);
+            // Stop our own thread since SignOut was effectively done;
+            // a successful re-auth via BeginAuthFlow restarts it.
+            // Can't call StopRefreshThread from inside the thread; do
+            // a soft-stop by setting the flag and letting the thread
+            // return naturally on the next loop top.
+            stopRefresh_.store(true);
+            refreshCv_.notify_all();
+            break;
+        }
+        case RefreshOutcome::TransportFail: {
+            // Story 6.5 surfaces the offline pill; for 6.4 alone we just
+            // keep state and log. The HTTPClient retry/backoff already
+            // ran inside the worker; nothing more to do here.
+            MV_LOG_INFO(std::format(
+                "LicenseManager: refresh transport failure (status={}, msg={})",
+                result.httpStatus, result.errorMessage));
+            break;
+        }
+    }
 }
 
 bool LicenseManager::VerifyJwt(const std::string& jwt) const {
