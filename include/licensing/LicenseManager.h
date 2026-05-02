@@ -124,6 +124,10 @@ public:
     // the smoke_ui harness to bypass the LoginScreen gate when exercising
     // the rest of the app shell. Must be called before AppWindow::Initialize
     // so the cached-session bootstrap doesn't overwrite the forced value.
+    // Side effect: sets a test-mode flag that suppresses browser launch
+    // (BeginAuthFlow) and registry writes (EnsureSchemeRegistered) so the
+    // harness can exercise the LoginScreen state transitions without
+    // opening real browsers or touching HKCU.
     // Production code never calls this.
     void SetTestState(AuthState forced);
 
@@ -158,6 +162,7 @@ private:
     AuthState state_ = AuthState::Unauthenticated;
     bool initialized_ = false;
     bool schemeRegistered_ = false;
+    bool testMode_ = false;
 
     // Populated by Initialize() from the encrypted Config cache. Stories
     // 6.2-6.4 read/write these fields directly so the public API stays small.

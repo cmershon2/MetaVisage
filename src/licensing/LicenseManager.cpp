@@ -207,14 +207,18 @@ void LicenseManager::BeginAuthFlow() {
         return;
     }
 
-    const std::string url = std::format(
-        "{}/desktop-auth/init?state={}",
-        LicenseConfig::kApiBaseUrl, token);
-
-    if (!OpenUrl(url)) {
-        MV_LOG_ERROR(std::format(
-            "LicenseManager: failed to launch browser to {}", url));
-        return;
+    if (!testMode_) {
+        const std::string url = std::format(
+            "{}/desktop-auth/init?state={}",
+            LicenseConfig::kApiBaseUrl, token);
+        if (!OpenUrl(url)) {
+            MV_LOG_ERROR(std::format(
+                "LicenseManager: failed to launch browser to {}", url));
+            return;
+        }
+    } else {
+        MV_LOG_INFO(
+            "LicenseManager: test mode -- skipping browser launch");
     }
 
     authFlowState_ = token;
@@ -251,6 +255,7 @@ void LicenseManager::SignOut() {
 void LicenseManager::SetTestState(AuthState forced) {
     state_ = forced;
     initialized_ = true;
+    testMode_ = true;
     MV_LOG_INFO(std::format("LicenseManager: test override -> {}",
                             StateName(forced)));
 }
@@ -828,6 +833,12 @@ std::string LicenseManager::GenerateStateToken() const {
 void LicenseManager::EnsureSchemeRegistered() {
 #ifdef _WIN32
     if (schemeRegistered_) return;
+    if (testMode_) {
+        MV_LOG_INFO(
+            "LicenseManager: test mode -- skipping HKCU scheme registration");
+        schemeRegistered_ = true;
+        return;
+    }
 
     const std::string exePath = Paths::ExecutablePath();
     if (exePath.empty()) {
