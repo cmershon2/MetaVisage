@@ -115,9 +115,12 @@ After intercepting the `metavisage://` deep link, the desktop app must exchange 
   "access_token": "{supabase_access_token}",
   "refresh_token": "{supabase_refresh_token}",
   "license_jwt": "{signed_license_jwt}",
-  "state": "{state}"
+  "state": "{state}",
+  "email": "user@example.com"
 }
 ```
+
+The `email` field is the email address of the signed-in Supabase user — provided so the desktop client can label the License Status dialog without an additional round trip. It is a snapshot at exchange time; if the user later changes their email it will not refresh until the next sign-in.
 
 **Error Responses:**
 - `400 Bad Request` — Exchange code is invalid, expired (>2 minutes), or already used. The desktop app should re-initiate the full auth flow.
@@ -132,7 +135,32 @@ After intercepting the `metavisage://` deep link, the desktop app must exchange 
 
 ## Token Refresh
 
-After initial authentication, the desktop app can silently refresh its license JWT using:
+The desktop app holds two distinct tokens after the exchange:
+
+1. A **Supabase access token** (short-lived, used as the `Authorization: Bearer …` credential on every API call).
+2. A **license JWT** (7-day expiry, cached for offline grace).
+
+Each refreshes via a different endpoint.
+
+### Refreshing the Supabase access token
+
+When the access token expires (the desktop app gets a `401` from any portal endpoint), refresh it directly against Supabase Auth using the `refresh_token` returned by `/api/desktop/exchange`:
+
+```
+POST https://{SUPABASE_PROJECT_REF}.supabase.co/auth/v1/token?grant_type=refresh_token
+apikey: {NEXT_PUBLIC_SUPABASE_ANON_KEY}
+Content-Type: application/json
+
+{ "refresh_token": "{stored_refresh_token}" }
+```
+
+A successful response returns a new `access_token` and `refresh_token`. Replace the cached pair with the new values. If the refresh call itself returns `401`/`400`, the refresh token is invalid (revoked or expired) — fall back to the full `metavisage://` auth flow.
+
+The Supabase project URL and the anon key are public values intended for client-side distribution and may be embedded in the desktop binary.
+
+### Refreshing the license JWT
+
+After the access token is valid, fetch a fresh license JWT via:
 
 ### `POST /api/desktop/token`
 
@@ -231,7 +259,7 @@ metavisage://auth?code={exchange_code}&state={state}
 - **Origin validation:** All desktop API endpoints reject cross-origin browser requests. Native desktop HTTP clients (which don't send `Origin` headers) are allowed.
 - **Security headers:** The portal sets `X-Frame-Options: DENY`, `X-Content-Type-Options: nosniff`, `Strict-Transport-Security`, `Referrer-Policy`, and `Permissions-Policy` on all responses.
 - **Bearer token authentication:** All API endpoints authenticate via Supabase access tokens, not license keys. Access tokens are short-lived and validated against Supabase Auth on every request.
-- **Short-lived sessions:** Supabase access tokens are short-lived JWTs. The desktop app should use `/api/desktop/token` for periodic license JWT refresh. Use the Supabase client library to handle access token refresh via the refresh token.
+- **Short-lived sessions:** Supabase access tokens are short-lived JWTs. The desktop app refreshes them via Supabase's `/auth/v1/token` endpoint (see [Token Refresh](#token-refresh)) and refreshes its license JWT via `/api/desktop/token`.
 - **Offline grace period:** The license JWT has a 7-day expiry window for offline access.
 - **Scheme registration:** The `metavisage://` scheme should only be registered by the official MetaVisage installer.
 - **Rate limiting:** All endpoints are rate-limited — `/api/desktop/exchange` at 10 req/min per IP, `/api/desktop/token` at 20 req/min per user, `/api/license/validate` at 30 req/min per user.

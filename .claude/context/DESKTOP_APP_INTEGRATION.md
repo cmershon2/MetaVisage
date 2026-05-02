@@ -50,7 +50,7 @@ No request body is required.
 
 ```json
 {
-  "token": "eyJhbGciOiJIUzI1NiIs...",
+  "token": "eyJhbGciOiJSUzI1NiIs...",
   "tier": "indie",
   "license_key": "a1b2c3d4e5f6a1b2c3d4e5f6a1b2c3d4",
   "conversions_used": 5,
@@ -154,10 +154,12 @@ The `token` returned by the validation endpoint is a signed JWT that the desktop
 
 ```json
 {
-  "alg": "HS256",
+  "alg": "RS256",
   "typ": "JWT"
 }
 ```
+
+The web portal signs with an RSA private key; the desktop app verifies signatures using the matching RSA public key (distributed with the desktop binary as `LICENSE_JWT_PUBLIC_KEY`). The portal does not need to share the private key with the desktop.
 
 ### JWT Payload
 
@@ -317,7 +319,7 @@ The desktop app should respect the `Retry-After` header and implement exponentia
 ## Error Handling Recommendations
 
 1. **Network errors**: Retry with exponential backoff (1s, 2s, 4s, max 30s). Fall back to cached JWT if available.
-2. **401 Unauthorized**: The access token is invalid or expired. Refresh the token via the Supabase refresh endpoint, or re-trigger the `metavisage://` auth flow if the refresh token has also expired.
+2. **401 Unauthorized**: The access token is invalid or expired. Refresh it by `POST`ing to `https://{SUPABASE_PROJECT_URL}/auth/v1/token?grant_type=refresh_token` with the stored refresh token (see `docs/DESKTOP_AUTH_FLOW.md` for the full contract). If that call also returns `401`/`400`, the refresh token has expired — re-trigger the `metavisage://` auth flow.
 3. **403 Inactive/Expired**: Show a clear message directing the user to the web portal to manage their subscription.
 4. **403 Limit Reached**: Show remaining time until `conversions_reset_at` and suggest upgrading.
 5. **429 Rate Limited**: Wait for the duration specified in `Retry-After` before retrying.
@@ -329,9 +331,13 @@ The desktop app should respect the `Retry-After` header and implement exponentia
 
 The desktop app needs to be configured with:
 
-| Variable                  | Description                                  |
-| ------------------------- | -------------------------------------------- |
-| `METAVISAGE_API_BASE_URL` | Base URL of the web portal API               |
-| `LICENSE_JWT_SECRET`      | Shared secret for JWT signature verification |
+| Variable                       | Description                                                                  |
+| ------------------------------ | ---------------------------------------------------------------------------- |
+| `METAVISAGE_API_BASE_URL`      | Base URL of the web portal API                                               |
+| `LICENSE_JWT_PUBLIC_KEY`       | RSA public key (PEM, SPKI) used to verify license JWT signatures             |
+| `SUPABASE_PROJECT_URL`         | Supabase project URL (e.g. `https://xxxx.supabase.co`) for access-token refresh |
+| `SUPABASE_ANON_KEY`            | Supabase anon (public) key — required as the `apikey` header on refresh calls |
 
-The `LICENSE_JWT_SECRET` must match the value configured on the web portal. This allows the desktop app to independently verify JWT signatures without a network call.
+The `LICENSE_JWT_PUBLIC_KEY` matches the private key configured on the web portal. The desktop app verifies JWT signatures locally with the public key — no network call required, and the private key never leaves the portal.
+
+`SUPABASE_PROJECT_URL` and `SUPABASE_ANON_KEY` are public values intended for client-side distribution; they exist so the desktop app can call Supabase Auth's `/auth/v1/token?grant_type=refresh_token` endpoint directly when its access token expires. See `docs/DESKTOP_AUTH_FLOW.md` for the refresh contract.
