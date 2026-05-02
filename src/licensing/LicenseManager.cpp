@@ -7,9 +7,17 @@
 
 #include "licensing/LicenseConfig.h"
 #include "utils/Config.h"
+#include "utils/HttpClient.h"
 #include "utils/Logger.h"
 #include "utils/OpenUrl.h"
 #include "utils/Paths.h"
+
+#include <nlohmann/json.hpp>
+// jwt-cpp pulls picojson by default; route it through nlohmann_json since
+// we already link nlohmann + parse the exchange response with it. The
+// `defaults.h` variant exposes jwt::decode() / jwt::verify() with the
+// traits already wired so we don't have to template every call site.
+#include <jwt-cpp/traits/nlohmann-json/defaults.h>
 
 #ifdef _WIN32
 #include <windows.h>
@@ -23,9 +31,12 @@
 
 #include <algorithm>
 #include <array>
+#include <chrono>
 #include <cstdint>
+#include <exception>
 #include <format>
 #include <string_view>
+#include <thread>
 
 namespace MetaVisage {
 
@@ -132,6 +143,16 @@ LicenseManager& LicenseManager::Instance() {
 
 LicenseManager::LicenseManager() = default;
 
+LicenseManager::~LicenseManager() {
+    Shutdown();
+}
+
+void LicenseManager::Shutdown() {
+    if (exchangeThread_.joinable()) {
+        exchangeThread_.join();
+    }
+}
+
 void LicenseManager::Initialize() {
     if (initialized_) return;
     initialized_ = true;
@@ -148,12 +169,20 @@ void LicenseManager::Initialize() {
 
     EnsureSchemeRegistered();
 
-    // Story 6.1: a non-empty cached JWT counts as Authenticated. Story 6.3
-    // adds RS256 signature + exp claim verification; rejected JWTs flow
-    // through ClearLicenseJwt() and the user is bounced back to the sign-in
-    // screen on the next launch.
+    // Story 6.3 -- verify the cached JWT before granting Authenticated.
+    // Bad signature / expired / wrong issuer / missing audience all force
+    // re-auth. ClearLicenseJwt persists the empty value through Config so
+    // a corrupted cache doesn't bounce the user every relaunch.
     if (licenseJwt_ && !licenseJwt_->empty()) {
-        TransitionTo(AuthState::Authenticated);
+        if (VerifyJwt(*licenseJwt_)) {
+            TransitionTo(AuthState::Authenticated);
+        } else {
+            MV_LOG_WARNING(
+                "LicenseManager: cached JWT failed verification; clearing");
+            Config::Instance().ClearLicenseJwt();
+            licenseJwt_.reset();
+            TransitionTo(AuthState::Unauthenticated);
+        }
     } else {
         TransitionTo(AuthState::Unauthenticated);
     }
@@ -262,12 +291,210 @@ void LicenseManager::HandleDeepLink(const std::string& uri) {
         return;
     }
 
-    MV_LOG_INFO("LicenseManager: state validated; exchange code captured "
-                "(awaiting Story 6.3 implementation of /api/desktop/exchange)");
-    // Story 6.3 fills in: POST /api/desktop/exchange with parsed->code,
-    // RS256 verify the returned JWT, persist via Config::SetTokens +
-    // SetLicenseJwt, transition to Authenticated. For now the auth flow
-    // sits in Authenticating until Cancel or 5-minute timeout.
+    MV_LOG_INFO("LicenseManager: state validated; spawning exchange worker");
+    StartExchange(parsed->code);
+}
+
+void LicenseManager::StartExchange(const std::string& code) {
+    if (exchangeRunning_.load()) {
+        MV_LOG_WARNING(
+            "LicenseManager: exchange already in flight; ignoring duplicate");
+        return;
+    }
+    if (exchangeThread_.joinable()) exchangeThread_.join();
+
+    exchangeRunning_.store(true);
+    exchangeFinished_.store(false);
+
+    // Capture by value -- the worker outlives this stack frame.
+    std::string codeCopy = code;
+    exchangeThread_ = std::thread([this, codeCopy = std::move(codeCopy)]() {
+        ExchangeResult result;
+        const std::string url = std::format(
+            "{}/api/desktop/exchange", LicenseConfig::kApiBaseUrl);
+        const std::string body = std::format(R"({{"code":"{}"}})", codeCopy);
+
+        const auto deadline =
+            std::chrono::steady_clock::now() +
+            std::chrono::seconds(kExchangeBudgetSeconds);
+
+        HttpClient http;
+        HttpResponse resp;
+        for (int attempt = 0; attempt < kExchangeMaxAttempts; ++attempt) {
+            resp = http.PostJson(url, body, {});
+            // Done if 2xx, or any 4xx that isn't 429 -- those are
+            // terminal user-visible errors, not transient.
+            const bool transient =
+                (resp.status == 0) || (resp.status == 429) ||
+                (resp.status >= 500);
+            if (!transient) break;
+
+            int waitSec = (resp.status == 429 && resp.retryAfterSeconds > 0)
+                            ? static_cast<int>(resp.retryAfterSeconds)
+                            : (1 << attempt);  // 1s, 2s, 4s, 8s
+            const auto wakeAt =
+                std::chrono::steady_clock::now() +
+                std::chrono::seconds(waitSec);
+            if (wakeAt > deadline) break;
+            std::this_thread::sleep_until(wakeAt);
+        }
+
+        result.httpStatus = static_cast<int>(resp.status);
+
+        if (resp.status == 200 && resp.errorMessage.empty()) {
+            try {
+                auto j = nlohmann::json::parse(resp.body);
+                result.accessToken  = j.value("access_token", "");
+                result.refreshToken = j.value("refresh_token", "");
+                result.licenseJwt   = j.value("license_jwt", "");
+                result.email        = j.value("email", "");
+                if (result.accessToken.empty() ||
+                    result.refreshToken.empty() ||
+                    result.licenseJwt.empty()) {
+                    result.errorMessage =
+                        "Server response was missing required fields. "
+                        "Please try again.";
+                } else {
+                    result.ok = true;
+                }
+            } catch (const std::exception& e) {
+                MV_LOG_ERROR(std::format(
+                    "LicenseManager: exchange JSON parse error: {}", e.what()));
+                result.errorMessage =
+                    "Could not understand the server response. "
+                    "Please try again.";
+            }
+        } else if (resp.status == 400) {
+            result.errorMessage =
+                "The sign-in link expired. Please sign in again.";
+        } else if (resp.status == 429) {
+            result.errorMessage =
+                "Server is busy. Please try again in a moment.";
+        } else if (resp.status >= 500) {
+            result.errorMessage =
+                "Server error. Please try again in a few minutes.";
+        } else if (resp.status == 0) {
+            result.errorMessage =
+                "Could not reach the server. Check your internet connection.";
+        } else {
+            result.errorMessage = std::format(
+                "Sign-in failed (status {}). Please try again.", resp.status);
+        }
+
+        {
+            std::lock_guard<std::mutex> lock(exchangeResultMutex_);
+            exchangeResult_ = std::move(result);
+        }
+        exchangeFinished_.store(true);
+    });
+}
+
+void LicenseManager::DrainPendingExchange() {
+    if (!exchangeFinished_.load()) return;
+
+    if (exchangeThread_.joinable()) exchangeThread_.join();
+    exchangeRunning_.store(false);
+    exchangeFinished_.store(false);
+
+    ExchangeResult result;
+    {
+        std::lock_guard<std::mutex> lock(exchangeResultMutex_);
+        result = std::move(exchangeResult_);
+        exchangeResult_ = ExchangeResult{};
+    }
+
+    // If the user canceled while the worker was in flight, the auth
+    // flow is no longer valid; discard whatever the server returned.
+    if (state_ != AuthState::Authenticating) {
+        MV_LOG_INFO(std::format(
+            "LicenseManager: exchange completed but state is {} -- discarding",
+            StateName(state_)));
+        return;
+    }
+
+    if (!result.ok) {
+        MV_LOG_WARNING(std::format(
+            "LicenseManager: exchange failed (status={}, msg={})",
+            result.httpStatus, result.errorMessage));
+        SetLastError(result.errorMessage);
+        authFlowState_.clear();
+        authFlowStartedAt_.reset();
+        TransitionTo(AuthState::Unauthenticated);
+        return;
+    }
+
+    // RS256 verification of the freshly-issued JWT -- catches a portal
+    // misconfiguration before we persist a worthless token.
+    if (!VerifyJwt(result.licenseJwt)) {
+        MV_LOG_ERROR(
+            "LicenseManager: server-issued JWT failed verification");
+        SetLastError(
+            "Server response could not be verified. Please try again.");
+        authFlowState_.clear();
+        authFlowStartedAt_.reset();
+        TransitionTo(AuthState::Unauthenticated);
+        return;
+    }
+
+    // Persist on the main thread -- Config::SetTokens / SetLicenseJwt
+    // call Save() synchronously and are not thread-safe.
+    auto& config = Config::Instance();
+    config.SetTokens(result.accessToken, result.refreshToken);
+    config.SetLicenseJwt(result.licenseJwt);
+
+    accessToken_  = result.accessToken;
+    refreshToken_ = result.refreshToken;
+    licenseJwt_   = result.licenseJwt;
+    userEmail_    = result.email;
+
+    authFlowState_.clear();
+    authFlowStartedAt_.reset();
+    TransitionTo(AuthState::Authenticated);
+    MV_LOG_INFO("LicenseManager: auth flow completed successfully");
+}
+
+bool LicenseManager::VerifyJwt(const std::string& jwt) const {
+    // Development fallback per QA Round 2: with no public key embedded
+    // (build profile = development and no keys/development-public.pem
+    // committed yet), we skip signature verification and warn so the
+    // localhost dogfooding path works pre-key-delivery. The CMake
+    // configure step refuses to build production with an empty key, so
+    // this fallback never escapes a production binary.
+    const std::string_view publicKey = LicenseConfig::kLicenseJwtPublicKey;
+    if (publicKey.empty()) {
+        MV_LOG_WARNING(
+            "LicenseManager: kLicenseJwtPublicKey is empty -- skipping JWT "
+            "signature verification (development-only fallback)");
+        return !jwt.empty();
+    }
+
+    try {
+        auto decoded = jwt::decode(jwt);
+        auto verifier = jwt::verify()
+            .allow_algorithm(jwt::algorithm::rs256(
+                std::string(publicKey), "", "", ""))
+            .with_issuer("metavisage-web")
+            .with_audience("metavisage-desktop")
+            .leeway(60);  // 60s clock-skew tolerance
+        verifier.verify(decoded);
+        return true;
+    } catch (const std::exception& e) {
+        MV_LOG_WARNING(std::format(
+            "LicenseManager: JWT verification failed: {}", e.what()));
+        return false;
+    }
+}
+
+void LicenseManager::SetLastError(std::string message) {
+    std::lock_guard<std::mutex> lock(lastErrorMutex_);
+    lastError_ = std::move(message);
+}
+
+std::optional<std::string> LicenseManager::ConsumeLastError() {
+    std::lock_guard<std::mutex> lock(lastErrorMutex_);
+    std::optional<std::string> out;
+    out.swap(lastError_);
+    return out;
 }
 
 std::string LicenseManager::GenerateStateToken() const {

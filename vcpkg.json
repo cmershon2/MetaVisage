@@ -13,6 +13,8 @@
     "assimp",
     "nlohmann-json",
     "nativefiledialog-extended",
-    "curl"
+    "curl",
+    "jwt-cpp",
+    "openssl"
   ]
 }

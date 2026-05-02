@@ -58,6 +58,12 @@ find_package(CURL REQUIRED)
 # Eigen3 — deformation math (unchanged)
 find_package(Eigen3 CONFIG REQUIRED)
 
+# jwt-cpp + OpenSSL — RS256 license JWT verification (Sprint 6 Story 6.3).
+# vcpkg's libcurl on Windows ships Schannel, not OpenSSL, so jwt-cpp's
+# OpenSSL backend pulls in libssl/libcrypto explicitly.
+find_package(jwt-cpp CONFIG REQUIRED)
+find_package(OpenSSL REQUIRED)
+
 # Assimp — mesh I/O (optional, unchanged)
 find_package(assimp CONFIG)
 if(assimp_FOUND)
@@ -313,6 +319,9 @@ target_link_libraries(${PROJECT_NAME}Core
         nfd::nfd
         CURL::libcurl
         Eigen3::Eigen
+        jwt-cpp::jwt-cpp
+        OpenSSL::SSL
+        OpenSSL::Crypto
 )
 
 if(OpenMP_CXX_FOUND)

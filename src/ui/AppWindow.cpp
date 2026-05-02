@@ -686,14 +686,18 @@ void AppWindow::TickOnce(int fbWidth, int fbHeight) {
     // entire frame body -- render only the login surface and skip the
     // app shell, viewports, sidebar, and modals.
     auto& licenseMgr = LicenseManager::Instance();
-    // Sprint 6 Story 6.2 -- drain any deep-link queued from main.cpp's
-    // argv[1] parser or SingleInstance's onRaise callback before we read
-    // the auth state, so a successful state validation lands in the same
-    // frame instead of leaving the LoginScreen visible for an extra tick.
-    // TickTimeout fires the 5-minute auth-flow watchdog if the user
-    // abandoned the browser.
+    // Sprint 6 Story 6.2 -- drain the deep-link queue (main.cpp argv or
+    // SingleInstance onRaise). Story 6.3 -- drain the exchange-worker
+    // result if the POST has finished. TickTimeout fires the 5-minute
+    // auth watchdog. Order matters: deep-link can spawn the exchange,
+    // exchange can transition to Authenticated/Unauthenticated, so all
+    // three run before we read the auth state.
     licenseMgr.DrainPendingDeepLink();
+    licenseMgr.DrainPendingExchange();
     licenseMgr.TickTimeout();
+    if (auto err = licenseMgr.ConsumeLastError(); err && !err->empty()) {
+        errorModal_.Open(*err);
+    }
     const auto authState = licenseMgr.GetState();
     const bool gateLogin =
         authState == LicenseManager::AuthState::Unauthenticated ||
@@ -2344,6 +2348,12 @@ void AppWindow::RenderFrame(int /*fbWidth*/, int /*fbHeight*/) {
 void AppWindow::Shutdown() {
     // Unwind in reverse init order, consulting each flag so a partial
     // Initialize() failure still produces a clean teardown.
+
+    // Sprint 6 Story 6.3 -- join the licensing exchange worker so the
+    // process doesn't exit while the POST is mid-flight. HttpClient has
+    // a 30s ceiling; in practice the join is instant on a normal exit
+    // because the user has already authenticated by the time they quit.
+    LicenseManager::Instance().Shutdown();
 
     // Join the morph worker before tearing anything down — it holds raw
     // pointers into the deformer and captures `this` by reference.

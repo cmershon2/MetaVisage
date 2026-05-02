@@ -1,10 +1,12 @@
 #ifndef METAVISAGE_LICENSING_LICENSEMANAGER_H
 #define METAVISAGE_LICENSING_LICENSEMANAGER_H
 
+#include <atomic>
 #include <chrono>
 #include <mutex>
 #include <optional>
 #include <string>
+#include <thread>
 
 namespace MetaVisage {
 
@@ -71,6 +73,24 @@ public:
     // Unauthenticated. Called once per frame from AppWindow::TickOnce.
     void TickTimeout();
 
+    // Story 6.3 -- main-thread drain for the /api/desktop/exchange worker
+    // thread. Joins the thread, persists tokens via Config, RS256-verifies
+    // the JWT, and transitions to Authenticated on success or back to
+    // Unauthenticated on failure (with a user-facing message available
+    // via ConsumeLastError).
+    void DrainPendingExchange();
+
+    // Returns + clears any user-facing error string queued by
+    // DrainPendingExchange / DrainPendingDeepLink. AppWindow polls this
+    // each frame and surfaces results via errorModal_. Empty optional
+    // means "no error pending".
+    std::optional<std::string> ConsumeLastError();
+
+    // Joins the in-flight exchange worker thread (if any). AppWindow
+    // calls this from Shutdown so the process doesn't exit while the
+    // worker is mid-network-call.
+    void Shutdown();
+
     // Drops cached tokens and returns to Unauthenticated. Story 6.6 wires
     // the License Status dialog Sign Out button to this.
     void SignOut();
@@ -85,7 +105,7 @@ public:
 
 private:
     LicenseManager();
-    ~LicenseManager() = default;
+    ~LicenseManager();
     LicenseManager(const LicenseManager&) = delete;
     LicenseManager& operator=(const LicenseManager&) = delete;
 
@@ -95,6 +115,13 @@ private:
     void HandleDeepLink(const std::string& uri);
     std::string GenerateStateToken() const;
     void EnsureSchemeRegistered();
+
+    // Story 6.3 helpers.
+    void StartExchange(const std::string& code);  // main thread; spawns worker
+    bool VerifyJwt(const std::string& jwt) const; // pure compute; safe anywhere
+    void SetLastError(std::string message);       // any thread (mutex'd)
+    static constexpr int kExchangeMaxAttempts = 4;
+    static constexpr int kExchangeBudgetSeconds = 30;
 
     AuthState state_ = AuthState::Unauthenticated;
     bool initialized_ = false;
@@ -117,6 +144,35 @@ private:
     // QueueDeepLink (writer) and DrainPendingDeepLink (reader).
     std::mutex deepLinkMutex_;
     std::optional<std::string> pendingDeepLink_;
+
+    // Story 6.3 -- exchange worker thread + result hand-off. The thread
+    // runs the full POST + retry loop with no Config / UI access; the
+    // main thread drains the result via DrainPendingExchange after
+    // exchangeFinished_ flips true.
+    struct ExchangeResult {
+        bool ok = false;
+        int httpStatus = 0;
+        std::string accessToken;
+        std::string refreshToken;
+        std::string licenseJwt;
+        std::string email;
+        std::string errorMessage;  // user-facing on !ok
+    };
+    std::thread exchangeThread_;
+    std::atomic<bool> exchangeRunning_{false};
+    std::atomic<bool> exchangeFinished_{false};
+    std::mutex exchangeResultMutex_;
+    ExchangeResult exchangeResult_;
+
+    // User-facing error queue (any thread can push via SetLastError;
+    // main thread consumes via ConsumeLastError).
+    std::mutex lastErrorMutex_;
+    std::optional<std::string> lastError_;
+
+    // Story 6.6 will surface this in the License Status dialog. Captured
+    // at exchange time (per QA Round 2 Decision 3 -- email lives on the
+    // exchange response body, not in the JWT payload).
+    std::string userEmail_;
 };
 
 }  // namespace MetaVisage
