@@ -28,6 +28,7 @@
 #include "io/ProjectSerializer.h"
 #include "io/MeshExporter.h"
 #include "io/PresetStore.h"
+#include "licensing/LicenseManager.h"
 #include "baking/TextureBaker.h"
 #include "baking/TextureWriter.h"
 #include "utils/Config.h"
@@ -352,6 +353,14 @@ bool AppWindow::Initialize(int width, int height, const char* title) {
     WrapPreset::QuickWrap().ApplyTo(project_->GetMorphData());
     undoStack_ = std::make_unique<UndoStack>();
     viewportHost_->SetProject(project_.get());
+
+    // Sprint 6 Story 6.1 -- bootstrap the auth state machine off the
+    // encrypted token cache. Runs after Config is loaded (main.cpp:13)
+    // and before the LoginScreen first renders, so the cached-session
+    // fast path can skip straight into Authenticated and the user never
+    // sees the sign-in surface flash.
+    LicenseManager::Instance().Initialize();
+
     userPresets_ = PresetStore::LoadAll();
     statusMessage_ = "Ready";
 
@@ -668,36 +677,46 @@ void AppWindow::TickOnce(int fbWidth, int fbHeight) {
     ImGui_ImplGlfw_NewFrame();
     ImGui::NewFrame();
 
-    // Story 3.8.12 — when the login screen is showing, it must fully
-    // replace every other UI surface. Otherwise the foreground-drawlist
-    // primitives in Viewport::DrawOverlays (orientation gizmo, point
-    // labels, active-pane border) bleed through, and the GL 3D pass
-    // keeps writing pixels behind the login card. Short-circuit the
-    // entire frame body — render only the login surface and skip the
+    // Sprint 6 Story 6.1 -- LoginScreen is the mandatory gate whenever
+    // LicenseManager reports Unauthenticated or Authenticating. It must
+    // fully replace every other UI surface: otherwise the foreground-
+    // drawlist primitives in Viewport::DrawOverlays (orientation gizmo,
+    // point labels, active-pane border) bleed through, and the GL 3D
+    // pass keeps writing pixels behind the login card. Short-circuit the
+    // entire frame body -- render only the login surface and skip the
     // app shell, viewports, sidebar, and modals.
-    if (showLoginScreen_) {
+    auto& licenseMgr = LicenseManager::Instance();
+    const auto authState = licenseMgr.GetState();
+    const bool gateLogin =
+        authState == LicenseManager::AuthState::Unauthenticated ||
+        authState == LicenseManager::AuthState::Authenticating;
+    if (gateLogin) {
+        // Map auth state to the LoginScreen UI sub-state. The screen
+        // itself is a pure render fn and reports clicks via Result;
+        // AppWindow translates those into LicenseManager transitions.
+        const LoginScreen::State loginUi =
+            (authState == LicenseManager::AuthState::Authenticating)
+                ? LoginScreen::State::Waiting
+                : LoginScreen::State::Idle;
+
         // Render login first so the title bar (Begin'd second below)
-        // sits on top of it in ImGui's draw order — drag, minimize,
+        // sits on top of it in ImGui's draw order -- drag, minimize,
         // maximize, close need to work even while the user hasn't
         // signed in. The title bar's breadcrumb collapses to
-        // "MetaVisage · Sign in" since no project is loaded yet
-        // (RenderTitleBar branches on showLoginScreen_).
-        const auto loginResult = LoginScreen::Render(loginState_,
-                                                      ImGui::GetTime());
+        // "MetaVisage / Sign in" since no project is loaded yet
+        // (RenderTitleBar branches on the same auth-state check).
+        const auto loginResult = LoginScreen::Render(loginUi, ImGui::GetTime());
 
         SyncOSWindowTitle();
         RenderTitleBar();
-        if (loginResult.signInRequested) {
-            loginState_ = LoginScreen::State::Waiting;
+        if (loginResult.signInRequested || loginResult.retryRequested) {
+            // Story 6.2 fills BeginAuthFlow in with the browser launch +
+            // state token; 6.1 just transitions to Authenticating so the
+            // spinner animates. Retry from Waiting reuses the same path.
+            licenseMgr.BeginAuthFlow();
         }
-        if (loginResult.cancelRequested || loginResult.retryRequested) {
-            // Both reset back to Idle — Retry implies "browser didn't
-            // open, take me back to the Sign in button" until the auth
-            // backend differentiates them.
-            loginState_ = LoginScreen::State::Idle;
-        }
-        if (loginResult.closeRequested) {
-            showLoginScreen_ = false;
+        if (loginResult.cancelRequested) {
+            licenseMgr.CancelAuthFlow();
         }
 
         // Still poll worker thread state in case a morph started
@@ -1382,17 +1401,21 @@ void AppWindow::RenderTitleBar() {
     drawSegment("\xC2\xB7", MvStyle::Font.Body, MvStyle::MvLine3);   // U+00B7 middot
     cx += 10.0f;
 
-    // Story 3.8.12 follow-up — during login, the breadcrumb is just
-    // "MetaVisage · Sign in". No project is loaded yet and there's no
+    // Sprint 6 Story 6.1 -- during login the breadcrumb is just
+    // "MetaVisage / Sign in". No project is loaded yet and there's no
     // active stage to surface, so we mirror the design's login.jsx
     // title bar shorthand. The drag/close/min/max plumbing in
     // RenderTitleBar (caption buttons + WM_NCHITTEST hook) keeps
     // working unchanged.
-    if (showLoginScreen_) {
-        drawSegment("Sign in", MvStyle::Font.Body, MvStyle::MvFg2);
-        // Caption buttons drawn below; skip the rest of the breadcrumb.
-        ImGui::End();
-        return;
+    {
+        const auto authState = LicenseManager::Instance().GetState();
+        if (authState == LicenseManager::AuthState::Unauthenticated ||
+            authState == LicenseManager::AuthState::Authenticating) {
+            drawSegment("Sign in", MvStyle::Font.Body, MvStyle::MvFg2);
+            // Caption buttons drawn below; skip the rest of the breadcrumb.
+            ImGui::End();
+            return;
+        }
     }
 
     const WorkflowStage stage = project_ ? project_->GetCurrentStage() : WorkflowStage::Alignment;
@@ -1480,13 +1503,9 @@ void AppWindow::RenderMainMenuBar() {
         // and copy codepoints into MvIcons.h. Will move behind a debug build
         // flag once the icon constants are stable.
         ImGui::MenuItem("Icon Glyph Explorer (Dev)", nullptr, &showIconExplorer_);
-        // Sprint 3.8.12 — preview the login screen ahead of the Sprint 6.1
-        // auth backend. Toggling resets the state machine so the preview
-        // always opens in Idle.
-        if (ImGui::MenuItem("Login Screen (Dev)", nullptr, showLoginScreen_)) {
-            showLoginScreen_ = !showLoginScreen_;
-            loginState_ = LoginScreen::State::Idle;
-        }
+        // Sprint 6.1 retired the dev-only "Login Screen" toggle that
+        // lived here pre-auth-backend. The login surface is now driven
+        // by LicenseManager::GetState() == Unauthenticated.
         ImGui::EndMenu();
     }
 

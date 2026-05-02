@@ -34,6 +34,7 @@
 //     refactor drops a Begin call.
 
 #include "core/Project.h"
+#include "licensing/LicenseManager.h"
 #include "ui/AppWindow.h"
 #include "ui/Viewport.h"
 #include "ui/ViewportHost.h"
@@ -164,6 +165,14 @@ void RegisterScenario_ViewportShadingModes(ImGuiTestEngine* engine) {
 
 int main(int /*argc*/, char** /*argv*/) {
     Logger::Instance().SetFileLogging(false);
+
+    // Sprint 6 Story 6.1 -- bypass the LoginScreen gate. The harness
+    // exercises the app shell + viewport + modals, not the auth flow
+    // itself; pinning state to Authenticated before AppWindow::Initialize
+    // keeps the existing scenarios green. Story 6.7 adds dedicated Login
+    // Screen scenarios that flip this back to Unauthenticated.
+    LicenseManager::Instance().SetTestState(
+        LicenseManager::AuthState::Authenticated);
 
     AppWindow app;
     g_app = &app;

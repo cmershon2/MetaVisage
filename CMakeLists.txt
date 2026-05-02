@@ -220,6 +220,7 @@ set(CORE_SOURCES
     src/io/PresetStore.cpp
     src/baking/TextureBaker.cpp
     src/baking/TextureWriter.cpp
+    src/licensing/LicenseManager.cpp
 )
 
 set(CORE_HEADERS
@@ -273,6 +274,7 @@ set(CORE_HEADERS
     include/io/PresetStore.h
     include/baking/TextureBaker.h
     include/baking/TextureWriter.h
+    include/licensing/LicenseManager.h
 )
 
 # NOTE: Sprint 3.6 retired the Qt-era UI files (MainWindow / ViewportWidget /

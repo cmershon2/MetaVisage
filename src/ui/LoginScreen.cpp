@@ -147,14 +147,12 @@ Result Render(State state, double tickSeconds) {
     DrawCornerBracket(dl, ImVec2(wmax.x - CornerInset, wmax.y - CornerInset),
                       /*flipH=*/true,  /*flipV=*/true);
 
-    // Esc behaviour:
-    //   Waiting → revert to Idle (cancel the in-flight auth flow)
-    //   Idle    → dev close (escape hatch only — once auth backend ships
-    //             in Sprint 6.1, Esc on Idle will be a no-op since users
-    //             must complete sign-in at least once per session).
-    if (ImGui::IsKeyPressed(ImGuiKey_Escape, false)) {
-        if (state == State::Waiting) out.cancelRequested = true;
-        else                          out.closeRequested = true;
+    // Esc behaviour (Sprint 6.1):
+    //   Waiting -> revert to Idle (cancel the in-flight auth flow)
+    //   Idle    -> no-op (sign-in is mandatory; the dev close-on-Esc path
+    //              was scaffolding from Sprint 3.8.12 and is gone)
+    if (ImGui::IsKeyPressed(ImGuiKey_Escape, false) && state == State::Waiting) {
+        out.cancelRequested = true;
     }
 
     // ---- Auth card ---------------------------------------------------
@@ -532,33 +530,6 @@ Result Render(State state, double tickSeconds) {
                             ColU(MvStyle::MvLine3), "\xC2\xB7");
                 cx += Sep;
             }
-        }
-    }
-
-    // ---- Top-right dev close X (escape hatch while no auth backend) -
-    // Once Sprint 6.1's auth flow lands, this disappears and the only
-    // way out is Use offline / successful sign-in. Keeping it here lets
-    // the dev review the screen without locking themselves out of the
-    // app shell.
-    {
-        constexpr float CloseW = 28.0f;
-        const ImVec2 closeMin(wmax.x - CloseW - 14.0f, wpos.y + 14.0f);
-        ImGui::SetCursorScreenPos(closeMin);
-        if (ImGui::InvisibleButton("##loginClose",
-                                   ImVec2(CloseW, CloseW))) {
-            out.closeRequested = true;
-        }
-        const bool hovered = ImGui::IsItemHovered();
-        const ImU32 closeCol = hovered
-            ? ColU(MvStyle::MvFg1) : ColU(MvStyle::MvFg3);
-        if (MvStyle::Font.IconSm) {
-            ImFont* f = MvStyle::Font.IconSm;
-            constexpr float Sz = 14.0f;
-            const ImVec2 ts = f->CalcTextSizeA(Sz, FLT_MAX, 0.0f, MV_ICON_X);
-            dl->AddText(f, Sz,
-                        ImVec2(closeMin.x + (CloseW - ts.x) * 0.5f,
-                               closeMin.y + (CloseW - ts.y) * 0.5f),
-                        closeCol, MV_ICON_X);
         }
     }
 
