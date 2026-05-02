@@ -28,6 +28,7 @@
 #include "io/ProjectSerializer.h"
 #include "io/MeshExporter.h"
 #include "io/PresetStore.h"
+#include "licensing/LicenseConfig.h"
 #include "licensing/LicenseManager.h"
 #include "baking/TextureBaker.h"
 #include "baking/TextureWriter.h"
@@ -1639,6 +1640,27 @@ void AppWindow::RenderStatusBar() {
         drawSection(tgt, MvStyle::MvFg1);
     }
 
+    // Sprint 6 Story 6.6 -- persistent tier badge so the user always
+    // knows which tier they're on. Only renders when LicenseManager is
+    // in a state where the tier is meaningful (post-auth); the gate at
+    // the top of TickOnce hides the status bar entirely while
+    // Unauthenticated/Authenticating, so we don't need to defend that
+    // here.
+    {
+        const auto& lm = LicenseManager::Instance();
+        std::string tier = lm.GetTier();
+        if (!tier.empty()) {
+            drawSep();
+            drawSection("Tier ", MvStyle::MvFg3);
+            std::string upper = tier;
+            std::transform(upper.begin(), upper.end(), upper.begin(),
+                           [](unsigned char c) {
+                               return static_cast<char>(std::toupper(c));
+                           });
+            drawSection(upper, MvStyle::MvBlue400);
+        }
+    }
+
     // ---- Right-aligned cluster: GPU readout ------------------------------
     // No FPS counter — Sprint 1.4 decision retained per Sprint 3.8 plan.
     // The Story 3.8.2 "Live link UE 5.4 ●" segment that previously followed
@@ -1731,9 +1753,9 @@ void AppWindow::DispatchPendingAction() {
             }
             break;
         case PendingAction::OpenAccountLicense:
-            if (!OpenUrl("https://metavisage.io/account")) {
-                errorModal_.Open("Could not open the account page in your browser.");
-            }
+            // Sprint 6 Story 6.6 -- replaces the placeholder browser open
+            // with the in-app License Status dialog.
+            licenseModal_.Open();
             break;
         case PendingAction::CheckForUpdates:
             // WinSparkle integration is scheduled for the Sprint 3.6 close-out;
@@ -1897,6 +1919,30 @@ void AppWindow::RenderModals() {
     RenderConfirmModal(confirmModal_);
     RenderErrorModal(errorModal_);
     RenderShortcutsModal(shortcutsModal_);
+
+    // Sprint 6 Story 6.6 -- License Status modal. Action requests are
+    // polled here so RenderLicenseModal stays a pure render fn (matches
+    // the per-frame state-passing convention from CLAUDE.md).
+    RenderLicenseModal(licenseModal_);
+    if (licenseModal_.manageSubscriptionRequested) {
+        licenseModal_.manageSubscriptionRequested = false;
+        const std::string url = std::string(LicenseConfig::kApiBaseUrl) +
+                                "/manage-subscription";
+        if (!OpenUrl(url)) {
+            errorModal_.Open(
+                "Could not open the subscription management page in your "
+                "browser.");
+        }
+    }
+    if (licenseModal_.signOutRequested) {
+        licenseModal_.signOutRequested = false;
+        confirmModal_.Open(
+            "Sign Out",
+            "Signing out will require you to sign in again to use "
+            "MetaVisage. Continue?",
+            []() { LicenseManager::Instance().SignOut(); },
+            "Sign Out", "Cancel");
+    }
 
     RenderWelcomeModal(welcomeModal_);
     if (welcomeModal_.action != WelcomeAction::None) {

@@ -157,6 +157,7 @@ private:
     WelcomeModalState welcomeModal_;
     ExportModalState exportModal_;
     ShortcutsModalState shortcutsModal_;
+    LicenseModalState licenseModal_;
 
     // Story 4.4 — Save / Rename Wrap preset modal. Single state struct
     // covers both flows; editingPresetId distinguishes new (empty) from

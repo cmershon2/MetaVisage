@@ -1,11 +1,14 @@
 #include "ui/Modals.h"
+#include "licensing/LicenseManager.h"
 #include "ui/MvIcons.h"
 #include "ui/MvStyle.h"
 #include "utils/Config.h"
 
 #include <imgui.h>
 
+#include <algorithm>
 #include <array>
+#include <cctype>
 #include <chrono>
 #include <cstdio>
 #include <filesystem>
@@ -908,6 +911,155 @@ void RenderShortcutsModal(ShortcutsModalState& state) {
         }
         ImGui::EndChild();
         if (ImGui::Button("Close", ImVec2(120, 0))) ImGui::CloseCurrentPopup();
+        ImGui::EndPopup();
+    }
+}
+
+// ---------------------------------------------------------------------------
+// License status -- Sprint 6 Story 6.6
+// ---------------------------------------------------------------------------
+
+namespace {
+
+std::string Capitalize(std::string s) {
+    if (s.empty()) return s;
+    s[0] = static_cast<char>(std::toupper(static_cast<unsigned char>(s[0])));
+    return s;
+}
+
+// Render a "LABEL value" row inside the license modal -- label muted, value
+// emphasized. Uses MonoSm for the label per the inspector convention.
+void LicenseRow(const char* label, const std::string& value) {
+    ImGui::PushStyleColor(ImGuiCol_Text, MvStyle::MvFg3);
+    {
+        MvStyle::ScopedFont mono(MvStyle::Font.MonoSm);
+        ImGui::TextUnformatted(label);
+    }
+    ImGui::PopStyleColor();
+    ImGui::SameLine(140.0f);
+    ImGui::PushStyleColor(ImGuiCol_Text, MvStyle::MvFg1);
+    ImGui::TextUnformatted(value.empty() ? "\xE2\x80\x94" : value.c_str());
+    ImGui::PopStyleColor();
+}
+
+// Format the validation status pill text + color from LicenseManager state.
+void LicenseStatusPill(const LicenseManager& lm) {
+    using S = LicenseManager::AuthState;
+    const auto state = lm.GetState();
+    const char* label = "\xE2\x80\x94";
+    ImVec4 color = MvStyle::MvFg3;
+    switch (state) {
+        case S::Authenticated:
+            if (lm.IsOfflineMode()) {
+                label = "Offline -- using cached license";
+                color = MvStyle::MvWarning;
+            } else {
+                label = "Online";
+                color = MvStyle::MvBlue400;
+            }
+            break;
+        case S::Inactive:
+            label = "Subscription inactive";
+            color = MvStyle::MvWarning;
+            break;
+        case S::Expired:
+            label = "Session expired -- please sign in again";
+            color = MvStyle::MvWarning;
+            break;
+        case S::Authenticating:
+        case S::Unauthenticated:
+            label = "Not signed in";
+            color = MvStyle::MvFg3;
+            break;
+    }
+    ImGui::PushStyleColor(ImGuiCol_Text, MvStyle::MvFg3);
+    {
+        MvStyle::ScopedFont mono(MvStyle::Font.MonoSm);
+        ImGui::TextUnformatted("STATUS");
+    }
+    ImGui::PopStyleColor();
+    ImGui::SameLine(140.0f);
+    ImGui::PushStyleColor(ImGuiCol_Text, color);
+    ImGui::TextUnformatted(label);
+    ImGui::PopStyleColor();
+}
+
+}  // namespace
+
+void LicenseModalState::Open() { pendingOpen = true; }
+
+void RenderLicenseModal(LicenseModalState& state) {
+    HandlePendingOpen("Account & License", state.pendingOpen);
+
+    const auto center = ImGui::GetMainViewport()->GetCenter();
+    ImGui::SetNextWindowPos(center, ImGuiCond_Appearing, ImVec2(0.5f, 0.5f));
+    ImGui::SetNextWindowSize(ImVec2(520, 420), ImGuiCond_Appearing);
+
+    if (ImGui::BeginPopupModal("Account & License", nullptr,
+                               ImGuiWindowFlags_NoSavedSettings)) {
+        const auto& lm = LicenseManager::Instance();
+
+        // ---- Account ---------------------------------------------------
+        ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(0.8f, 0.85f, 1.0f, 1.0f));
+        ImGui::TextUnformatted("ACCOUNT");
+        ImGui::PopStyleColor();
+        ImGui::Separator();
+        LicenseRow("EMAIL", lm.GetUserEmail());
+        ImGui::Spacing();
+        ImGui::Spacing();
+
+        // ---- License ---------------------------------------------------
+        ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(0.8f, 0.85f, 1.0f, 1.0f));
+        ImGui::TextUnformatted("LICENSE");
+        ImGui::PopStyleColor();
+        ImGui::Separator();
+        LicenseRow("TIER", Capitalize(lm.GetTier()));
+        LicenseStatusPill(lm);
+        ImGui::Spacing();
+        ImGui::Spacing();
+
+        // ---- Usage -----------------------------------------------------
+        ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(0.8f, 0.85f, 1.0f, 1.0f));
+        ImGui::TextUnformatted("USAGE THIS MONTH");
+        ImGui::PopStyleColor();
+        ImGui::Separator();
+        const int used = lm.GetConversionsUsed();
+        const int limit = lm.GetConversionsLimit();
+        std::string usage;
+        if (limit > 0) {
+            usage = std::format("{} / {} conversions", used, limit);
+        } else {
+            usage = std::format("{} conversions", used);
+        }
+        LicenseRow("USED", usage);
+        LicenseRow("RESETS", lm.GetConversionsResetAt());
+        ImGui::Spacing();
+        ImGui::Spacing();
+
+        // ---- Footer ----------------------------------------------------
+        ImGui::Spacing();
+        ImGui::Separator();
+        ImGui::Spacing();
+
+        if (ImGui::Button("Manage Subscription", ImVec2(180, 0))) {
+            state.manageSubscriptionRequested = true;
+        }
+        ImGui::SameLine();
+        ImGui::PushStyleColor(ImGuiCol_Button,        MvStyle::MvWarning);
+        ImGui::PushStyleColor(ImGuiCol_ButtonHovered, MvStyle::MvWarning);
+        if (ImGui::Button("Sign Out", ImVec2(120, 0))) {
+            state.signOutRequested = true;
+            ImGui::CloseCurrentPopup();
+        }
+        ImGui::PopStyleColor(2);
+        ImGui::SameLine();
+
+        // Right-aligned Close button.
+        const float btnW = 100.0f;
+        const float avail = ImGui::GetContentRegionAvail().x;
+        if (avail > btnW) ImGui::SetCursorPosX(ImGui::GetCursorPosX() + (avail - btnW));
+        if (ImGui::Button("Close", ImVec2(btnW, 0))) ImGui::CloseCurrentPopup();
+
         ImGui::EndPopup();
     }
 }
