@@ -244,6 +244,7 @@ void LicenseManager::SignOut() {
     conversionsUsed_ = 0;
     conversionsLimit_ = 0;
     conversionsResetAt_.clear();
+    offlineMode_ = false;
     TransitionTo(AuthState::Unauthenticated);
 }
 
@@ -702,6 +703,11 @@ void LicenseManager::DrainPendingRefresh() {
             config.SetLicenseJwt(result.licenseJwt);
             licenseJwt_ = result.licenseJwt;
             LoadClaimsFromJwt(result.licenseJwt);
+            // Story 6.5 -- back online; clear the pill silently.
+            if (offlineMode_) {
+                MV_LOG_INFO("LicenseManager: back online; clearing offline pill");
+                offlineMode_ = false;
+            }
             // Stay in Authenticated; this was a background refresh.
             MV_LOG_INFO("LicenseManager: refresh succeeded");
             break;
@@ -709,6 +715,7 @@ void LicenseManager::DrainPendingRefresh() {
         case RefreshOutcome::Inactive: {
             MV_LOG_WARNING("LicenseManager: subscription inactive");
             SetLastError(result.errorMessage);
+            offlineMode_ = false;
             TransitionTo(AuthState::Inactive);
             break;
         }
@@ -732,15 +739,21 @@ void LicenseManager::DrainPendingRefresh() {
             // return naturally on the next loop top.
             stopRefresh_.store(true);
             refreshCv_.notify_all();
+            offlineMode_ = false;
             break;
         }
         case RefreshOutcome::TransportFail: {
-            // Story 6.5 surfaces the offline pill; for 6.4 alone we just
-            // keep state and log. The HTTPClient retry/backoff already
-            // ran inside the worker; nothing more to do here.
-            MV_LOG_INFO(std::format(
-                "LicenseManager: refresh transport failure (status={}, msg={})",
-                result.httpStatus, result.errorMessage));
+            // Story 6.5 -- network unreachable / persistent 5xx. Cached
+            // JWT is still valid (it was verified on every Authenticated
+            // entry path), so we stay in Authenticated and surface the
+            // offline pill. The next successful refresh clears it
+            // silently.
+            if (state_ == AuthState::Authenticated && !offlineMode_) {
+                MV_LOG_WARNING(std::format(
+                    "LicenseManager: refresh transport failure (status={}); "
+                    "entering offline mode", result.httpStatus));
+                offlineMode_ = true;
+            }
             break;
         }
     }

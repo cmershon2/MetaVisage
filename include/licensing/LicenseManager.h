@@ -96,6 +96,14 @@ public:
     std::string GetConversionsResetAt() const;
     std::string GetUserEmail() const;
 
+    // Story 6.5 -- true when we're operating off the cached JWT because
+    // the most recent /api/desktop/token refresh hit a transport failure
+    // (network unreachable, persistent 5xx, etc). State stays Authenticated;
+    // AppWindow renders an amber pill in the status bar so the user knows.
+    // Cleared on the next successful refresh or any state transition out
+    // of Authenticated.
+    bool IsOfflineMode() const { return offlineMode_; }
+
     // Returns + clears any user-facing error string queued by
     // DrainPendingExchange / DrainPendingDeepLink. AppWindow polls this
     // each frame and surfaces results via errorModal_. Empty optional
@@ -205,6 +213,10 @@ private:
     int conversionsUsed_ = 0;
     int conversionsLimit_ = 0;
     std::string conversionsResetAt_;
+
+    // Story 6.5 -- offline-mode flag (main-thread only). Toggled in
+    // DrainPendingRefresh based on the worker's outcome.
+    bool offlineMode_ = false;
 
     // Story 6.4 -- refresh worker. Wakes every 24h (or sooner via
     // NotifyRefreshNow) until stopRefresh_ flips. Result is published to

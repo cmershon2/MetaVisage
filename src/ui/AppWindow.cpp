@@ -1601,6 +1601,15 @@ void AppWindow::RenderStatusBar() {
     drawSection(statusMessage_.empty() ? "Ready" : statusMessage_, MvStyle::MvFg2);
     drawSep();
 
+    // Sprint 6 Story 6.5 -- amber Offline pill when the most recent
+    // /api/desktop/token refresh hit a transport failure but the cached
+    // JWT is still valid. Cleared silently on the next successful refresh.
+    if (LicenseManager::Instance().IsOfflineMode()) {
+        drawSection("\xE2\x97\x8F ", MvStyle::MvWarning);
+        drawSection("Offline", MvStyle::MvWarning);
+        drawSep();
+    }
+
     // Stage 0N STAGENAME
     drawSection("Stage ", MvStyle::MvFg3);
     {
