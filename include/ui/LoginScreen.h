@@ -17,7 +17,8 @@ namespace MetaVisage::LoginScreen {
 //   Waiting -> Retry clicked     -> Waiting (caller re-invokes BeginAuthFlow)
 //   Waiting -> Esc pressed       -> Idle    (same as Cancel)
 //
-// `tickSeconds` is `ImGui::GetTime()` for the waiting-state spinner ring.
+// PR #25 review feedback dropped the Waiting-state spinner ring around
+// the logo, so Render no longer needs a tick-seconds argument.
 
 enum class State {
     Idle,        // user has not yet clicked Sign In
@@ -33,7 +34,7 @@ struct Result {
 // Renders the login screen as a full-viewport window covering all other UI.
 // Caller is responsible for visibility (don't call when the user is signed
 // in). All state transitions are pushed back through the Result struct.
-Result Render(State state, double tickSeconds);
+Result Render(State state);
 
 } // namespace MetaVisage::LoginScreen
 

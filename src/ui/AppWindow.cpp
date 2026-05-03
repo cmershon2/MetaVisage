@@ -76,6 +76,13 @@ void GlfwErrorCallback(int error, const char* description) {
     MV_LOG_ERROR(std::format("GLFW error {}: {}", error, description));
 }
 
+// PR #25 review feedback: cross-thread "please bring the OS window to
+// the foreground" signal. Set by AppWindow::RequestForegroundFocus
+// (called from main.cpp's SingleInstance listener thread) and
+// consumed on the main thread inside TickOnce, where calling GLFW /
+// Win32 focus APIs is safe.
+std::atomic<bool> g_appFocusRequested{false};
+
 #ifdef _WIN32
 // =============================================================================
 // Frameless-window hit-test hook
@@ -671,6 +678,11 @@ void AppWindow::Run() {
     }
 }
 
+// static
+void AppWindow::RequestForegroundFocus() {
+    g_appFocusRequested.store(true);
+}
+
 void AppWindow::TickOnce(int fbWidth, int fbHeight) {
     if (!window_) return;
 
@@ -697,6 +709,23 @@ void AppWindow::TickOnce(int fbWidth, int fbHeight) {
     licenseMgr.DrainPendingExchange();
     licenseMgr.DrainPendingRefresh();
     licenseMgr.TickTimeout();
+
+    // PR #25 review feedback fix: bring the already-running first
+    // instance to the foreground when SingleInstance forwards a deep
+    // link (or any other raise signal). main.cpp's listener-thread
+    // callback can't call GLFW directly, so it sets the atomic and we
+    // drain it here. On Windows we also restore from minimized and use
+    // SetForegroundWindow to bypass the foreground-lock rules that
+    // glfwFocusWindow alone can't always defeat.
+    if (g_appFocusRequested.exchange(false) && window_) {
+#ifdef _WIN32
+        if (HWND hwnd = ::glfwGetWin32Window(window_); hwnd) {
+            if (::IsIconic(hwnd)) ::ShowWindow(hwnd, SW_RESTORE);
+            ::SetForegroundWindow(hwnd);
+        }
+#endif
+        glfwFocusWindow(window_);
+    }
     if (auto err = licenseMgr.ConsumeLastError(); err && !err->empty()) {
         errorModal_.Open(*err);
     }
@@ -719,7 +748,7 @@ void AppWindow::TickOnce(int fbWidth, int fbHeight) {
         // signed in. The title bar's breadcrumb collapses to
         // "MetaVisage / Sign in" since no project is loaded yet
         // (RenderTitleBar branches on the same auth-state check).
-        const auto loginResult = LoginScreen::Render(loginUi, ImGui::GetTime());
+        const auto loginResult = LoginScreen::Render(loginUi);
 
         SyncOSWindowTitle();
         RenderTitleBar();

@@ -50,6 +50,10 @@ int main(int argc, char** argv) {
             } else {
                 MV_LOG_INFO("SingleInstance: second launch signalled");
             }
+            // PR #25 review feedback: any second-launch signal (deep
+            // link or plain raise) should bring the running first
+            // instance to the foreground.
+            MetaVisage::AppWindow::RequestForegroundFocus();
         })) {
         MV_LOG_INFO("MetaVisage already running; exiting second instance");
         return 0;

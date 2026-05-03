@@ -5,15 +5,9 @@
 
 #include <imgui.h>
 
-#include <cmath>
-#include <cstdio>
-#include <numbers>
-
 namespace MetaVisage::LoginScreen {
 
 namespace {
-
-constexpr float kPi = std::numbers::pi_v<float>;
 
 inline ImU32 ColU(const ImVec4& v) { return ImGui::ColorConvertFloat4ToU32(v); }
 
@@ -54,29 +48,10 @@ void DrawCornerBracket(ImDrawList* dl, ImVec2 origin, bool flipH, bool flipV) {
     dl->AddLine(origin, ImVec2(origin.x, origin.y + dy), col, 1.0f);
 }
 
-// Animated arc segment that sits over the auth-card hero in the Waiting
-// state — same visual idiom as the design's spinner.
-void DrawSpinnerRing(ImDrawList* dl, ImVec2 center, float radius,
-                     double tickSeconds) {
-    const float startAngle =
-        static_cast<float>(std::fmod(tickSeconds * 1.6, kPi * 2.0));
-    constexpr float ArcSpan = kPi * 0.55f;
-    constexpr int N = 32;
-    const ImU32 trackCol = ColU(WithAlpha(MvStyle::MvLine2, 0.6f));
-    const ImU32 arcCol   = ColU(MvStyle::MvBlue400);
-
-    // Faint background ring so the spinner reads as a track + sweep.
-    dl->AddCircle(center, radius, trackCol, N, 1.5f);
-
-    dl->PathClear();
-    for (int i = 0; i <= N; ++i) {
-        const float t = static_cast<float>(i) / N;
-        const float angle = startAngle + t * ArcSpan;
-        dl->PathLineTo(ImVec2(center.x + std::cos(angle) * radius,
-                              center.y + std::sin(angle) * radius));
-    }
-    dl->PathStroke(arcCol, ImDrawFlags_None, 2.0f);
-}
+// PR #25 review feedback removed the Waiting-state spinner ring around
+// the logo mark. DrawSpinnerRing was its only caller, so the function
+// is gone too -- restore from git history if a future design adds a
+// spinner back to the auth card.
 
 // "01" / "02" / "03" square badge for the idle-state explainer rows.
 void DrawStepBadge(ImDrawList* dl, ImVec2 pos, const char* text) {
@@ -97,7 +72,7 @@ void DrawStepBadge(ImDrawList* dl, ImVec2 pos, const char* text) {
 
 } // namespace
 
-Result Render(State state, double tickSeconds) {
+Result Render(State state) {
     Result out;
 
     ImGuiViewport* vp = ImGui::GetMainViewport();
@@ -225,12 +200,10 @@ Result Render(State state, double tickSeconds) {
                      logoMin, logoMax);
     }
 
-    // Spinner ring around the mark when waiting.
-    if (state == State::Waiting) {
-        const ImVec2 markCenter((mMin.x + mMax.x) * 0.5f,
-                                (mMin.y + mMax.y) * 0.5f);
-        DrawSpinnerRing(dl, markCenter, MarkSize * 0.55f + 6.0f, tickSeconds);
-    }
+    // PR #25 review feedback: removed the spinner ring around the logo
+    // mark in Waiting state; the design team felt it read as broken
+    // around the square logo. The "AWAITING BROWSER" caption + hero
+    // text below already communicate the in-flight state.
 
     // Hero text block.
     const float textX = mMax.x + 18.0f;
@@ -327,85 +300,25 @@ Result Render(State state, double tickSeconds) {
                         ColU(MvStyle::MvFg2), rows[i].text);
         }
     } else {
-        // Waiting state — status block.
+        // Waiting state body (PR #25 review feedback): the listening
+        // address box, callback URI display, Copy button, and LIVE
+        // badge were design scaffolding that surfaced internal scheme
+        // detail. Replaced with a single explanatory paragraph that
+        // tells the user where to look. The amber "Browser didn't
+        // open? Retry" row stays since it's the recovery affordance.
         const float pad = 36.0f;
-        const ImVec2 boxMin(cardMin.x + pad, bodyTop);
-        const ImVec2 boxMax(cardMax.x - pad, bodyTop + 56.0f);
-        dl->AddRectFilled(boxMin, boxMax, ColU(MvStyle::MvBg1), 6.0f);
-        dl->AddRect      (boxMin, boxMax, ColU(MvStyle::MvLine2), 6.0f, 0, 1.0f);
-
-        // Listener address line + LIVE badge on the right.
         {
             MvStyle::ScopedFont f(MvStyle::Font.BodySm);
-            dl->AddText(ImVec2(boxMin.x + 14.0f, boxMin.y + 10.0f),
+            dl->AddText(ImVec2(cardMin.x + pad, bodyTop + 4.0f),
                         ColU(MvStyle::MvFg1),
-                        "Listening on ");
-            const ImVec2 prefixSz = ImGui::CalcTextSize("Listening on ");
-            MvStyle::ScopedFont fm(MvStyle::Font.Mono);
-            dl->AddText(ImVec2(boxMin.x + 14.0f + prefixSz.x, boxMin.y + 11.0f),
-                        ColU(MvStyle::MvBlue400),
-                        "metavisage://auth");
-        }
-        {
-            MvStyle::ScopedFont f(MvStyle::Font.MonoSm);
-            dl->AddText(ImVec2(boxMin.x + 14.0f, boxMin.y + 32.0f),
+                        "We\xE2\x80\x99ve opened your default browser.");
+            dl->AddText(ImVec2(cardMin.x + pad, bodyTop + 26.0f),
                         ColU(MvStyle::MvFg3),
-                        "Times out in 2:43");
-        }
-        {
-            // Green LIVE badge on right side of the box.
-            constexpr float BadgeW = 56.0f;
-            constexpr float BadgeH = 22.0f;
-            const ImVec2 badgeMin(boxMax.x - BadgeW - 12.0f,
-                                  (boxMin.y + boxMax.y - BadgeH) * 0.5f);
-            const ImVec2 badgeMax(badgeMin.x + BadgeW, badgeMin.y + BadgeH);
-            dl->AddRectFilled(badgeMin, badgeMax,
-                              ColU(WithAlpha(MvStyle::MvSuccess, 0.10f)),
-                              4.0f);
-            dl->AddRect(badgeMin, badgeMax,
-                        ColU(WithAlpha(MvStyle::MvSuccess, 0.45f)),
-                        4.0f, 0, 1.0f);
-            dl->AddCircleFilled(ImVec2(badgeMin.x + 9.0f,
-                                       (badgeMin.y + badgeMax.y) * 0.5f),
-                                3.0f, ColU(MvStyle::MvSuccess));
-            if (MvStyle::Font.MonoSm) {
-                ImFont* f = MvStyle::Font.MonoSm;
-                constexpr float Sz = 10.0f;
-                const ImVec2 ts = f->CalcTextSizeA(Sz, FLT_MAX, 0.0f, "LIVE");
-                dl->AddText(f, Sz,
-                            ImVec2(badgeMin.x + 18.0f,
-                                   (badgeMin.y + badgeMax.y - ts.y) * 0.5f),
-                            ColU(MvStyle::MvSuccess), "LIVE");
-            }
-        }
-
-        // Callback URI display + Copy button row.
-        const float uriY = bodyTop + 70.0f;
-        {
-            MvStyle::ScopedFont f(MvStyle::Font.MonoSm);
-            dl->AddText(ImVec2(cardMin.x + pad, uriY),
-                        ColU(MvStyle::MvFg3), "CALLBACK URI");
-        }
-        {
-            const ImVec2 fldMin(cardMin.x + pad, uriY + 18.0f);
-            const ImVec2 fldMax(cardMax.x - pad - 70.0f, fldMin.y + 28.0f);
-            dl->AddRectFilled(fldMin, fldMax, ColU(MvStyle::MvBg1), 4.0f);
-            dl->AddRect      (fldMin, fldMax, ColU(MvStyle::MvLine2), 4.0f, 0, 1.0f);
-            MvStyle::ScopedFont f(MvStyle::Font.Mono);
-            dl->AddText(ImVec2(fldMin.x + 10.0f,
-                               (fldMin.y + fldMax.y) * 0.5f - 6.0f),
-                        ColU(MvStyle::MvFg1),
-                        "metavisage://auth?session=8f3a\xE2\x80\xA6" "d21c");
-
-            // Copy button — ghost.
-            ImGui::SetCursorScreenPos(ImVec2(fldMax.x + 6.0f, fldMin.y));
-            if (ImGui::Button("Copy", ImVec2(64.0f, 28.0f))) {
-                ImGui::SetClipboardText("metavisage://auth");
-            }
+                        "Complete sign-in there and you\xE2\x80\x99ll be returned to the desktop app automatically.");
         }
 
         // Amber warning row.
-        const float warnY = uriY + 56.0f;
+        const float warnY = bodyTop + 80.0f;
         {
             const ImVec2 wMin(cardMin.x + pad, warnY);
             const ImVec2 wMax(cardMax.x - pad, warnY + 36.0f);

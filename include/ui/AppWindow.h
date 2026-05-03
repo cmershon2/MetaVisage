@@ -71,6 +71,15 @@ public:
     // owner.
     GLFWwindow* GetWindow() { return window_; }
 
+    // PR #25 review feedback fix: thread-safe request that the main
+    // app window be brought to the foreground on the next TickOnce.
+    // Wired from main.cpp's SingleInstance onRaise callback (runs on
+    // the listener thread) so a metavisage:// deep link from a second
+    // instance brings the already-running first instance forward
+    // instead of leaving it buried. Static so the callback doesn't
+    // need to capture an AppWindow pointer.
+    static void RequestForegroundFocus();
+
 private:
     void RenderFrame(int fbWidth, int fbHeight);
 
