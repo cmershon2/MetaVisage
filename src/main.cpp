@@ -10,6 +10,13 @@
 #include <string>
 #include <string_view>
 
+namespace {
+// PR #25 review fix: shared constant so the argv pre-filter and the
+// SingleInstance forwarder agree on the scheme prefix. Was a magic
+// `13` in the argv check at one site and `kScheme.size()` in the other.
+constexpr std::string_view kDeepLinkScheme = "metavisage://";
+}
+
 int main(int argc, char** argv) {
     MetaVisage::Logger::Instance().Initialize(MetaVisage::Paths::LogDir());
     MV_LOG_INFO("MetaVisage v2.0.0 starting");
@@ -23,7 +30,8 @@ int main(int argc, char** argv) {
     std::string deepLink;
     if (argc > 1 && argv[1]) {
         std::string_view arg(argv[1]);
-        if (arg.size() > 13 && arg.substr(0, 13) == "metavisage://") {
+        if (arg.size() > kDeepLinkScheme.size() &&
+            arg.substr(0, kDeepLinkScheme.size()) == kDeepLinkScheme) {
             deepLink.assign(arg);
             MV_LOG_INFO("main: deep-link URI received via argv[1]");
         }
@@ -36,9 +44,8 @@ int main(int argc, char** argv) {
     // thread-safe and the main thread drains the queue each frame.
     const std::string payload = deepLink.empty() ? std::string("raise") : deepLink;
     if (!singleInstance.TryAcquire(payload, [](const std::string& msg) {
-            constexpr std::string_view kScheme = "metavisage://";
-            if (msg.size() > kScheme.size() &&
-                msg.substr(0, kScheme.size()) == kScheme) {
+            if (msg.size() > kDeepLinkScheme.size() &&
+                msg.substr(0, kDeepLinkScheme.size()) == kDeepLinkScheme) {
                 MetaVisage::LicenseManager::Instance().QueueDeepLink(msg);
             } else {
                 MV_LOG_INFO("SingleInstance: second launch signalled");

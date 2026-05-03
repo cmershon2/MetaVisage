@@ -145,3 +145,26 @@ In `Solve()`, `corrIndices` and `corrPoints` were moved from inner ICP loop scop
 
 ### ToolRail.cpp — isStage4 Index Assumption
 In `ToolRail::Render`, the loop index `i` is used to index `BrushPreviewTextureIds[i]` only when `isStage4` is true. The guard is `isStage4 && i < 4` implicitly (loop runs over `kStage4Tools` which has exactly 4 entries). Safe, but if `kStage4Tools` ever grows beyond 4, the `BrushPreviewTextureIds` array must be expanded in parallel.
+
+## Sprint 6 — LicenseManager Patterns (PR sprint/Licensing-Infrastructure-Core-Integration)
+
+### StartRefreshThread — joinable() guard after AuthInvalid self-stop
+After a `RefreshOutcome::AuthInvalid` drain, the main thread sets `stopRefresh_ = true` and notifies the CV, causing the worker to return. The worker thread is now finished but `refreshThread_.joinable()` is still `true` (un-joined). `StartRefreshThread()` guards on `joinable()` and returns early without restarting. If the user re-authenticates after this, `DrainPendingExchange` calls `StartRefreshThread()` which silently no-ops, leaving the new session with no 24h refresh loop. Fix: call `refreshThread_.join()` before `return` in the `if (refreshThread_.joinable()) return;` guard inside `StartRefreshThread`, OR join in the `AuthInvalid` drain path before calling `stopRefresh_.store(true)` (can't join from worker — only set the flag there; join must happen on the main thread drain).
+
+### Inactive/Expired states pass through to the app shell
+`gateLogin` in `AppWindow::TickOnce` only gates on `Unauthenticated` and `Authenticating`. `Inactive` and `Expired` both fall through to the full app shell with no enrollment barrier. The sprint 6 design treats these as "user sees error modal + License Status shows amber pill" rather than hard-blocking. This is intentional for the sprint but a future enforcement sprint will need per-action tier checks.
+
+### SUPABASE_ANON_KEY has no CMake FATAL_ERROR guard for staging/production
+`METAVISAGE_API_BASE_URL` and the public-key PEM guard at FATAL_ERROR for production. `METAVISAGE_SUPABASE_ANON_KEY` (and `SUPABASE_PROJECT_URL`) have no guard — an empty anon key would silently produce a binary that cannot refresh access tokens. Low-risk today because the token-refresh path falls back gracefully to `AuthInvalid`, but worth adding parity guards.
+
+### MvWarning used for Sign Out button (amber, not red)
+`RenderLicenseModal` styles the Sign Out button with `MvWarning` (amber `#F2B547`). The design-system convention flags destructive actions with a red; amber is for "caution / degraded state" (e.g. offline pill, cottage-cheese warning). This is a visual inconsistency with the planned high-fidelity modal redesign already queued in the backlog.
+
+### RenderLicenseModal section headers use raw ImVec4(0.8f, 0.85f, 1.0f, 1.0f)
+The ACCOUNT / LICENSE / USAGE section headers use `ImVec4(0.8f, 0.85f, 1.0f, 1.0f)` (#CCDAFF), which has no MvStyle token equivalent. This violates the Sprint 3.8 design-token rule ("never hardcode ImVec4 literals in widgets"). The value is close to MvBlue300 (#7BC2FA) but visually different. A `MvStyle::MvLabel` or `MvBlueLabel` token should be minted when the modal redesign lands.
+
+### .env.development committed with real Supabase anon key
+`METAVISAGE_SUPABASE_ANON_KEY` in `.env.development` contains the live Supabase project anon key and URL. The `keys/README.md` and `.env.example` comments confirm this is intentional (Supabase anon keys are designed to be client-distributable), not a secret leak. Do not flag as a credential exposure — the anon key is the JWT-signed "safe to embed" credential per the Supabase architecture.
+
+### Deep-link validation in main.cpp uses magic literal 13
+`arg.size() > 13 && arg.substr(0, 13) == "metavisage://"` in `main.cpp` uses a raw `13` instead of `kScheme.size()`. The `kScheme` constant is defined inside the `TryAcquire` callback closure, not at the earlier deep-link parse site. Minor inconsistency — the `ParseDeepLink` helper in `LicenseManager.cpp` is the authoritative validator; `main.cpp`'s pre-filter just needs to be consistent with it.

@@ -119,6 +119,27 @@ if(METAVISAGE_API_BASE_URL STREQUAL "")
     endif()
 endif()
 
+# PR #25 review fix: parity guard for the Supabase refresh credentials on
+# non-development profiles. An empty project URL or anon key would silently
+# disable the access-token refresh path (LicenseManager::RefreshThreadFn
+# falls through to AuthInvalid on every 401 instead of refreshing), which
+# would force re-auth every ~hour in production. Cheap to catch at configure
+# time. Development profile leaves them empty-tolerable.
+if(NOT METAVISAGE_BUILD_PROFILE STREQUAL "development")
+    if(METAVISAGE_SUPABASE_PROJECT_URL STREQUAL "")
+        message(FATAL_ERROR
+            "METAVISAGE_BUILD_PROFILE=${METAVISAGE_BUILD_PROFILE} but "
+            "METAVISAGE_SUPABASE_PROJECT_URL is empty. The Supabase "
+            "access-token refresh path needs the project URL.")
+    endif()
+    if(METAVISAGE_SUPABASE_ANON_KEY STREQUAL "")
+        message(FATAL_ERROR
+            "METAVISAGE_BUILD_PROFILE=${METAVISAGE_BUILD_PROFILE} but "
+            "METAVISAGE_SUPABASE_ANON_KEY is empty. The Supabase "
+            "access-token refresh path needs the NEXT_PUBLIC anon key.")
+    endif()
+endif()
+
 # Read the public-key PEM from disk so callers don't wrestle with multi-line
 # CMake string escaping. Empty path is allowed in development; LicenseManager
 # falls back to skipping signature verification when the key is empty.

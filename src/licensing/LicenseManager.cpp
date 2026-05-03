@@ -591,7 +591,20 @@ void LicenseManager::RequestRefresh() {
 }
 
 void LicenseManager::StartRefreshThread() {
-    if (refreshThread_.joinable()) return;  // already running
+    // PR review fix: distinguish "thread is genuinely running" from
+    // "thread soft-stopped via stopRefresh_ but its OS handle was never
+    // reclaimed". The latter happens after RefreshOutcome::AuthInvalid:
+    // DrainPendingRefresh sets stopRefresh_ + notifies (because it can't
+    // call StopRefreshThread from inside the worker), the worker's loop
+    // exits, but the std::thread handle is still joinable. Without this
+    // join-and-reset path, a re-auth after an AuthInvalid flow would
+    // silently fail to restart the refresh loop and the user's session
+    // would lose 24h refresh until next launch -- meaning the cached
+    // JWT could exhaust the 7-day offline grace with no prior refresh.
+    if (refreshThread_.joinable()) {
+        if (!stopRefresh_.load()) return;  // genuinely running
+        refreshThread_.join();             // soft-stopped; reclaim handle
+    }
     stopRefresh_.store(false);
     refreshFinished_.store(false);
     refreshThread_ = std::thread([this]() { RefreshThreadFn(); });
