@@ -95,6 +95,17 @@ public:
     int GetConversionsLimit() const;
     std::string GetConversionsResetAt() const;
     std::string GetUserEmail() const;
+    std::string GetLicenseKey() const;
+
+    // Wall-clock time of the last successful exchange or refresh. nullopt
+    // before the first sync this session. Drives the "Last sync ..."
+    // display in the License Status modal.
+    std::optional<std::chrono::system_clock::time_point> GetLastSyncedAt() const;
+
+    // Wakes the 24h refresh thread immediately. Used by the License
+    // Status modal's manual "Refresh license" button. No-op if the
+    // refresh thread isn't running (Unauthenticated state).
+    void RequestRefresh();
 
     // Story 6.5 -- true when we're operating off the cached JWT because
     // the most recent /api/desktop/token refresh hit a transport failure
@@ -215,9 +226,14 @@ private:
     // successful exchange / refresh; persists across launches because the
     // JWT itself is cached.
     std::string tier_ = "free";
+    std::string licenseKey_;
     int conversionsUsed_ = 0;
     int conversionsLimit_ = 0;
     std::string conversionsResetAt_;
+
+    // Last successful sync (exchange or refresh). Used by the License
+    // Status dialog's "Last sync ..." line.
+    std::optional<std::chrono::system_clock::time_point> lastSyncedAt_;
 
     // Story 6.5 -- offline-mode flag (main-thread only). Toggled in
     // DrainPendingRefresh based on the worker's outcome.

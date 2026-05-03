@@ -57,17 +57,37 @@ std::string_view StateName(LicenseManager::AuthState s) {
 }
 
 // metavisage://auth?code=<hex>&state=<hex> -- single fixed shape, no need
-// for a URL library. Returns nullopt if the scheme/host don't match or
-// either query parameter is missing/empty.
+// for a URL library. Tolerates the trailing-slash form
+// "metavisage://auth/?code=..." that Windows / Chromium-family browsers
+// produce when normalizing a host-only URI. Returns nullopt if the
+// scheme/host don't match or either query parameter is missing/empty.
 struct DeepLinkParts { std::string code; std::string state; };
 
 std::optional<DeepLinkParts> ParseDeepLink(std::string_view uri) {
-    constexpr std::string_view kPrefix = "metavisage://auth?";
-    if (uri.size() <= kPrefix.size() ||
-        uri.substr(0, kPrefix.size()) != kPrefix) {
+    constexpr std::string_view kSchemePrefix = "metavisage://";
+    if (uri.size() <= kSchemePrefix.size() ||
+        uri.substr(0, kSchemePrefix.size()) != kSchemePrefix) {
         return std::nullopt;
     }
-    std::string_view query = uri.substr(kPrefix.size());
+    std::string_view rest = uri.substr(kSchemePrefix.size());
+
+    // Trim trailing whitespace / line-endings from the named-pipe payload
+    // so a stray \r\n from the OS launch path doesn't fail the host check.
+    while (!rest.empty() && (rest.back() == '\n' || rest.back() == '\r' ||
+                              rest.back() == ' '  || rest.back() == '\t')) {
+        rest.remove_suffix(1);
+    }
+
+    const size_t qmark = rest.find('?');
+    if (qmark == std::string_view::npos) return std::nullopt;
+
+    // Host should be "auth" -- accept a trailing slash since Windows /
+    // Chromium-family browsers normalize host-only URIs as "auth/?..."
+    // even though the portal redirect emits "auth?..." verbatim.
+    std::string_view hostPath = rest.substr(0, qmark);
+    if (hostPath != "auth" && hostPath != "auth/") return std::nullopt;
+
+    std::string_view query = rest.substr(qmark + 1);
     DeepLinkParts parts;
     while (!query.empty()) {
         const size_t amp = query.find('&');
@@ -167,6 +187,9 @@ void LicenseManager::Initialize() {
     accessToken_  = config.AccessToken();
     refreshToken_ = config.RefreshToken();
     licenseJwt_   = config.LicenseJwt();
+    if (auto cachedEmail = config.UserEmail()) {
+        userEmail_ = *cachedEmail;
+    }
 
     EnsureSchemeRegistered();
 
@@ -180,6 +203,19 @@ void LicenseManager::Initialize() {
             // so the License Status badge has data on cold launch before
             // the first /api/desktop/token refresh lands.
             LoadClaimsFromJwt(*licenseJwt_);
+            // Cold-launch follow-up: seed lastSyncedAt_ from the JWT's
+            // iat claim so the License Status dialog shows a meaningful
+            // "Last sync: ..." value before the immediate background
+            // refresh completes. iat is when the server issued the
+            // token, which is the most recent server-side touch.
+            try {
+                auto decoded = jwt::decode(*licenseJwt_);
+                if (decoded.has_issued_at()) {
+                    lastSyncedAt_ = decoded.get_issued_at();
+                }
+            } catch (const std::exception&) {
+                // Already decoded successfully in VerifyJwt; ignore.
+            }
             TransitionTo(AuthState::Authenticated);
             // Story 6.4 -- start the 24h refresh thread + fire one
             // immediate refresh so a stale cached JWT gets replaced
@@ -238,6 +274,7 @@ void LicenseManager::SignOut() {
     auto& config = Config::Instance();
     config.ClearTokens();
     config.ClearLicenseJwt();
+    config.ClearUserEmail();
     accessToken_.reset();
     refreshToken_.reset();
     licenseJwt_.reset();
@@ -245,9 +282,11 @@ void LicenseManager::SignOut() {
     authFlowStartedAt_.reset();
     userEmail_.clear();
     tier_ = "free";
+    licenseKey_.clear();
     conversionsUsed_ = 0;
     conversionsLimit_ = 0;
     conversionsResetAt_.clear();
+    lastSyncedAt_.reset();
     offlineMode_ = false;
     TransitionTo(AuthState::Unauthenticated);
 }
@@ -289,7 +328,15 @@ void LicenseManager::HandleDeepLink(const std::string& uri) {
 
     const auto parsed = ParseDeepLink(uri);
     if (!parsed) {
-        MV_LOG_WARNING("LicenseManager: deep-link rejected (malformed URI)");
+        // Log only the prefix (up to the query string) so the auth code
+        // never lands in log files even on a malformed URI.
+        const size_t qmark = uri.find('?');
+        const std::string_view safePrefix =
+            (qmark == std::string_view::npos) ? std::string_view(uri)
+                                              : std::string_view(uri).substr(0, qmark);
+        MV_LOG_WARNING(std::format(
+            "LicenseManager: deep-link rejected (malformed URI): \"{}\"",
+            safePrefix));
         return;
     }
 
@@ -458,17 +505,23 @@ void LicenseManager::DrainPendingExchange() {
         return;
     }
 
-    // Persist on the main thread -- Config::SetTokens / SetLicenseJwt
-    // call Save() synchronously and are not thread-safe.
+    // Persist on the main thread -- Config::SetTokens / SetLicenseJwt /
+    // SetUserEmail call Save() synchronously and are not thread-safe.
     auto& config = Config::Instance();
     config.SetTokens(result.accessToken, result.refreshToken);
     config.SetLicenseJwt(result.licenseJwt);
+    if (!result.email.empty()) {
+        config.SetUserEmail(result.email);
+    }
 
     accessToken_  = result.accessToken;
     refreshToken_ = result.refreshToken;
     licenseJwt_   = result.licenseJwt;
-    userEmail_    = result.email;
+    if (!result.email.empty()) {
+        userEmail_ = result.email;
+    }
     LoadClaimsFromJwt(result.licenseJwt);
+    lastSyncedAt_ = std::chrono::system_clock::now();
 
     authFlowState_.clear();
     authFlowStartedAt_.reset();
@@ -490,6 +543,9 @@ void LicenseManager::LoadClaimsFromJwt(const std::string& jwt) {
         auto decoded = jwt::decode(jwt);
         if (decoded.has_payload_claim("tier")) {
             tier_ = decoded.get_payload_claim("tier").as_string();
+        }
+        if (decoded.has_payload_claim("license_key")) {
+            licenseKey_ = decoded.get_payload_claim("license_key").as_string();
         }
         if (decoded.has_payload_claim("conversions_used")) {
             const auto& c = decoded.get_payload_claim("conversions_used");
@@ -513,10 +569,26 @@ void LicenseManager::LoadClaimsFromJwt(const std::string& jwt) {
 }
 
 std::string LicenseManager::GetTier() const            { return tier_; }
+std::string LicenseManager::GetLicenseKey() const      { return licenseKey_; }
 int         LicenseManager::GetConversionsUsed() const { return conversionsUsed_; }
 int         LicenseManager::GetConversionsLimit() const{ return conversionsLimit_; }
 std::string LicenseManager::GetConversionsResetAt() const { return conversionsResetAt_; }
 std::string LicenseManager::GetUserEmail() const       { return userEmail_; }
+
+std::optional<std::chrono::system_clock::time_point>
+LicenseManager::GetLastSyncedAt() const {
+    return lastSyncedAt_;
+}
+
+void LicenseManager::RequestRefresh() {
+    if (!refreshThread_.joinable()) {
+        MV_LOG_INFO(
+            "LicenseManager: RequestRefresh ignored (no refresh thread)");
+        return;
+    }
+    MV_LOG_INFO("LicenseManager: manual refresh requested");
+    NotifyRefreshNow();
+}
 
 void LicenseManager::StartRefreshThread() {
     if (refreshThread_.joinable()) return;  // already running
@@ -708,6 +780,7 @@ void LicenseManager::DrainPendingRefresh() {
             config.SetLicenseJwt(result.licenseJwt);
             licenseJwt_ = result.licenseJwt;
             LoadClaimsFromJwt(result.licenseJwt);
+            lastSyncedAt_ = std::chrono::system_clock::now();
             // Story 6.5 -- back online; clear the pill silently.
             if (offlineMode_) {
                 MV_LOG_INFO("LicenseManager: back online; clearing offline pill");

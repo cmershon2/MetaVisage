@@ -42,6 +42,15 @@ public:
     void SetLicenseJwt(const std::string& jwt);
     void ClearLicenseJwt();
 
+    // Cached user email (Sprint 6 follow-up). Populated from the
+    // /api/desktop/exchange response per QA Round 2 Decision 3 — the JWT
+    // payload doesn't carry it, so persistence here lets the License
+    // Status dialog render the email on cold launch without a network
+    // round trip. Encrypted at rest via DPAPI like the auth tokens.
+    std::optional<std::string> UserEmail() const;
+    void SetUserEmail(const std::string& email);
+    void ClearUserEmail();
+
     // Story 5.1 — UI state persistence for inspector CollapsingHeaders.
     // Keys are dotted scopes ("morph.general", "morph.advanced",
     // "morph.interior_geometry"). The default is consulted only when the
@@ -75,6 +84,7 @@ private:
     std::optional<std::string> accessToken_;
     std::optional<std::string> refreshToken_;
     std::optional<std::string> licenseJwt_;
+    std::optional<std::string> userEmail_;
     // Story 5.1 — value is "section is expanded"; absence = use default.
     std::map<std::string, bool> collapsedSections_;
     bool loaded_ = false;
