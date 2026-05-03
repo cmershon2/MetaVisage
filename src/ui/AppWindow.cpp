@@ -732,15 +732,20 @@ void AppWindow::TickOnce(int fbWidth, int fbHeight) {
     const auto authState = licenseMgr.GetState();
     const bool gateLogin =
         authState == LicenseManager::AuthState::Unauthenticated ||
-        authState == LicenseManager::AuthState::Authenticating;
+        authState == LicenseManager::AuthState::Authenticating ||
+        authState == LicenseManager::AuthState::Verifying;
     if (gateLogin) {
         // Map auth state to the LoginScreen UI sub-state. The screen
         // itself is a pure render fn and reports clicks via Result;
         // AppWindow translates those into LicenseManager transitions.
-        const LoginScreen::State loginUi =
-            (authState == LicenseManager::AuthState::Authenticating)
-                ? LoginScreen::State::Waiting
-                : LoginScreen::State::Idle;
+        // Verifying is a dedicated loading view that hides Retry --
+        // see Story 6.7 follow-up for the rationale.
+        LoginScreen::State loginUi = LoginScreen::State::Idle;
+        if (authState == LicenseManager::AuthState::Authenticating) {
+            loginUi = LoginScreen::State::Waiting;
+        } else if (authState == LicenseManager::AuthState::Verifying) {
+            loginUi = LoginScreen::State::Verifying;
+        }
 
         // Render login first so the title bar (Begin'd second below)
         // sits on top of it in ImGui's draw order -- drag, minimize,
@@ -1460,7 +1465,8 @@ void AppWindow::RenderTitleBar() {
     {
         const auto authState = LicenseManager::Instance().GetState();
         if (authState == LicenseManager::AuthState::Unauthenticated ||
-            authState == LicenseManager::AuthState::Authenticating) {
+            authState == LicenseManager::AuthState::Authenticating ||
+            authState == LicenseManager::AuthState::Verifying) {
             drawSegment("Sign in", MvStyle::Font.Body, MvStyle::MvFg2);
             // Caption buttons drawn below; skip the rest of the breadcrumb.
             ImGui::End();

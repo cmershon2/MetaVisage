@@ -33,6 +33,13 @@ public:
     enum class AuthState {
         Unauthenticated,  // No valid cached session -- sign in required.
         Authenticating,   // Browser open, waiting for the deep-link callback.
+        Verifying,        // Deep link received + state validated; exchange POST
+                          // is in flight on a worker thread. Distinct from
+                          // Authenticating so the LoginScreen can render a
+                          // loading view that hides the Retry affordance --
+                          // a click during this 1-2s window would otherwise
+                          // cancel the in-flight exchange and re-launch the
+                          // browser pointlessly.
         Authenticated,    // Valid session, app is unlocked.
         Expired,          // Cached JWT past exp + offline cache expired (6.5).
         Inactive,         // Server returned 403/404 -- subscription not active (6.4).

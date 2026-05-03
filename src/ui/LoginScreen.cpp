@@ -5,6 +5,8 @@
 
 #include <imgui.h>
 
+#include <cstdio>
+
 namespace MetaVisage::LoginScreen {
 
 namespace {
@@ -209,18 +211,18 @@ Result Render(State state) {
     const float textX = mMax.x + 18.0f;
     {
         MvStyle::ScopedFont f(MvStyle::Font.MonoSm);
+        const char* caption = "V 2.0.0 \xC2\xB7 SIGN IN REQUIRED";
+        if (state == State::Waiting)   caption = "V 2.0.0 \xC2\xB7 AWAITING BROWSER";
+        if (state == State::Verifying) caption = "V 2.0.0 \xC2\xB7 VERIFYING SESSION";
         dl->AddText(ImVec2(textX, mMin.y + 4.0f),
-                    ColU(MvStyle::MvBlue400),
-                    state == State::Idle
-                        ? "V 2.0.0 \xC2\xB7 SIGN IN REQUIRED"
-                        : "V 2.0.0 \xC2\xB7 AWAITING BROWSER");
+                    ColU(MvStyle::MvBlue400), caption);
     }
     {
         MvStyle::ScopedFont f(MvStyle::Font.Display);
-        const char* prefix = (state == State::Idle) ? "Sign in to "
-                                                     : "Awaiting ";
-        const char* accent = (state == State::Idle) ? "MetaVisage"
-                                                     : "browser";
+        const char* prefix = "Sign in to ";
+        const char* accent = "MetaVisage";
+        if (state == State::Waiting)   { prefix = "Awaiting ";   accent = "browser"; }
+        if (state == State::Verifying) { prefix = "Verifying ";  accent = "session"; }
         const ImVec2 ts1 = ImGui::CalcTextSize(prefix);
         dl->AddText(ImVec2(textX, mMin.y + 18.0f),
                     ColU(MvStyle::MvFg1), prefix);
@@ -229,9 +231,12 @@ Result Render(State state) {
     }
     {
         MvStyle::ScopedFont f(MvStyle::Font.BodySm);
-        const char* desc = (state == State::Idle)
-            ? "Authenticate in your browser to unlock morphing,\nthe asset library, and licensed exports."
-            : "We've opened your default browser. Finish there\nand you'll be redirected back automatically.";
+        const char* desc = "Authenticate in your browser to unlock morphing,\nthe asset library, and licensed exports.";
+        if (state == State::Waiting) {
+            desc = "We've opened your default browser. Finish there\nand you'll be redirected back automatically.";
+        } else if (state == State::Verifying) {
+            desc = "Securing your session and fetching license details.\nThis usually takes a second.";
+        }
         // BodySm is small enough that two-line wrapping is fine without
         // ImGui::TextWrapped — newlines render naturally with AddText.
         dl->AddText(ImVec2(textX, mMin.y + 56.0f),
@@ -241,9 +246,9 @@ Result Render(State state) {
     // ---- Step divider rule + label ---------------------------------
     const float divY = cardMin.y + HeroPadT + MarkSize + 36.0f;
     {
-        const char* stepLabel = (state == State::Idle)
-            ? "STEP 01 / 02 \xE2\x80\x94 AUTHENTICATION"
-            : "STEP 02 / 02 \xE2\x80\x94 BROWSER HANDOFF";
+        const char* stepLabel = "STEP 01 / 02 \xE2\x80\x94 AUTHENTICATION";
+        if (state == State::Waiting)   stepLabel = "STEP 02 / 02 \xE2\x80\x94 BROWSER HANDOFF";
+        if (state == State::Verifying) stepLabel = "STEP 02 / 02 \xE2\x80\x94 SESSION HANDOFF";
         MvStyle::ScopedFont f(MvStyle::Font.MonoSm);
         constexpr float Sz = 10.0f;
         const ImVec2 ts = MvStyle::Font.MonoSm
@@ -299,6 +304,38 @@ Result Render(State state) {
             dl->AddText(ImVec2(cardMin.x + 36.0f + 32.0f, y + 6.0f),
                         ColU(MvStyle::MvFg2), rows[i].text);
         }
+    } else if (state == State::Verifying) {
+        // Verifying state body (PR #25 UI feedback): deep link arrived,
+        // exchange POST is in flight on a worker thread. Render a
+        // dedicated loading view so the user knows the app is working
+        // and so they can't trigger a duplicate Sign In via the
+        // (now-hidden) Retry button. Cancel stays in the footer in
+        // case the exchange hangs.
+        const float pad = 36.0f;
+        // Animated dots: 0 -> 3 dots, ~1.5 Hz. Tracks ImGui::GetTime()
+        // so the indicator updates at frame cadence with no extra
+        // plumbing. Buffer is "Verifying your session..." with the
+        // trailing 3 chars rewritten each frame.
+        char buf[40];
+        const int phase =
+            static_cast<int>(ImGui::GetTime() * 1.5) & 3;  // 0..3
+        std::snprintf(buf, sizeof(buf),
+                      "Verifying your session%c%c%c",
+                      (phase > 0) ? '.' : ' ',
+                      (phase > 1) ? '.' : ' ',
+                      (phase > 2) ? '.' : ' ');
+        {
+            MvStyle::ScopedFont f(MvStyle::Font.BodySm);
+            dl->AddText(ImVec2(cardMin.x + pad, bodyTop + 4.0f),
+                        ColU(MvStyle::MvFg1), buf);
+            dl->AddText(ImVec2(cardMin.x + pad, bodyTop + 26.0f),
+                        ColU(MvStyle::MvFg3),
+                        "Securely exchanging your sign-in for a license token.");
+        }
+        // No retry warning row -- a click here would cancel the
+        // in-flight exchange and re-launch the browser, which is
+        // exactly the wrong behavior. Cancel button in the footer
+        // remains the only escape hatch.
     } else {
         // Waiting state body (PR #25 review feedback): the listening
         // address box, callback URI display, Copy button, and LIVE
@@ -392,12 +429,12 @@ Result Render(State state) {
                     "SSO \xC2\xB7 OAUTH 2.1 \xC2\xB7 PKCE");
     }
 
-    // Right-side ghost button — Cancel only when waiting on the browser.
-    // Idle state has no escape: the design's "Use offline" option is
-    // omitted by product policy (users must complete sign-in at least
-    // once per session), so the right side of the footer stays empty
-    // until auth is in flight.
-    if (state == State::Waiting) {
+    // Right-side ghost button — Cancel during browser-wait or during
+    // the post-deep-link exchange. Idle state has no escape (the
+    // design's "Use offline" option is omitted by product policy --
+    // users must complete sign-in at least once per session), so the
+    // right side of the footer stays empty until auth is in flight.
+    if (state == State::Waiting || state == State::Verifying) {
         constexpr float pad = 36.0f;
         constexpr float BtnW = 96.0f;
         ImGui::SetCursorScreenPos(ImVec2(fMax.x - pad - BtnW,

@@ -18,11 +18,14 @@ namespace MetaVisage::LoginScreen {
 //   Waiting -> Esc pressed       -> Idle    (same as Cancel)
 //
 // PR #25 review feedback dropped the Waiting-state spinner ring around
-// the logo, so Render no longer needs a tick-seconds argument.
+// the logo, so Render no longer needs a tick-seconds argument. The
+// Verifying state animates a small "..." trailer driven by
+// ImGui::GetTime() inside Render.
 
 enum class State {
     Idle,        // user has not yet clicked Sign In
     Waiting,     // browser opened, waiting on the OS deep-link callback
+    Verifying,   // deep link received + state validated; exchange in flight
 };
 
 struct Result {

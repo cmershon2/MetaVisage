@@ -49,6 +49,7 @@ std::string_view StateName(LicenseManager::AuthState s) {
     switch (s) {
         case S::Unauthenticated: return "Unauthenticated";
         case S::Authenticating:  return "Authenticating";
+        case S::Verifying:       return "Verifying";
         case S::Authenticated:   return "Authenticated";
         case S::Expired:         return "Expired";
         case S::Inactive:        return "Inactive";
@@ -263,7 +264,12 @@ void LicenseManager::BeginAuthFlow() {
 }
 
 void LicenseManager::CancelAuthFlow() {
-    if (state_ != AuthState::Authenticating) return;
+    // Accept both Authenticating (browser open) and Verifying (exchange
+    // in flight) as cancellable. If the user cancels mid-exchange the
+    // worker thread keeps running until libcurl returns; its result is
+    // then discarded by DrainPendingExchange's state check.
+    if (state_ != AuthState::Authenticating &&
+        state_ != AuthState::Verifying) return;
     authFlowState_.clear();
     authFlowStartedAt_.reset();
     TransitionTo(AuthState::Unauthenticated);
@@ -314,7 +320,12 @@ void LicenseManager::DrainPendingDeepLink() {
 }
 
 void LicenseManager::TickTimeout() {
-    if (state_ != AuthState::Authenticating || !authFlowStartedAt_) return;
+    // Watch both Authenticating (browser open, no deep link yet) and
+    // Verifying (deep link received, exchange in flight). The exchange
+    // worker has its own 30s budget so Verifying typically self-resolves,
+    // but the 5-min total guards against a hung libcurl edge case.
+    if ((state_ != AuthState::Authenticating &&
+         state_ != AuthState::Verifying) || !authFlowStartedAt_) return;
     const auto elapsed = std::chrono::steady_clock::now() - *authFlowStartedAt_;
     if (elapsed > kAuthFlowTimeout) {
         MV_LOG_WARNING("LicenseManager: auth flow timed out after 5 minutes");
@@ -361,6 +372,11 @@ void LicenseManager::HandleDeepLink(const std::string& uri) {
     }
 
     MV_LOG_INFO("LicenseManager: state validated; spawning exchange worker");
+    // PR #25 UI feedback: transition out of Authenticating so the
+    // LoginScreen can render its dedicated Verifying view while the
+    // exchange POST is in flight. authFlowStartedAt_ stays set so
+    // TickTimeout's 5-min budget still covers the combined wait.
+    TransitionTo(AuthState::Verifying);
     StartExchange(parsed->code);
 }
 
@@ -474,7 +490,11 @@ void LicenseManager::DrainPendingExchange() {
 
     // If the user canceled while the worker was in flight, the auth
     // flow is no longer valid; discard whatever the server returned.
-    if (state_ != AuthState::Authenticating) {
+    // Verifying is the expected state by the time the result lands;
+    // Authenticating only here for defense-in-depth in case some race
+    // skips the HandleDeepLink transition.
+    if (state_ != AuthState::Verifying &&
+        state_ != AuthState::Authenticating) {
         MV_LOG_INFO(std::format(
             "LicenseManager: exchange completed but state is {} -- discarding",
             StateName(state_)));
