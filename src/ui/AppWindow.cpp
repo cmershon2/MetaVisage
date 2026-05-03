@@ -752,10 +752,17 @@ void AppWindow::TickOnce(int fbWidth, int fbHeight) {
 
         SyncOSWindowTitle();
         RenderTitleBar();
-        if (loginResult.signInRequested || loginResult.retryRequested) {
-            // Story 6.2 fills BeginAuthFlow in with the browser launch +
-            // state token; 6.1 just transitions to Authenticating so the
-            // spinner animates. Retry from Waiting reuses the same path.
+        if (loginResult.signInRequested) {
+            licenseMgr.BeginAuthFlow();
+        }
+        if (loginResult.retryRequested) {
+            // PR #25 UI feedback fix: Retry is only clickable from the
+            // Waiting state, where state_ == Authenticating, but
+            // BeginAuthFlow early-returns in that case. So a plain
+            // re-call did nothing -- the browser was never re-opened.
+            // Cancel-then-Begin clears the in-flight state token + start
+            // time, then runs a fresh auth flow with a new CSPRNG state.
+            licenseMgr.CancelAuthFlow();
             licenseMgr.BeginAuthFlow();
         }
         if (loginResult.cancelRequested) {

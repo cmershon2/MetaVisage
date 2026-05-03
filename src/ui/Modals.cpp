@@ -54,13 +54,17 @@ void ConfirmModalState::Open(const std::string& t, const std::string& msg,
 
 void RenderConfirmModal(ConfirmModalState& state) {
     HandlePendingOpen("##ConfirmModal", state.pendingOpen);
-    // PR #25 review feedback fix: center the confirm modal on the main
-    // viewport. ImGui::BeginPopupModal otherwise positions to the
-    // last-saved location (or a default in the upper-left when there
-    // is none + AlwaysAutoResize), which surfaced after Story 6.6's
-    // Sign Out flow as "the confirm popped in a corner."
+    // PR #25 review feedback fix (round 2): the confirm popup is
+    // ImGuiWindowFlags_AlwaysAutoResize, so its width/height aren't
+    // known on the first frame after OpenPopup. With Cond_Appearing,
+    // the pivot calculation `pos - size * 0.5` runs once with size=0
+    // and places the window's top-left at center -- the user sees
+    // the popup hugging the lower-right of the screen midpoint.
+    // Switching to Cond_Always re-applies the centered pivot every
+    // frame using the current measured size, so by frame 2 the popup
+    // is genuinely centered. No perf concern for a small fixed popup.
     const auto center = ImGui::GetMainViewport()->GetCenter();
-    ImGui::SetNextWindowPos(center, ImGuiCond_Appearing, ImVec2(0.5f, 0.5f));
+    ImGui::SetNextWindowPos(center, ImGuiCond_Always, ImVec2(0.5f, 0.5f));
     if (ImGui::BeginPopupModal("##ConfirmModal", nullptr, ImGuiWindowFlags_AlwaysAutoResize)) {
         ImGui::TextUnformatted(state.title.c_str());
         ImGui::Separator();

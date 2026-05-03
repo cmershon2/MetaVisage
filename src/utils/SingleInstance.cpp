@@ -33,6 +33,19 @@ bool SingleInstance::TryAcquire(const std::string& payload, RaiseCallback onRais
     }
 
     if (GetLastError() == ERROR_ALREADY_EXISTS) {
+        // PR #25 UI feedback fix: Windows blocks SetForegroundWindow
+        // when called by a process that isn't currently foreground
+        // (the foreground-lock rules). The first MetaVisage instance
+        // hits that block when it tries to focus itself in response
+        // to a metavisage:// deep link forwarded through the pipe.
+        // This second instance is freshly spawned by the OS launching
+        // the URL handler, so it has transient foreground rights;
+        // ASFW_ANY transfers them to *any* process that calls
+        // SetForegroundWindow next, including the first instance.
+        // Without this, the running app stays buried behind the
+        // browser even after a successful auth completion.
+        AllowSetForegroundWindow(ASFW_ANY);
+
         // Poke the primary instance via the named pipe, then bail out.
         HANDLE pipe = CreateFileW(kPipeName, GENERIC_WRITE, 0, nullptr, OPEN_EXISTING, 0, nullptr);
         if (pipe != INVALID_HANDLE_VALUE) {
