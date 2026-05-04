@@ -765,6 +765,14 @@ int NRICPDeformer::BuildSystemMatrix(
     }
 
     // --- Landmark term ---
+    // Sprint 7 Story 7.5 close-out: the landmark weight wl is held
+    // constant across stiffness steps -- this is the standard NRICP
+    // formulation, NOT a bug. The cottage-cheese-face spike was closed
+    // with "Outcome B stopgap is the answer" (the StageSidebar amber
+    // warning at landmarkWeight/alphaFinal > 0.5 is the user-facing
+    // fix). See .claude/context/development/cottage_cheese_face_decision.md
+    // for the full rationale + reopen criteria. Three-sprint deferral
+    // closed without a code change here.
     double wl = static_cast<double>(params_.landmarkWeight);
     if (subsampled) {
         for (const auto& [vi, target] : landmarks_) {
