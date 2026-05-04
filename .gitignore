@@ -57,3 +57,13 @@ config.ini
 
 # Claude Code runtime artifacts (per-session session ID + PID)
 .claude/scheduled_tasks.lock
+
+# Licensing / auth configuration (Sprint 6)
+# .env.example and .env.development are checked in; everything else stays
+# local. keys/*.pem holds RS256 license JWT public keys per environment —
+# never committed.
+.env
+.env.local
+.env.staging
+.env.production
+keys/*.pem

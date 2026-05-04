@@ -76,4 +76,13 @@ std::string ExecutableDir() {
     return dir;
 }
 
+std::string ExecutablePath() {
+    wchar_t buf[MAX_PATH] = {0};
+    DWORD len = GetModuleFileNameW(nullptr, buf, MAX_PATH);
+    if (len == 0 || len == MAX_PATH) return {};
+    std::string full = WideToUtf8(buf, static_cast<int>(len));
+    std::replace(full.begin(), full.end(), '\\', '/');
+    return full;
+}
+
 } // namespace MetaVisage::Paths

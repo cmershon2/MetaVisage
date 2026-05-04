@@ -34,6 +34,7 @@
 //     refactor drops a Begin call.
 
 #include "core/Project.h"
+#include "licensing/LicenseManager.h"
 #include "ui/AppWindow.h"
 #include "ui/Viewport.h"
 #include "ui/ViewportHost.h"
@@ -154,9 +155,54 @@ void RegisterScenario_ViewportShadingModes(ImGuiTestEngine* engine) {
         IM_CHECK(vp->GetShadingMode() == ShadingMode::Textured);
 
         // Restore default so the running window state is sane after
-        // the test — useful when iterating locally with the harness
+        // the test - useful when iterating locally with the harness
         // visible.
         ctx->ItemClick("//##VpToolbar_primary/solid/##b");
+    };
+}
+
+void RegisterScenario_LoginScreenCycle(ImGuiTestEngine* engine) {
+    // Sprint 6 Story 6.7 -- exercise the LoginScreen Sign in / Cancel
+    // cycle. Pre-condition: flip LicenseManager into Unauthenticated so
+    // AppWindow::TickOnce takes the LoginScreen gate branch instead of
+    // rendering the dockspace. Test mode (set by SetTestState) suppresses
+    // the BeginAuthFlow browser launch so this scenario is hermetic.
+    //
+    // After the cycle we restore Authenticated so any post-test manual
+    // exploration of the harness window doesn't dead-end on the gate.
+    ImGuiTest* t = IM_REGISTER_TEST(engine, "smoke", "login_screen_cycle");
+    t->TestFunc = [](ImGuiTestContext* ctx) {
+        ctx->SetRef("");
+        auto& lm = LicenseManager::Instance();
+
+        // Enter Unauthenticated and let the LoginScreen render.
+        lm.SetTestState(LicenseManager::AuthState::Unauthenticated);
+        ctx->Yield();
+        ctx->Yield();
+
+        IM_CHECK(lm.GetState() ==
+                 LicenseManager::AuthState::Unauthenticated);
+        IM_CHECK(ImGui::FindWindowByName("##MvLoginScreen") != nullptr);
+
+        // Click Sign In -> AppWindow calls BeginAuthFlow, which in test
+        // mode skips OpenUrl but still transitions to Authenticating so
+        // the spinner is visible.
+        ctx->ItemClick("//##MvLoginScreen/Sign in with browser");
+        ctx->Yield();
+        ctx->Yield();
+        IM_CHECK(lm.GetState() ==
+                 LicenseManager::AuthState::Authenticating);
+
+        // Click Cancel -> CancelAuthFlow -> Unauthenticated.
+        ctx->ItemClick("//##MvLoginScreen/Cancel");
+        ctx->Yield();
+        ctx->Yield();
+        IM_CHECK(lm.GetState() ==
+                 LicenseManager::AuthState::Unauthenticated);
+
+        // Restore Authenticated for any subsequent manual inspection.
+        lm.SetTestState(LicenseManager::AuthState::Authenticated);
+        ctx->Yield();
     };
 }
 
@@ -164,6 +210,14 @@ void RegisterScenario_ViewportShadingModes(ImGuiTestEngine* engine) {
 
 int main(int /*argc*/, char** /*argv*/) {
     Logger::Instance().SetFileLogging(false);
+
+    // Sprint 6 Story 6.1 -- bypass the LoginScreen gate. The harness
+    // exercises the app shell + viewport + modals, not the auth flow
+    // itself; pinning state to Authenticated before AppWindow::Initialize
+    // keeps the existing scenarios green. Story 6.7 adds dedicated Login
+    // Screen scenarios that flip this back to Unauthenticated.
+    LicenseManager::Instance().SetTestState(
+        LicenseManager::AuthState::Authenticated);
 
     AppWindow app;
     g_app = &app;
@@ -185,6 +239,7 @@ int main(int /*argc*/, char** /*argv*/) {
     RegisterScenario_WelcomeModalDismiss(engine);
     RegisterScenario_DockspaceWindowSmoke(engine);
     RegisterScenario_ViewportShadingModes(engine);
+    RegisterScenario_LoginScreenCycle(engine);
 
     ImGuiTestEngine_Start(engine, ImGui::GetCurrentContext());
     ImGuiTestEngine_QueueTests(engine, ImGuiTestGroup_Tests, /*filter=*/nullptr,

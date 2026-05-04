@@ -28,6 +28,8 @@
 #include "io/ProjectSerializer.h"
 #include "io/MeshExporter.h"
 #include "io/PresetStore.h"
+#include "licensing/LicenseConfig.h"
+#include "licensing/LicenseManager.h"
 #include "baking/TextureBaker.h"
 #include "baking/TextureWriter.h"
 #include "utils/Config.h"
@@ -73,6 +75,13 @@ void GlfwErrorCallback(int error, const char* description) {
     std::fprintf(stderr, "GLFW error %d: %s\n", error, description);
     MV_LOG_ERROR(std::format("GLFW error {}: {}", error, description));
 }
+
+// PR #25 review feedback: cross-thread "please bring the OS window to
+// the foreground" signal. Set by AppWindow::RequestForegroundFocus
+// (called from main.cpp's SingleInstance listener thread) and
+// consumed on the main thread inside TickOnce, where calling GLFW /
+// Win32 focus APIs is safe.
+std::atomic<bool> g_appFocusRequested{false};
 
 #ifdef _WIN32
 // =============================================================================
@@ -352,6 +361,14 @@ bool AppWindow::Initialize(int width, int height, const char* title) {
     WrapPreset::QuickWrap().ApplyTo(project_->GetMorphData());
     undoStack_ = std::make_unique<UndoStack>();
     viewportHost_->SetProject(project_.get());
+
+    // Sprint 6 Story 6.1 -- bootstrap the auth state machine off the
+    // encrypted token cache. Runs after Config is loaded (main.cpp:13)
+    // and before the LoginScreen first renders, so the cached-session
+    // fast path can skip straight into Authenticated and the user never
+    // sees the sign-in surface flash.
+    LicenseManager::Instance().Initialize();
+
     userPresets_ = PresetStore::LoadAll();
     statusMessage_ = "Ready";
 
@@ -661,6 +678,11 @@ void AppWindow::Run() {
     }
 }
 
+// static
+void AppWindow::RequestForegroundFocus() {
+    g_appFocusRequested.store(true);
+}
+
 void AppWindow::TickOnce(int fbWidth, int fbHeight) {
     if (!window_) return;
 
@@ -668,36 +690,88 @@ void AppWindow::TickOnce(int fbWidth, int fbHeight) {
     ImGui_ImplGlfw_NewFrame();
     ImGui::NewFrame();
 
-    // Story 3.8.12 — when the login screen is showing, it must fully
-    // replace every other UI surface. Otherwise the foreground-drawlist
-    // primitives in Viewport::DrawOverlays (orientation gizmo, point
-    // labels, active-pane border) bleed through, and the GL 3D pass
-    // keeps writing pixels behind the login card. Short-circuit the
-    // entire frame body — render only the login surface and skip the
+    // Sprint 6 Story 6.1 -- LoginScreen is the mandatory gate whenever
+    // LicenseManager reports Unauthenticated or Authenticating. It must
+    // fully replace every other UI surface: otherwise the foreground-
+    // drawlist primitives in Viewport::DrawOverlays (orientation gizmo,
+    // point labels, active-pane border) bleed through, and the GL 3D
+    // pass keeps writing pixels behind the login card. Short-circuit the
+    // entire frame body -- render only the login surface and skip the
     // app shell, viewports, sidebar, and modals.
-    if (showLoginScreen_) {
+    auto& licenseMgr = LicenseManager::Instance();
+    // Sprint 6 Story 6.2 -- drain the deep-link queue (main.cpp argv or
+    // SingleInstance onRaise). Story 6.3 -- drain the exchange-worker
+    // result if the POST has finished. TickTimeout fires the 5-minute
+    // auth watchdog. Order matters: deep-link can spawn the exchange,
+    // exchange can transition to Authenticated/Unauthenticated, so all
+    // three run before we read the auth state.
+    licenseMgr.DrainPendingDeepLink();
+    licenseMgr.DrainPendingExchange();
+    licenseMgr.DrainPendingRefresh();
+    licenseMgr.TickTimeout();
+
+    // PR #25 review feedback fix: bring the already-running first
+    // instance to the foreground when SingleInstance forwards a deep
+    // link (or any other raise signal). main.cpp's listener-thread
+    // callback can't call GLFW directly, so it sets the atomic and we
+    // drain it here. On Windows we also restore from minimized and use
+    // SetForegroundWindow to bypass the foreground-lock rules that
+    // glfwFocusWindow alone can't always defeat.
+    if (g_appFocusRequested.exchange(false) && window_) {
+#ifdef _WIN32
+        if (HWND hwnd = ::glfwGetWin32Window(window_); hwnd) {
+            if (::IsIconic(hwnd)) ::ShowWindow(hwnd, SW_RESTORE);
+            ::SetForegroundWindow(hwnd);
+        }
+#endif
+        glfwFocusWindow(window_);
+    }
+    if (auto err = licenseMgr.ConsumeLastError(); err && !err->empty()) {
+        errorModal_.Open(*err);
+    }
+    const auto authState = licenseMgr.GetState();
+    const bool gateLogin =
+        authState == LicenseManager::AuthState::Unauthenticated ||
+        authState == LicenseManager::AuthState::Authenticating ||
+        authState == LicenseManager::AuthState::Verifying;
+    if (gateLogin) {
+        // Map auth state to the LoginScreen UI sub-state. The screen
+        // itself is a pure render fn and reports clicks via Result;
+        // AppWindow translates those into LicenseManager transitions.
+        // Verifying is a dedicated loading view that hides Retry --
+        // see Story 6.7 follow-up for the rationale.
+        LoginScreen::State loginUi = LoginScreen::State::Idle;
+        if (authState == LicenseManager::AuthState::Authenticating) {
+            loginUi = LoginScreen::State::Waiting;
+        } else if (authState == LicenseManager::AuthState::Verifying) {
+            loginUi = LoginScreen::State::Verifying;
+        }
+
         // Render login first so the title bar (Begin'd second below)
-        // sits on top of it in ImGui's draw order — drag, minimize,
+        // sits on top of it in ImGui's draw order -- drag, minimize,
         // maximize, close need to work even while the user hasn't
         // signed in. The title bar's breadcrumb collapses to
-        // "MetaVisage · Sign in" since no project is loaded yet
-        // (RenderTitleBar branches on showLoginScreen_).
-        const auto loginResult = LoginScreen::Render(loginState_,
-                                                      ImGui::GetTime());
+        // "MetaVisage / Sign in" since no project is loaded yet
+        // (RenderTitleBar branches on the same auth-state check).
+        const auto loginResult = LoginScreen::Render(loginUi);
 
         SyncOSWindowTitle();
         RenderTitleBar();
         if (loginResult.signInRequested) {
-            loginState_ = LoginScreen::State::Waiting;
+            licenseMgr.BeginAuthFlow();
         }
-        if (loginResult.cancelRequested || loginResult.retryRequested) {
-            // Both reset back to Idle — Retry implies "browser didn't
-            // open, take me back to the Sign in button" until the auth
-            // backend differentiates them.
-            loginState_ = LoginScreen::State::Idle;
+        if (loginResult.retryRequested) {
+            // PR #25 UI feedback fix: Retry is only clickable from the
+            // Waiting state, where state_ == Authenticating, but
+            // BeginAuthFlow early-returns in that case. So a plain
+            // re-call did nothing -- the browser was never re-opened.
+            // Cancel-then-Begin clears the in-flight state token + start
+            // time, then runs a fresh auth flow with a new CSPRNG state.
+            licenseMgr.CancelAuthFlow();
+            licenseMgr.BeginAuthFlow();
         }
-        if (loginResult.closeRequested) {
-            showLoginScreen_ = false;
+        if (loginResult.cancelRequested) {
+            licenseMgr.CancelAuthFlow();
         }
 
         // Still poll worker thread state in case a morph started
@@ -1382,17 +1456,22 @@ void AppWindow::RenderTitleBar() {
     drawSegment("\xC2\xB7", MvStyle::Font.Body, MvStyle::MvLine3);   // U+00B7 middot
     cx += 10.0f;
 
-    // Story 3.8.12 follow-up — during login, the breadcrumb is just
-    // "MetaVisage · Sign in". No project is loaded yet and there's no
+    // Sprint 6 Story 6.1 -- during login the breadcrumb is just
+    // "MetaVisage / Sign in". No project is loaded yet and there's no
     // active stage to surface, so we mirror the design's login.jsx
     // title bar shorthand. The drag/close/min/max plumbing in
     // RenderTitleBar (caption buttons + WM_NCHITTEST hook) keeps
     // working unchanged.
-    if (showLoginScreen_) {
-        drawSegment("Sign in", MvStyle::Font.Body, MvStyle::MvFg2);
-        // Caption buttons drawn below; skip the rest of the breadcrumb.
-        ImGui::End();
-        return;
+    {
+        const auto authState = LicenseManager::Instance().GetState();
+        if (authState == LicenseManager::AuthState::Unauthenticated ||
+            authState == LicenseManager::AuthState::Authenticating ||
+            authState == LicenseManager::AuthState::Verifying) {
+            drawSegment("Sign in", MvStyle::Font.Body, MvStyle::MvFg2);
+            // Caption buttons drawn below; skip the rest of the breadcrumb.
+            ImGui::End();
+            return;
+        }
     }
 
     const WorkflowStage stage = project_ ? project_->GetCurrentStage() : WorkflowStage::Alignment;
@@ -1480,13 +1559,9 @@ void AppWindow::RenderMainMenuBar() {
         // and copy codepoints into MvIcons.h. Will move behind a debug build
         // flag once the icon constants are stable.
         ImGui::MenuItem("Icon Glyph Explorer (Dev)", nullptr, &showIconExplorer_);
-        // Sprint 3.8.12 — preview the login screen ahead of the Sprint 6.1
-        // auth backend. Toggling resets the state machine so the preview
-        // always opens in Idle.
-        if (ImGui::MenuItem("Login Screen (Dev)", nullptr, showLoginScreen_)) {
-            showLoginScreen_ = !showLoginScreen_;
-            loginState_ = LoginScreen::State::Idle;
-        }
+        // Sprint 6.1 retired the dev-only "Login Screen" toggle that
+        // lived here pre-auth-backend. The login surface is now driven
+        // by LicenseManager::GetState() == Unauthenticated.
         ImGui::EndMenu();
     }
 
@@ -1569,6 +1644,15 @@ void AppWindow::RenderStatusBar() {
     drawSection(statusMessage_.empty() ? "Ready" : statusMessage_, MvStyle::MvFg2);
     drawSep();
 
+    // Sprint 6 Story 6.5 -- amber Offline pill when the most recent
+    // /api/desktop/token refresh hit a transport failure but the cached
+    // JWT is still valid. Cleared silently on the next successful refresh.
+    if (LicenseManager::Instance().IsOfflineMode()) {
+        drawSection("\xE2\x97\x8F ", MvStyle::MvWarning);
+        drawSection("Offline", MvStyle::MvWarning);
+        drawSep();
+    }
+
     // Stage 0N STAGENAME
     drawSection("Stage ", MvStyle::MvFg3);
     {
@@ -1596,6 +1680,27 @@ void AppWindow::RenderStatusBar() {
             ? std::filesystem::path(project_->GetTargetMesh().filepath).filename().string()
             : "\xE2\x80\x94";
         drawSection(tgt, MvStyle::MvFg1);
+    }
+
+    // Sprint 6 Story 6.6 -- persistent tier badge so the user always
+    // knows which tier they're on. Only renders when LicenseManager is
+    // in a state where the tier is meaningful (post-auth); the gate at
+    // the top of TickOnce hides the status bar entirely while
+    // Unauthenticated/Authenticating, so we don't need to defend that
+    // here.
+    {
+        const auto& lm = LicenseManager::Instance();
+        std::string tier = lm.GetTier();
+        if (!tier.empty()) {
+            drawSep();
+            drawSection("Tier ", MvStyle::MvFg3);
+            std::string upper = tier;
+            std::transform(upper.begin(), upper.end(), upper.begin(),
+                           [](unsigned char c) {
+                               return static_cast<char>(std::toupper(c));
+                           });
+            drawSection(upper, MvStyle::MvBlue400);
+        }
     }
 
     // ---- Right-aligned cluster: GPU readout ------------------------------
@@ -1690,9 +1795,9 @@ void AppWindow::DispatchPendingAction() {
             }
             break;
         case PendingAction::OpenAccountLicense:
-            if (!OpenUrl("https://metavisage.io/account")) {
-                errorModal_.Open("Could not open the account page in your browser.");
-            }
+            // Sprint 6 Story 6.6 -- replaces the placeholder browser open
+            // with the in-app License Status dialog.
+            licenseModal_.Open();
             break;
         case PendingAction::CheckForUpdates:
             // WinSparkle integration is scheduled for the Sprint 3.6 close-out;
@@ -1856,6 +1961,30 @@ void AppWindow::RenderModals() {
     RenderConfirmModal(confirmModal_);
     RenderErrorModal(errorModal_);
     RenderShortcutsModal(shortcutsModal_);
+
+    // Sprint 6 Story 6.6 -- License Status modal. Action requests are
+    // polled here so RenderLicenseModal stays a pure render fn (matches
+    // the per-frame state-passing convention from CLAUDE.md).
+    RenderLicenseModal(licenseModal_);
+    if (licenseModal_.manageSubscriptionRequested) {
+        licenseModal_.manageSubscriptionRequested = false;
+        const std::string url = std::string(LicenseConfig::kApiBaseUrl) +
+                                "/manage-subscription";
+        if (!OpenUrl(url)) {
+            errorModal_.Open(
+                "Could not open the subscription management page in your "
+                "browser.");
+        }
+    }
+    if (licenseModal_.signOutRequested) {
+        licenseModal_.signOutRequested = false;
+        confirmModal_.Open(
+            "Sign Out",
+            "Signing out will require you to sign in again to use "
+            "MetaVisage. Continue?",
+            []() { LicenseManager::Instance().SignOut(); },
+            "Sign Out", "Cancel");
+    }
 
     RenderWelcomeModal(welcomeModal_);
     if (welcomeModal_.action != WelcomeAction::None) {
@@ -2317,6 +2446,12 @@ void AppWindow::RenderFrame(int /*fbWidth*/, int /*fbHeight*/) {
 void AppWindow::Shutdown() {
     // Unwind in reverse init order, consulting each flag so a partial
     // Initialize() failure still produces a clean teardown.
+
+    // Sprint 6 Story 6.3 -- join the licensing exchange worker so the
+    // process doesn't exit while the POST is mid-flight. HttpClient has
+    // a 30s ceiling; in practice the join is instant on a normal exit
+    // because the user has already authenticated by the time they quit.
+    LicenseManager::Instance().Shutdown();
 
     // Join the morph worker before tearing anything down — it holds raw
     // pointers into the deformer and captures `this` by reference.

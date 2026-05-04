@@ -2,7 +2,6 @@
 #define APPWINDOW_H
 
 #include "core/WrapPreset.h"
-#include "ui/LoginScreen.h"
 #include "ui/Modals.h"
 #include "ui/StageSidebar.h"
 
@@ -71,6 +70,15 @@ public:
     // should not touch the GLFW handle directly; AppWindow remains the
     // owner.
     GLFWwindow* GetWindow() { return window_; }
+
+    // PR #25 review feedback fix: thread-safe request that the main
+    // app window be brought to the foreground on the next TickOnce.
+    // Wired from main.cpp's SingleInstance onRaise callback (runs on
+    // the listener thread) so a metavisage:// deep link from a second
+    // instance brings the already-running first instance forward
+    // instead of leaving it buried. Static so the callback doesn't
+    // need to capture an AppWindow pointer.
+    static void RequestForegroundFocus();
 
 private:
     void RenderFrame(int fbWidth, int fbHeight);
@@ -153,16 +161,12 @@ private:
     bool showAbout_ = false;
     bool showIconExplorer_ = false;        // Dev tool, gated by Help menu
 
-    // Story 3.8.12 — dev-only login screen preview. Sprint 6.1 will
-    // promote this to first-launch surface driven by the auth backend;
-    // for now the toggle lives behind Help → Login Screen (Dev).
-    bool showLoginScreen_ = false;
-    LoginScreen::State loginState_ = LoginScreen::State::Idle;
     ConfirmModalState confirmModal_;
     ErrorModalState errorModal_;
     WelcomeModalState welcomeModal_;
     ExportModalState exportModal_;
     ShortcutsModalState shortcutsModal_;
+    LicenseModalState licenseModal_;
 
     // Story 4.4 — Save / Rename Wrap preset modal. Single state struct
     // covers both flows; editingPresetId distinguishes new (empty) from

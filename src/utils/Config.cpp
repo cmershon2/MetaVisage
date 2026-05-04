@@ -93,6 +93,7 @@ void Config::Load() {
     }
 
     licenseJwt_ = ReadEncryptedString(j, "license_jwt");
+    userEmail_  = ReadEncryptedString(j, "user_email");
 
     // Story 5.1 — UI state. Missing block / unknown keys silently fall
     // through to defaults; bad value types are skipped, not crashed.
@@ -137,6 +138,9 @@ void Config::Save() const {
     }
     if (licenseJwt_) {
         if (auto enc = SecureStorage::EncryptString(*licenseJwt_)) j["license_jwt"] = *enc;
+    }
+    if (userEmail_) {
+        if (auto enc = SecureStorage::EncryptString(*userEmail_)) j["user_email"] = *enc;
     }
 
     // Story 5.1 — only emit ui_state if at least one section has been
@@ -206,6 +210,18 @@ void Config::SetLicenseJwt(const std::string& jwt) {
 
 void Config::ClearLicenseJwt() {
     licenseJwt_.reset();
+    Save();
+}
+
+std::optional<std::string> Config::UserEmail() const { return userEmail_; }
+
+void Config::SetUserEmail(const std::string& email) {
+    userEmail_ = email;
+    Save();
+}
+
+void Config::ClearUserEmail() {
+    userEmail_.reset();
     Save();
 }
 

@@ -38,6 +38,11 @@
 
 ## 🟡 Medium Priority
 
+- [ ] **License Status modal redesign + title-bar account chip** *(deferred from Sprint 6 — UI/UX feedback post-Story 6.6)*
+  - The Sprint 6 modal is a functional placeholder; the UI/UX team has produced a higher-fidelity mockup that calls for: a dedicated header with sparkle glyph and X close button, mockup-faithful section dividers, a `LICENSE KEY` row (now wired into `LicenseManager::GetLicenseKey()` after the Sprint 6 follow-up), a `STATUS` row with a "Last sync ..." timestamp (`LicenseManager::GetLastSyncedAt()` is in place), a manual `Refresh license` button (`LicenseManager::RequestRefresh()` is exposed), a usage progress bar, and a footer with `Manage subscription` as a left-aligned text link beside red `Sign out` + primary `Close` buttons. Separately, the trigger should move out of `Help > Account & License` and into a clickable account chip in the menu bar after the Autosave indicator (`PRO` tier pill + email + `XX` initials avatar). The Sprint 6 follow-up already plumbed every data field the redesigned modal needs; this item is purely the rendering work. **The "ANNUAL" plan badge from the mockup is intentionally out of scope** — no contract field on the JWT or exchange response carries billing cadence.
+  - **Effort**: ~325 LoC (~200 modal, ~80 menu-bar chip, ~10 menu-item removal, ~20 refresh-button wiring, ~15 X-button styling)
+  - **Value**: Brings the licensing surface up to design-system parity; the chip is a higher-traffic entry point than the buried Help menu item.
+
 - [/] **Custom wrap preset saving** *(Sprint 4, in progress — Story 4.4)*
   - v2.0 ships with Quick Wrap and Fantasy Wrap presets. Users have asked to save their own tuned parameter sets as presets with thumbnails.
   - **Effort**: ~3–4 days
