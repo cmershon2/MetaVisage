@@ -1713,6 +1713,33 @@ void AppWindow::RenderStatusBar() {
                            });
             drawSection(upper, MvStyle::MvBlue400);
         }
+
+        // Sprint 7 Story 7.4 -- conversion-limit warning pill. Triggers
+        // within 2 conversions of the limit and stays visible at zero
+        // remaining. Pro tier (60-conversion limit) is intentionally not
+        // suppressed; the warning is correct behaviour for any tier
+        // nearing its cap, and a Pro user about to hit the limit wants
+        // to know.
+        const int used  = lm.GetConversionsUsed();
+        const int limit = lm.GetConversionsLimit();
+        if (limit > 0 && used >= limit - 2) {
+            drawSep();
+            const int remaining = std::max(0, limit - used);
+            std::string label;
+            if (remaining == 0) {
+                // ISO 8601 reset date trimmed to YYYY-MM-DD for the bar.
+                std::string resetIso = lm.GetConversionsResetAt();
+                if (resetIso.size() >= 10) resetIso = resetIso.substr(0, 10);
+                label = std::format("0 conversions left -- resets {}",
+                                    resetIso.empty() ? "soon" : resetIso);
+            } else {
+                label = std::format(
+                    "{} conversion{} left this month",
+                    remaining, remaining == 1 ? "" : "s");
+            }
+            drawSection("\xE2\x97\x8F ", MvStyle::MvWarning);
+            drawSection(label, MvStyle::MvWarning);
+        }
     }
 
     // ---- Right-aligned cluster: GPU readout ------------------------------

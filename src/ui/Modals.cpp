@@ -1043,7 +1043,15 @@ void RenderLicenseModal(LicenseModalState& state) {
             usage = std::format("{} conversions", used);
         }
         LicenseRow("USED", usage);
-        LicenseRow("RESETS", lm.GetConversionsResetAt());
+        // Story 7.4 -- the API returns conversions_reset_at as ISO 8601
+        // (e.g. "2026-04-15T00:00:00.000Z"). Show only the YYYY-MM-DD
+        // prefix so the dialog reads cleanly; fall back to the raw
+        // string if the value is shorter than expected.
+        std::string resetDisplay = lm.GetConversionsResetAt();
+        if (resetDisplay.size() >= 10) {
+            resetDisplay = resetDisplay.substr(0, 10);
+        }
+        LicenseRow("RESETS", resetDisplay);
         ImGui::Spacing();
         ImGui::Spacing();
 
