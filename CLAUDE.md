@@ -15,7 +15,9 @@ See @.claude/context/product-vision.md for strategic goals and current state.
 - **Deformation**: NRICP (replaces v1.0 RBF/TPS) · custom implementation using Eigen. Sprint 5.2 added an env-gated diagnostic dump (`METAVISAGE_DUMP_RESIDUALS=1` writes per-vertex residual CSVs to `%TEMP%` at the end of each stiffness step) for the cottage-cheese-face follow-up spike.
 - **Math**: Eigen / GLM
 - **Serialization**: nlohmann/json for `.mmproj` project files
-- **System services**: `utils/Config` (JSON config at `%APPDATA%\MetaVisage\config.json`; **Sprint 5.1 added `ui_state.collapsed_sections` for inspector-header persistence via `Get/SetCollapsedSection`** — see the perf contract in the header), `utils/HttpClient` (libcurl POST), `utils/SingleInstance` (Win32 named pipe at `\\.\pipe\MetaVisageSingleInstance`), `utils/OpenUrl` (`ShellExecuteEx`), `utils/Paths` (exe-relative asset resolution), `utils/SecureStorage` (Win32 DPAPI for cached license/auth tokens), NFD for native file dialogs.
+- **System services**: `utils/Config` (JSON config at `%APPDATA%\MetaVisage\config.json`; **Sprint 5.1 added `ui_state.collapsed_sections` for inspector-header persistence via `Get/SetCollapsedSection`** — see the perf contract in the header; **Sprint 6 added `UserEmail` / `LicenseJwt` / `AccessToken` / `RefreshToken` getters/setters with DPAPI-encrypted at-rest storage**), `utils/HttpClient` (libcurl POST), `utils/SingleInstance` (Win32 named pipe at `\\.\pipe\MetaVisageSingleInstance`; **Sprint 6 added `AllowSetForegroundWindow(ASFW_ANY)` on the second-instance path so the running first instance can take foreground after a `metavisage://` deep-link redirect**), `utils/OpenUrl` (`ShellExecuteEx`), `utils/Paths` (exe-relative asset resolution; **Sprint 6 added `ExecutablePath()` for HKCU URL-handler registration**), `utils/SecureStorage` (Win32 DPAPI for cached license/auth tokens), NFD for native file dialogs.
+- **Licensing (Sprint 6)**: `LicenseManager` singleton owns the auth state machine (`Unauthenticated` / `Authenticating` / `Verifying` / `Authenticated` / `Expired` / `Inactive`), browser-based OAuth via the `metavisage://` URL handler (registered to `HKCU\Software\Classes\metavisage` on first run), `/api/desktop/exchange` worker thread + `/api/desktop/token` 24h refresh thread + Supabase direct refresh on 401 (Option A per QA Round 2 Decision 2), `jwt-cpp` RS256 verification against the public key baked at configure time from `keys/<profile>-public.pem`, 7-day offline grace via the cached JWT's `exp` claim, amber `Offline` status-bar pill on transport-fail, `LicenseStatusModal` + tier badge + Sign Out flow.
+- **Build profile** (Sprint 6): `build-msvc.ps1 -Profile development|staging|production` reads `.env.<profile>` and forwards each `KEY=VALUE` to CMake as a `-D`. CMake validates per-profile (production refuses to configure with empty API URL, empty Supabase URL, empty anon key, or empty public key) and bakes the values into a generated `licensing/LicenseConfig.h` via `cmake/LicenseConfig.h.in`. `.env.development` is checked in (localhost + non-secret Supabase project URL + NEXT_PUBLIC anon key); `.env.staging` / `.env.production` and `keys/*.pem` are gitignored.
 - **Installer**: Inno Setup · **Auto-update**: WinSparkle
 
 > **Algorithm secrecy**: Do not reference NRICP by name in user-facing UI text, logs, documentation, or error messages. Internal code comments and sprint docs are fine.
@@ -25,11 +27,12 @@ See @.claude/context/product-vision.md for strategic goals and current state.
 Layered architecture — keep concerns separated across layers:
 
 ```
-Presentation   → ImGui shell (AppWindow, StageSidebar, Modals, ViewportHost, Viewport)
-Application    → Project (per-frame source of truth), StageManager, UndoStack
+Presentation   → ImGui shell (AppWindow, StageSidebar, Modals, ViewportHost, Viewport, LoginScreen)
+Application    → Project (per-frame source of truth), StageManager, UndoStack, LicenseManager
 Domain         → Mesh engine, deformation algorithm, sculpting engine, WrapPreset
 Infrastructure → File I/O (MeshExporter, ProjectSerializer, PresetStore), Renderer (OpenGL),
-                 system services (Config, HttpClient, SingleInstance, OpenUrl, Paths)
+                 system services (Config, HttpClient, SingleInstance, OpenUrl, Paths,
+                 SecureStorage), licensing (LicenseManager + jwt-cpp + OpenSSL)
 ```
 
 Key components: Mesh Engine (load/validate/optimize/export), Wrap Engine (single-path solver with Quick Wrap / Fantasy Wrap built-in presets and user-saved preset persistence), Sculpting Engine (brush-based editing), Renderer (OpenGL), Project Manager (save/load `.mmproj`), Preset Store (`%APPDATA%\MetaVisage\presets\<id>.mvpreset.json` with `schema_version: 1`).
@@ -49,6 +52,7 @@ MetaVisage/
 │   ├── models/         # Default MetaHuman head + Move/Rotate/Scale gizmo OBJs
 │   ├── shaders/        # GLSL — basic, gizmo, grid, heatmap, matcap, point, overlay, textured
 │   └── metavisage-logo-mark.png
+├── cmake/              # configure_file templates (Sprint 6 — LicenseConfig.h.in)
 ├── docs/               # Banner, KNOWN_ISSUES.md
 ├── include/            # Public headers, mirrored by src/ layout below
 │   ├── baking/         # TextureBaker, TextureWriter (PNG/TGA via stb)
@@ -56,27 +60,41 @@ MetaVisage/
 │   │                   # WrapPreset (preset data model — built-ins + user-saved)
 │   ├── deformation/    # MeshDeformer, NRICPDeformer (env-gated diagnostic dump in Solve())
 │   ├── io/             # MeshExporter, ProjectSerializer, PresetStore
+│   ├── licensing/      # LicenseManager (Sprint 6 — auth state machine + exchange + refresh +
+│   │                   #   RS256 JWT verify); LicenseConfig.h is generated from cmake/LicenseConfig.h.in
 │   ├── rendering/      # Renderer, MeshRenderer, GizmoRenderer, PointRenderer, ShaderManager
 │   ├── sculpting/      # Brush base + Smooth/Grab/PushPull/Inflate/Mask brushes
 │   ├── thirdparty/     # stb_image, stb_image_write
-│   ├── ui/             # Shell — AppWindow (TickOnce + GetWindow exposed for tests),
+│   ├── ui/             # Shell — AppWindow (TickOnce + GetWindow + RequestForegroundFocus),
 │   │                   #   StageSidebar, StageStepper, ToolRail, Viewport (role-based
-│   │                   #   toolbar window IDs), ViewportHost, Modals, FileDialogs, LoginScreen
+│   │                   #   toolbar window IDs), ViewportHost, Modals (+ LicenseModalState),
+│   │                   #   FileDialogs, LoginScreen (Idle/Waiting/Verifying)
 │   │                   # Design system — MvStyle (+ BrushPreviewTextureIds),
 │   │                   #   MvIcons, MvInspectorPrimitives (+ DrawSubSectionLabel)
-│   └── utils/          # Config (+ Get/SetCollapsedSection), HttpClient, SingleInstance,
-│                       # OpenUrl, Paths, SecureStorage, BVH, Logger, RayCaster, SpatialHash
+│   └── utils/          # Config (+ Get/SetCollapsedSection + UserEmail), HttpClient,
+│                       # SingleInstance (+ AllowSetForegroundWindow on raise), OpenUrl,
+│                       # Paths (+ ExecutablePath), SecureStorage, BVH, Logger, RayCaster,
+│                       # SpatialHash
+├── keys/               # RS256 license JWT public keys per environment (Sprint 6;
+│                       # development-public.pem / staging-public.pem / production-public.pem
+│                       # all gitignored — README + .gitkeep are committed)
 ├── src/                # Implementation, mirroring include/ structure
-│   └── main.cpp        # GLFW window + ImGui init + main loop entry
+│   ├── licensing/      # LicenseManager.cpp (Sprint 6)
+│   └── main.cpp        # GLFW window + ImGui init + main loop entry +
+│                       # argv[1] metavisage:// pre-filter
 ├── tests/              # CTest targets — four smoke executables share MetaVisageCore
 │   ├── fixtures/       # Pinned v1.0.0 .mmproj inputs + wrap_smoke_points.json
 │   └── smoke/          # launch_to_export, v1_backward_compat, wrap_parity, ui_smoke
-│                       # (ui_smoke uses imgui_test_engine — runs under `ctest -L ui`)
+│                       # (ui_smoke uses imgui_test_engine — runs under `ctest -L ui`;
+│                       # 4 scenarios as of Sprint 6: welcome_modal_dismiss /
+│                       # dockspace_window_smoke / viewport_shading_modes / login_screen_cycle)
 ├── .claude/            # Slash skills, agents, hooks, rules, sprint context
+├── .env.example        # Build-config template for licensing endpoints + key file (Sprint 6)
+├── .env.development    # Localhost dev profile (committed; non-secret Supabase URL + anon key)
 ├── CMakeLists.txt      # Build config (vcpkg toolchain expected)
-├── build-msvc.ps1      # MSVC build helper with optional DLL staging
-├── build-mingw.ps1     # MinGW build helper
-└── vcpkg.json          # Pinned dependency manifest (imgui[test-engine] feature on)
+├── build-msvc.ps1      # MSVC build helper with -Profile flag + optional DLL staging
+├── build-mingw.ps1     # MinGW build helper with -Profile flag
+└── vcpkg.json          # Pinned dependency manifest (imgui[test-engine] + jwt-cpp + openssl)
 ```
 
 All UI lives under the ImGui hosts (`AppWindow`, `Viewport`, `ViewportHost`, `StageSidebar`, `StageStepper`, `ToolRail`, `Modals`, `FileDialogs`, `LoginScreen`) and shares the design-system primitives (`MvStyle`, `MvIcons`, `MvInspectorPrimitives`). The Qt-era UI files were deleted at the end of Sprint 3.7 once the migration was verified — earlier sprint plans, retros, and commits still reference `MainWindow.cpp` / `SidebarWidget.cpp` / `ViewportWidget.cpp` / `ExportDialog.cpp` / etc. as the historical equivalents.
@@ -115,16 +133,20 @@ Topology, UVs, and normals must survive the full pipeline unmodified. Any regres
 
 ## Build & Run
 
-Build via the helper scripts — they handle vcpkg toolchain wiring and (with `-Deploy`) stage runtime DLLs next to the executable:
+Build via the helper scripts — they handle vcpkg toolchain wiring, build profile selection, and (with `-Deploy`) stage runtime DLLs next to the executable:
 
 ```powershell
-.\build-msvc.ps1 -Deploy        # MSVC Release build with DLL staging
-.\build-mingw.ps1               # MinGW build
+.\build-msvc.ps1 -Profile development -Deploy   # default profile is development
+.\build-msvc.ps1 -Profile staging               # reads .env.staging (gitignored)
+.\build-msvc.ps1 -Profile production            # reads .env.production (gitignored)
+.\build-mingw.ps1 -Profile development          # MinGW build
 ```
 
 Output: `build\bin\Release\MetaVisage.exe`. **Kill any running instance before relinking** — Windows MSVC fails with `LNK1104` if `MetaVisage.exe` is held open by a previous run.
 
-A successful CMake configure step requires `VCPKG_ROOT` (or `-DCMAKE_TOOLCHAIN_FILE=...`) so vcpkg can resolve GLFW, GLEW, ImGui (with the `test-engine` feature for the smoke-UI lane), NFD, libcurl, Eigen, Assimp, and nlohmann_json. **Qt is no longer required** as of Sprint 3.7. Smoke tests run via `ctest -C Release` (four targets: `smoke_load_serialize_export`, `smoke_v1_backward_compat`, `smoke_wrap_parity`, and the new `smoke_ui` which drives the live AppWindow via `imgui_test_engine`). Filter to just the UI lane with `ctest -L ui`.
+A successful CMake configure step requires `VCPKG_ROOT` (or `-DCMAKE_TOOLCHAIN_FILE=...`) so vcpkg can resolve GLFW, GLEW, ImGui (with the `test-engine` feature for the smoke-UI lane), NFD, libcurl, Eigen, Assimp, nlohmann_json, jwt-cpp, and OpenSSL. **Qt is no longer required** as of Sprint 3.7. Smoke tests run via `ctest -C Release` (four targets: `smoke_load_serialize_export`, `smoke_v1_backward_compat`, `smoke_wrap_parity`, and `smoke_ui` which drives the live AppWindow via `imgui_test_engine` across 4 scenarios — welcome modal dismiss / dockspace window-existence / viewport shading-mode toggles / login screen Sign In→Cancel cycle). Filter to just the UI lane with `ctest -L ui`.
+
+**Licensing config** (Sprint 6): the build profile flag drives which `.env.<profile>` is read into CMake cache vars, then baked at configure time into a generated `licensing/LicenseConfig.h` via `cmake/LicenseConfig.h.in`. `LicenseManager` consumes the constants directly. Production builds refuse to configure with empty API URL / Supabase URL / Supabase anon key / public key — `.env.development` ships with localhost defaults and the non-secret Supabase dev creds; staging/production env files and `keys/*.pem` are gitignored and delivered out-of-band via 1Password per `DESKTOP_INTEGRATION_QA.md`.
 
 ## Web Team Integration (v2.0)
 
@@ -133,6 +155,7 @@ Licensing, auth, and updates depend on the web team's API contract. When working
 - @.claude/context/DESKTOP_APP_INTEGRATION.md — licensing API contract (activation, tier lookup, feature flags)
 - @.claude/context/DESKTOP_AUTH_FLOW.md — browser-based OAuth flow
 - @.claude/context/DESKTOP_UPDATE_FLOW.md — WinSparkle update flow
+- @.claude/context/DESKTOP_INTEGRATION_QA.md — Sprint 6 web-team Q&A: RS256 migration, Option A direct-Supabase refresh, email on the exchange response, license_key inside the JWT, `/manage-subscription` Stripe redirect
 
 ## Standards
 
