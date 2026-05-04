@@ -224,6 +224,7 @@ set(CORE_SOURCES
     src/ui/StageSidebar.cpp
     src/ui/StageStepper.cpp
     src/ui/ToolRail.cpp
+    src/ui/UpgradePromptWidget.cpp
     src/utils/RayCaster.cpp
     src/utils/Logger.cpp
     src/utils/BVH.cpp
@@ -262,6 +263,7 @@ set(CORE_HEADERS
     include/ui/StageSidebar.h
     include/ui/StageStepper.h
     include/ui/ToolRail.h
+    include/ui/UpgradePromptWidget.h
     include/core/Mesh.h
     include/core/Transform.h
     include/core/Project.h
