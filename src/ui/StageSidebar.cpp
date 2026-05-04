@@ -196,9 +196,11 @@ void StageSidebar::RenderAlignment(Project& project, Actions& out) {
         }
         ImGui::Dummy(ImVec2(0.0f, 6.0f));
         const std::string srcName = FileNameOrEmpty(morph.filepath);
-        // Story 7.1 gate -- Free tier cannot import a custom morph mesh.
-        // The "Use Default MetaHuman Head" button below stays enabled so
-        // Free users still have a starting point.
+        // Story 7.1 gate -- the custom_head_upload flag covers ONLY the
+        // source slot (custom MetaHuman head). Free users must use
+        // "Use Default MetaHuman Head" below; they can still upload a
+        // target mesh to morph against, which is what they actually
+        // convert against the default head.
         ImGui::BeginDisabled(!canUploadHead);
         const auto srcSlot = I::DrawFileSlot(
             srcName.c_str(),
@@ -209,12 +211,21 @@ void StageSidebar::RenderAlignment(Project& project, Actions& out) {
         ImGui::EndDisabled();
         if (srcSlot.importClicked && canUploadHead) out.importMorphMeshRequested = true;
 
+        // Inline upgrade prompt scoped to the source slot only -- the
+        // target slot below stays available for every tier.
+        if (!canUploadHead) {
+            ui::DrawUpgradePrompt({"Custom MetaHuman head upload", "Indie"});
+        }
+
         ImGui::Dummy(ImVec2(0.0f, 4.0f));
         if (ImGui::Button("Use Default MetaHuman Head", ImVec2(-FLT_MIN, 30.0f))) {
             out.useDefaultMorphMeshRequested = true;
         }
 
         // ---- Target mesh ------------------------------------------------
+        // Target mesh is the head the user is morphing TO -- not gated by
+        // custom_head_upload. Free users still need a way to morph the
+        // default MetaHuman against something.
         I::DrawSectionLabel("TARGET MESH");
         {
             MvStyle::ScopedFont f(MvStyle::Font.BodySm);
@@ -224,23 +235,13 @@ void StageSidebar::RenderAlignment(Project& project, Actions& out) {
         }
         ImGui::Dummy(ImVec2(0.0f, 6.0f));
         const std::string tgtName = FileNameOrEmpty(target.filepath);
-        // Story 7.1 gate -- target-mesh upload also gated by custom_head_upload.
-        ImGui::BeginDisabled(!canUploadHead);
         const auto tgtSlot = I::DrawFileSlot(
             tgtName.c_str(),
             "No target mesh",
             target.isLoaded,
             /*isPrimary=*/false,
             target.isLoaded ? "Target mesh loaded" : nullptr);
-        ImGui::EndDisabled();
-        if (tgtSlot.importClicked && canUploadHead) out.importTargetMeshRequested = true;
-
-        // Single upgrade prompt covering both source + target slots when the
-        // user lacks custom_head_upload. Placed at the bottom of the mesh
-        // sections to avoid duplicating the prompt twice.
-        if (!canUploadHead) {
-            ui::DrawUpgradePrompt({"Custom mesh upload", "Indie"});
-        }
+        if (tgtSlot.importClicked) out.importTargetMeshRequested = true;
 
         // ---- Target textures --------------------------------------------
         // Story 7.1 gate -- texture_transfer mode controls availability:
