@@ -27,6 +27,28 @@ namespace MetaVisage {
 // GetState() each frame; transitions are pushed by the network/IPC
 // layers, never by the UI.
 //
+// Sprint 7 Story 7.1 -- tier-derived feature flags parsed from the license
+// JWT payload. Matches the contract documented in
+// .claude/context/DESKTOP_APP_INTEGRATION.md (Free / Indie / Pro).
+//
+// Defaulting policy: every field starts at the most-restrictive value so a
+// Free-shaped (or bug-shaped, missing-field) JWT can never grant accidental
+// upgrades. Initialize / SignOut / DrainPendingExchange / DrainPendingRefresh
+// must keep this struct symmetric with the rest of the claim fields.
+struct FeatureFlags {
+    enum class TextureTransfer { None, Albedo, AlbedoNormal };
+    enum class MorphingParameters { Presets, Full };
+    enum class TouchUpToolset { BasicSmooth, Basic, Full };
+
+    int                 conversionsLimit       = 0;                       // mirror of conversionsLimit_; single field on the JWT
+    bool                customHeadUpload       = false;
+    TextureTransfer     textureTransfer        = TextureTransfer::None;
+    MorphingParameters  morphingParameters     = MorphingParameters::Presets;
+    bool                masking                = false;
+    TouchUpToolset      touchUpToolset         = TouchUpToolset::BasicSmooth;
+    bool                batchProcessing        = false;                   // Studio-tier reservation -- always false today
+};
+
 // Singleton via Meyer's pattern -- matches Logger + Config.
 class LicenseManager {
 public:
@@ -104,6 +126,17 @@ public:
     std::string GetUserEmail() const;
     std::string GetLicenseKey() const;
 
+    // Story 7.1 -- typed feature-flag accessors. The full struct accessor
+    // is for sites that need multiple fields at once (License Status modal);
+    // the per-field helpers keep gate sites in StageSidebar / ToolRail
+    // readable.
+    const FeatureFlags& GetFeatureFlags() const { return featureFlags_; }
+    bool                            CanUploadCustomHead()         const { return featureFlags_.customHeadUpload; }
+    FeatureFlags::TextureTransfer    GetTextureTransferMode()      const { return featureFlags_.textureTransfer; }
+    FeatureFlags::MorphingParameters GetMorphingParametersMode()   const { return featureFlags_.morphingParameters; }
+    bool                            CanUseMasking()               const { return featureFlags_.masking; }
+    FeatureFlags::TouchUpToolset    GetTouchUpToolset()           const { return featureFlags_.touchUpToolset; }
+
     // Wall-clock time of the last successful exchange or refresh. nullopt
     // before the first sync this session. Drives the "Last sync ..."
     // display in the License Status modal.
@@ -148,6 +181,12 @@ public:
     // opening real browsers or touching HKCU.
     // Production code never calls this.
     void SetTestState(AuthState forced);
+
+    // Test-only: inject a feature-flag fixture so smoke_ui scenarios can
+    // exercise Free / Indie / Pro gating paths without standing up a real
+    // RS256-signed JWT. Has no effect unless test mode has been enabled
+    // via SetTestState first; production code never calls this.
+    void SetTestFeatureFlags(const FeatureFlags& flags);
 
 private:
     LicenseManager();
@@ -237,6 +276,12 @@ private:
     int conversionsUsed_ = 0;
     int conversionsLimit_ = 0;
     std::string conversionsResetAt_;
+
+    // Story 7.1 -- tier-derived feature flags parsed from the JWT payload.
+    // Symmetric with the other claim fields above (reset by SignOut, written
+    // by LoadClaimsFromJwt). Restrictive defaults so missing-field JWTs
+    // can never grant accidental upgrades.
+    FeatureFlags featureFlags_;
 
     // Last successful sync (exchange or refresh). Used by the License
     // Status dialog's "Last sync ..." line.

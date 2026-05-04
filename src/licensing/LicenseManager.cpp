@@ -292,6 +292,7 @@ void LicenseManager::SignOut() {
     conversionsUsed_ = 0;
     conversionsLimit_ = 0;
     conversionsResetAt_.clear();
+    featureFlags_ = FeatureFlags{};  // restrictive defaults
     lastSyncedAt_.reset();
     offlineMode_ = false;
     TransitionTo(AuthState::Unauthenticated);
@@ -303,6 +304,18 @@ void LicenseManager::SetTestState(AuthState forced) {
     testMode_ = true;
     MV_LOG_INFO(std::format("LicenseManager: test override -> {}",
                             StateName(forced)));
+}
+
+void LicenseManager::SetTestFeatureFlags(const FeatureFlags& flags) {
+    if (!testMode_) {
+        MV_LOG_WARNING(
+            "LicenseManager::SetTestFeatureFlags ignored (test mode off)");
+        return;
+    }
+    featureFlags_ = flags;
+    if (flags.conversionsLimit > 0) {
+        conversionsLimit_ = flags.conversionsLimit;
+    }
 }
 
 void LicenseManager::QueueDeepLink(std::string uri) {
@@ -579,9 +592,77 @@ void LicenseManager::LoadClaimsFromJwt(const std::string& jwt) {
             conversionsResetAt_ =
                 decoded.get_payload_claim("conversions_reset_at").as_string();
         }
+
+        // Story 7.1 -- feature_flags object. Restrictive defaults already
+        // live on featureFlags_ from a fresh struct value; we overwrite
+        // each field only when the JWT carries it. Missing fields (server
+        // bug, tier downgrade racing the client) keep the Free-tier shape
+        // so we never grant accidental upgrades.
+        FeatureFlags ff{};
+        bool sawFlags = false;
+        if (decoded.has_payload_claim("feature_flags")) {
+            sawFlags = true;
+            const auto& claim = decoded.get_payload_claim("feature_flags");
+            const auto& obj = claim.to_json();  // nlohmann::json under the traits header
+            auto getInt = [&](const char* key, int fallback) {
+                auto it = obj.find(key);
+                return (it != obj.end() && it->is_number_integer())
+                           ? it->get<int>()
+                           : fallback;
+            };
+            auto getBool = [&](const char* key, bool fallback) {
+                auto it = obj.find(key);
+                return (it != obj.end() && it->is_boolean())
+                           ? it->get<bool>()
+                           : fallback;
+            };
+            auto getString = [&](const char* key) -> std::string {
+                auto it = obj.find(key);
+                return (it != obj.end() && it->is_string())
+                           ? it->get<std::string>()
+                           : std::string{};
+            };
+
+            ff.conversionsLimit  = getInt("conversions_limit", 0);
+            ff.customHeadUpload  = getBool("custom_head_upload", false);
+            ff.masking           = getBool("masking", false);
+            ff.batchProcessing   = getBool("batch_processing", false);
+
+            const std::string tt = getString("texture_transfer");
+            if      (tt == "albedo_normal") ff.textureTransfer = FeatureFlags::TextureTransfer::AlbedoNormal;
+            else if (tt == "albedo")        ff.textureTransfer = FeatureFlags::TextureTransfer::Albedo;
+            else                            ff.textureTransfer = FeatureFlags::TextureTransfer::None;
+
+            const std::string mp = getString("morphing_parameters");
+            ff.morphingParameters = (mp == "full")
+                                        ? FeatureFlags::MorphingParameters::Full
+                                        : FeatureFlags::MorphingParameters::Presets;
+
+            const std::string tu = getString("touchup_tools");
+            if      (tu == "full")  ff.touchUpToolset = FeatureFlags::TouchUpToolset::Full;
+            else if (tu == "basic") ff.touchUpToolset = FeatureFlags::TouchUpToolset::Basic;
+            else                    ff.touchUpToolset = FeatureFlags::TouchUpToolset::BasicSmooth;
+
+            // One-time warnings for missing fields so a bug-shaped JWT is
+            // debuggable. Restrictive defaults still apply -- the warning
+            // is informational.
+            if (!obj.contains("conversions_limit"))     MV_LOG_WARNING("LicenseManager: feature_flags missing conversions_limit");
+            if (!obj.contains("custom_head_upload"))    MV_LOG_WARNING("LicenseManager: feature_flags missing custom_head_upload");
+            if (!obj.contains("texture_transfer"))      MV_LOG_WARNING("LicenseManager: feature_flags missing texture_transfer");
+            if (!obj.contains("morphing_parameters"))   MV_LOG_WARNING("LicenseManager: feature_flags missing morphing_parameters");
+            if (!obj.contains("masking"))               MV_LOG_WARNING("LicenseManager: feature_flags missing masking");
+            if (!obj.contains("touchup_tools"))         MV_LOG_WARNING("LicenseManager: feature_flags missing touchup_tools");
+        } else {
+            MV_LOG_WARNING(
+                "LicenseManager: JWT carries no feature_flags object -- "
+                "defaulting to Free-tier-restrictive shape");
+        }
+        featureFlags_ = ff;
+
         MV_LOG_INFO(std::format(
-            "LicenseManager: claims tier={}, conversions={}/{}",
-            tier_, conversionsUsed_, conversionsLimit_));
+            "LicenseManager: claims tier={}, conversions={}/{}, flags={}",
+            tier_, conversionsUsed_, conversionsLimit_,
+            sawFlags ? "parsed" : "defaulted"));
     } catch (const std::exception& e) {
         MV_LOG_WARNING(std::format(
             "LicenseManager: failed to decode JWT claims: {}", e.what()));

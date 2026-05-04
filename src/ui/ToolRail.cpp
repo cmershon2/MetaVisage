@@ -1,5 +1,6 @@
 #include "ui/ToolRail.h"
 
+#include "licensing/LicenseManager.h"
 #include "ui/MvIcons.h"
 #include "ui/MvStyle.h"
 #include "ui/Viewport.h"
@@ -224,6 +225,23 @@ Result Render(WorkflowStage stage, Project* project, Viewport* viewport,
     const Tool* tools     = isStage1 ? kStage1Tools : kStage4Tools;
     const int   toolCount = isStage1 ? 3            : 4;
 
+    // Story 7.1 gate -- Stage 4 touchup_tools tier mapping. Mirrors the
+    // gating in StageSidebar's brush-card grid; both surfaces must be
+    // gated together (architect audit observation).
+    const auto touchUpToolset =
+        MetaVisage::LicenseManager::Instance().GetTouchUpToolset();
+    auto isBrushAllowed = [&](BrushType b) {
+        switch (touchUpToolset) {
+            case FeatureFlags::TouchUpToolset::Full:
+                return true;
+            case FeatureFlags::TouchUpToolset::Basic:
+                return b == BrushType::Smooth || b == BrushType::Grab;
+            case FeatureFlags::TouchUpToolset::BasicSmooth:
+            default:
+                return b == BrushType::Smooth;
+        }
+    };
+
     constexpr float HeaderHeight = 32.0f; // eyebrow + breathing room
     float y = HeaderHeight;
     for (int i = 0; i < toolCount; ++i) {
@@ -238,8 +256,15 @@ Result Render(WorkflowStage stage, Project* project, Viewport* viewport,
             previewTex = (ImTextureID)(intptr_t)
                          MvStyle::Asset.BrushPreviewTextureIds[i];
         }
+        // Story 7.1 -- gate-disabled Stage 4 brushes render via the
+        // existing `stub=true` path so they look like the Stage 1
+        // "coming soon" tools. Stage 1 transform tools are always
+        // enabled (no tier gating).
+        const bool gated = isStage4 &&
+            !isBrushAllowed(static_cast<BrushType>(tools[i].kind));
         if (RenderToolButton(dl, origin, y, tools[i], active,
-                             /*stub=*/false, previewTex) && viewport) {
+                             /*stub=*/gated, previewTex)
+            && viewport && !gated) {
             if (isStage1) {
                 viewport->SetTransformMode(static_cast<TransformMode>(tools[i].kind));
             } else {
