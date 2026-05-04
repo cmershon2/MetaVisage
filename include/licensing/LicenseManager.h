@@ -4,10 +4,12 @@
 #include <atomic>
 #include <chrono>
 #include <condition_variable>
+#include <deque>
 #include <mutex>
 #include <optional>
 #include <string>
 #include <thread>
+#include <vector>
 
 namespace MetaVisage {
 
@@ -116,6 +118,42 @@ public:
     // refresh-token-invalid 401 (-> Unauthenticated, force re-auth).
     void DrainPendingRefresh();
 
+    // Story 7.2 -- POST /api/license/conversion for the just-accepted
+    // morph. Spawns a fire-and-forget worker thread (mirrors the
+    // StartExchange + DrainPendingExchange pattern). On transport
+    // failure after the retry budget the timestamp is appended to the
+    // offline queue so the user is never blocked by a network blip.
+    // Caller is AppWindow::AcceptMorph; the pre-check that the user is
+    // not already over their limit lives in AcceptMorph (we trust the
+    // caller here -- the limit pre-check is a UX concern, not a data
+    // integrity one).
+    void ReportConversion();
+
+    // Story 7.2 -- main-thread drain for ReportConversion's worker.
+    // 200 silently updates conversionsUsed_/Limit_/ResetAt_ from the
+    // server response (not from a local increment). 403 limit_reached
+    // sets the limit-reached notice; AppWindow polls
+    // ConsumeConversionLimitNotice() each frame to surface the block
+    // modal. 429/5xx after retry exhaustion enqueues the timestamp.
+    void DrainPendingConversion();
+
+    // Story 7.2 -- drain the offline conversion queue oldest-first via
+    // sequential POSTs. Called from DrainPendingRefresh on
+    // RefreshOutcome::Success so the queue reliably catches up after a
+    // reconnection. No-op when the queue is empty.
+    void FlushConversionQueue();
+
+    // Story 7.2 -- AppWindow polls each frame; non-empty optional means
+    // the most recent ReportConversion came back 403 limit_reached and
+    // the user-facing block modal should open. The optional carries the
+    // limit + reset date snapshot at notice-time. Single-shot per
+    // ReportConversion call.
+    struct ConversionLimitNotice {
+        int limit = 0;
+        std::string resetAtIso;
+    };
+    std::optional<ConversionLimitNotice> ConsumeConversionLimitNotice();
+
     // Story 6.6 read accessors -- populated by ApplyAuthSuccess /
     // DrainPendingRefresh / cached-JWT bootstrap. Empty / zero values
     // before the first successful exchange.
@@ -208,6 +246,16 @@ private:
     void SetLastError(std::string message);       // any thread (mutex'd)
     static constexpr int kExchangeMaxAttempts = 4;
     static constexpr int kExchangeBudgetSeconds = 30;
+
+    // Story 7.2 helpers + retry budget. Mirrors the exchange shape so a
+    // future review that retunes one budget can retune both.
+    void StartConversionWorker(std::vector<std::chrono::system_clock::time_point> batch);
+    void EnqueueConversion(std::chrono::system_clock::time_point timestamp);
+    void LoadConversionQueue();
+    void PersistConversionQueue() const;
+    static constexpr int    kConversionMaxAttempts  = 4;
+    static constexpr int    kConversionBudgetSeconds = 30;
+    static constexpr size_t kConversionQueueCap      = 100;
 
     // Story 6.4 helpers -- 24h refresh thread.
     void StartRefreshThread();   // launched once when entering Authenticated
@@ -317,6 +365,33 @@ private:
     bool refreshFireImmediate_ = false;  // guarded by refreshCvMutex_
     std::mutex refreshResultMutex_;
     std::optional<RefreshResult> pendingRefreshResult_;
+
+    // Story 7.2 -- conversion-report worker + offline queue. The worker
+    // runs the POST + retry loop; on transport failure it appends to the
+    // queue. FlushConversionQueue is called from DrainPendingRefresh on
+    // success and runs the same worker path against batched timestamps.
+    struct ConversionResult {
+        bool ok = false;
+        int httpStatus = 0;
+        bool limitReached = false;
+        int conversionsUsed = 0;
+        int conversionsLimit = 0;
+        std::string conversionsResetAt;
+        std::string errorMessage;
+        // Timestamps left on the queue when the worker bailed early (e.g.
+        // mid-batch transient failure). These are re-persisted so we
+        // don't lose them across launches.
+        std::vector<std::chrono::system_clock::time_point> remaining;
+    };
+    std::thread conversionThread_;
+    std::atomic<bool> conversionRunning_{false};
+    std::atomic<bool> conversionFinished_{false};
+    std::mutex conversionResultMutex_;
+    ConversionResult conversionResult_;
+    std::mutex conversionQueueMutex_;
+    std::deque<std::chrono::system_clock::time_point> conversionQueue_;
+    std::mutex conversionLimitNoticeMutex_;
+    std::optional<ConversionLimitNotice> conversionLimitNotice_;
 };
 
 }  // namespace MetaVisage

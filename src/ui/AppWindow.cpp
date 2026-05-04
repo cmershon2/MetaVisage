@@ -708,7 +708,19 @@ void AppWindow::TickOnce(int fbWidth, int fbHeight) {
     licenseMgr.DrainPendingDeepLink();
     licenseMgr.DrainPendingExchange();
     licenseMgr.DrainPendingRefresh();
+    // Story 7.2 -- conversion-report worker drain. Sequenced after
+    // DrainPendingRefresh so a refresh that flushes the queue spawns
+    // a worker we'll see next frame; sequenced before TickTimeout for
+    // consistency with the rest of the auth-state drains.
+    licenseMgr.DrainPendingConversion();
     licenseMgr.TickTimeout();
+
+    // Story 7.2 -- limit-reached block modal. ConsumeConversionLimitNotice
+    // is a single-shot read (returns nullopt after the first call), so
+    // we open the modal here and the next frame's poll is silent.
+    if (auto notice = licenseMgr.ConsumeConversionLimitNotice()) {
+        OpenConversionLimitReachedModal(notice->limit, notice->resetAtIso);
+    }
 
     // PR #25 review feedback fix: bring the already-running first
     // instance to the foreground when SingleInstance forwards a deep
@@ -2644,7 +2656,56 @@ void AppWindow::AcceptMorph() {
     if (!project_) return;
     MorphData& morphData = project_->GetMorphData();
     if (!morphData.isProcessed) return;
+
+    // Story 7.2 -- pre-check the user is not already at their monthly
+    // conversion limit. We trust the in-memory counter (kept in sync
+    // with the server by the 24h refresh + the most recent conversion
+    // POST). Refusing the accept on a stale read is safe: the next
+    // refresh / report will rectify, and the user can re-click Accept.
+    auto& lm = LicenseManager::Instance();
+    if (lm.GetConversionsLimit() > 0 &&
+        lm.GetConversionsUsed() >= lm.GetConversionsLimit()) {
+        OpenConversionLimitReachedModal(lm.GetConversionsLimit(),
+                                        lm.GetConversionsResetAt());
+        return;  // Don't flip isAccepted; user can upgrade or wait for reset.
+    }
+
     morphData.isAccepted = true;
+
+    // Fire the conversion report. The worker handles offline queueing,
+    // 429/5xx retries, 403 (which surfaces a block modal via
+    // ConsumeConversionLimitNotice on the next TickOnce), and applying
+    // the new conversions_used / conversions_limit / conversions_reset_at
+    // from the server response.
+    lm.ReportConversion();
+}
+
+void AppWindow::OpenConversionLimitReachedModal(
+        int limit, const std::string& resetAtIso) {
+    // Reset date arrives as ISO 8601 (e.g. "2026-04-15T00:00:00.000Z").
+    // For the dialog body we want the YYYY-MM-DD prefix; if the string
+    // is malformed or empty we fall back to "later this month".
+    std::string readableDate = "later this month";
+    if (resetAtIso.size() >= 10) {
+        readableDate = resetAtIso.substr(0, 10);
+    }
+
+    const std::string title = "Monthly conversion limit reached";
+    const std::string message = std::format(
+        "You've reached your monthly conversion limit of {}. "
+        "Resets on {}.\n\n"
+        "Upgrade at metavisage.io to unlock more conversions.",
+        limit, readableDate);
+
+    confirmModal_.Open(
+        title, message,
+        [] {
+            const std::string url =
+                std::string(LicenseConfig::kApiBaseUrl) + "/pricing";
+            MetaVisage::OpenUrl(url);
+        },
+        /*confirmLbl=*/"Upgrade",
+        /*cancelLbl=*/"Close");
 }
 
 } // namespace MetaVisage
