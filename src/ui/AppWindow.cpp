@@ -1578,31 +1578,219 @@ void AppWindow::RenderMainMenuBar() {
     }
 
     // ---- Right-side cluster ---------------------------------------------
-    // Save indicator (mono, MvFg3). The Story 3.8.2 "UE 5.4 · LIVE LINK"
-    // pill that previously sat to the right of the save label has been
-    // dropped — Live Link is far-future scope and the green pill confused
-    // users into thinking the connection was real. The previous stage-
+    // Save indicator (mono, MvFg3) + account chip (Sprint 7 / Sprint 6
+    // deferred AI #3). The Story 3.8.2 "UE 5.4 · LIVE LINK" pill that
+    // previously sat to the right of the save label has been dropped --
+    // Live Link is far-future scope and the green pill confused users
+    // into thinking the connection was real. The previous stage-
     // indicator from Sprint 3.6 already moved into the title bar.
     const std::string savedLabel = SavedAgoLabel(lastSavedAt_);
+
+    // Account chip layout -- pre-measure so we can right-align the whole
+    // right cluster as one unit. Chip is `TIER PILL` + email (mono,
+    // truncated) + 24 px initials avatar; clicking anywhere on the chip
+    // opens the License Status modal.
+    const auto& licenseMgrRO = LicenseManager::Instance();
+    const bool chipVisible =
+        licenseMgrRO.GetState() == LicenseManager::AuthState::Authenticated;
+
+    auto upperOf = [](const std::string& s) {
+        std::string u = s;
+        for (auto& c : u) c = static_cast<char>(
+            std::toupper(static_cast<unsigned char>(c)));
+        return u;
+    };
+    auto initialsOf = [](const std::string& email) {
+        if (email.empty()) return std::string("??");
+        const auto at = email.find('@');
+        std::string local = (at != std::string::npos) ? email.substr(0, at) : email;
+        if (local.empty()) return std::string("??");
+        char first = static_cast<char>(std::toupper(
+            static_cast<unsigned char>(local[0])));
+        char second = '\0';
+        for (size_t i = 1; i < local.size(); ++i) {
+            if (local[i] == '.' || local[i] == '_' || local[i] == '-') {
+                if (i + 1 < local.size()) {
+                    second = static_cast<char>(std::toupper(
+                        static_cast<unsigned char>(local[i + 1])));
+                    break;
+                }
+            }
+        }
+        if (second == '\0' && local.size() >= 2) {
+            second = static_cast<char>(std::toupper(
+                static_cast<unsigned char>(local[1])));
+        }
+        std::string out(1, first);
+        if (second != '\0') out.push_back(second);
+        return out;
+    };
+
+    const std::string tierUpper = chipVisible ? upperOf(licenseMgrRO.GetTier())
+                                              : std::string{};
+    std::string emailDisplay = chipVisible ? licenseMgrRO.GetUserEmail()
+                                           : std::string{};
+    // Truncate long emails so the chip doesn't dominate the title bar.
+    constexpr size_t kEmailMaxChars = 24;
+    if (emailDisplay.size() > kEmailMaxChars) {
+        emailDisplay = emailDisplay.substr(0, kEmailMaxChars - 1) + "\xE2\x80\xA6";  // ellipsis
+    }
+    const std::string initials = chipVisible ? initialsOf(licenseMgrRO.GetUserEmail())
+                                             : std::string{};
+
+    // ----- Measure --------------------------------------------------------
+    constexpr float kAvatarSize  = 24.0f;
+    constexpr float kPillPadX    = 8.0f;
+    constexpr float kPillHeight  = 18.0f;
+    constexpr float kChipGap     = 8.0f;
+    constexpr float kRightPad    = 10.0f;
+    constexpr float kClusterGap  = 12.0f;
+
+    float tierW = 0.0f;
+    float emailW = 0.0f;
+    {
+        MvStyle::ScopedFont f(MvStyle::Font.MonoSm);
+        if (!tierUpper.empty()) tierW = ImGui::CalcTextSize(tierUpper.c_str()).x;
+    }
+    {
+        MvStyle::ScopedFont f(MvStyle::Font.Mono);
+        if (!emailDisplay.empty()) emailW = ImGui::CalcTextSize(emailDisplay.c_str()).x;
+    }
+    const float pillW = chipVisible ? (tierW + kPillPadX * 2.0f) : 0.0f;
+    const float chipW = chipVisible
+        ? (pillW + kChipGap + emailW + kChipGap + kAvatarSize)
+        : 0.0f;
 
     float savedW = 0.0f;
     {
         MvStyle::ScopedFont f(MvStyle::Font.Mono);
         savedW = ImGui::CalcTextSize(savedLabel.c_str()).x;
     }
-    const float wantW = savedW + 10.0f;
+
+    // ----- Layout decision -----------------------------------------------
     const float available = ImGui::GetContentRegionAvail().x;
-    if (available < wantW) {
+    const float wantBoth  = savedW + kClusterGap + chipW + kRightPad;
+    const float wantChip  = chipW + kRightPad;
+    const float wantSaved = savedW + kRightPad;
+
+    float startX = 0.0f;
+    bool showSaved = false;
+    bool showChip  = false;
+    if (chipVisible && available >= wantBoth) {
+        showSaved = true;
+        showChip  = true;
+        startX = ImGui::GetCursorPosX() + (available - wantBoth);
+    } else if (chipVisible && available >= wantChip) {
+        showChip = true;
+        startX = ImGui::GetCursorPosX() + (available - wantChip);
+    } else if (available >= wantSaved) {
+        showSaved = true;
+        startX = ImGui::GetCursorPosX() + (available - wantSaved);
+    } else {
         ImGui::EndMenuBar();
         return;
     }
 
-    ImGui::SameLine(ImGui::GetCursorPosX() + (available - wantW));
-    {
+    ImGui::SameLine(startX);
+
+    // ----- Save indicator -------------------------------------------------
+    if (showSaved) {
         MvStyle::ScopedFont f(MvStyle::Font.Mono);
         ImGui::PushStyleColor(ImGuiCol_Text, MvStyle::MvFg3);
         ImGui::TextUnformatted(savedLabel.c_str());
         ImGui::PopStyleColor();
+        if (showChip) ImGui::SameLine(0.0f, kClusterGap);
+    }
+
+    // ----- Account chip ---------------------------------------------------
+    if (showChip) {
+        const ImVec2 chipMin = ImGui::GetCursorScreenPos();
+        // Vertically centre on the menu bar; align the chip to its
+        // visible content height (pill / avatar are the tallest items).
+        const float menuLineH = ImGui::GetTextLineHeightWithSpacing();
+        const float chipH     = std::max(kPillHeight, kAvatarSize);
+        const ImVec2 chipMax(chipMin.x + chipW, chipMin.y + chipH);
+        const float chipBaseY = chipMin.y + (menuLineH - chipH) * 0.5f;
+
+        // Make the whole chip a click target. InvisibleButton must lay
+        // out at the same x position the visual content paints at; do
+        // it FIRST so subsequent draws sit on top via dl->...
+        ImGui::SetCursorScreenPos(ImVec2(chipMin.x, chipBaseY));
+        if (ImGui::InvisibleButton("##acctChip", ImVec2(chipW, chipH))) {
+            licenseModal_.Open();
+        }
+        const bool chipHovered = ImGui::IsItemHovered();
+        if (chipHovered) ImGui::SetMouseCursor(ImGuiMouseCursor_Hand);
+
+        ImDrawList* dl = ImGui::GetWindowDrawList();
+        const ImU32 hoverTint = ImGui::ColorConvertFloat4ToU32(MvStyle::MvBg3);
+        if (chipHovered) {
+            dl->AddRectFilled(ImVec2(chipMin.x - 4.0f, chipBaseY - 2.0f),
+                              ImVec2(chipMax.x + 4.0f, chipBaseY + chipH + 2.0f),
+                              hoverTint, 6.0f);
+        }
+
+        // Tier pill (small rounded box, colour-coded by tier)
+        float cursorX = chipMin.x;
+        {
+            const ImVec4 pillCol = (tierUpper == "PRO")   ? MvStyle::MvWarning
+                                 : (tierUpper == "INDIE") ? MvStyle::MvBlue500
+                                                          : MvStyle::MvFg4;
+            const ImVec2 pillMin(cursorX,
+                                 chipBaseY + (chipH - kPillHeight) * 0.5f);
+            const ImVec2 pillMax(pillMin.x + pillW, pillMin.y + kPillHeight);
+            dl->AddRectFilled(pillMin, pillMax,
+                              ImGui::ColorConvertFloat4ToU32(pillCol),
+                              kPillHeight * 0.5f);
+            if (MvStyle::Font.MonoSm) {
+                const float tx = pillMin.x + kPillPadX;
+                const float ty = pillMin.y +
+                    (kPillHeight - MvStyle::TypeSize::MonoSm) * 0.5f;
+                dl->AddText(MvStyle::Font.MonoSm,
+                            MvStyle::TypeSize::MonoSm,
+                            ImVec2(tx, ty),
+                            ImGui::ColorConvertFloat4ToU32(MvStyle::MvFg1),
+                            tierUpper.c_str());
+            }
+            cursorX = pillMax.x + kChipGap;
+        }
+
+        // Email (mono, muted)
+        if (!emailDisplay.empty() && MvStyle::Font.Mono) {
+            const float ty = chipBaseY + (chipH - MvStyle::TypeSize::Mono) * 0.5f;
+            dl->AddText(MvStyle::Font.Mono,
+                        MvStyle::TypeSize::Mono,
+                        ImVec2(cursorX, ty),
+                        ImGui::ColorConvertFloat4ToU32(MvStyle::MvFg2),
+                        emailDisplay.c_str());
+            cursorX += emailW + kChipGap;
+        }
+
+        // Initials avatar -- filled circle with two-letter caption
+        {
+            const ImVec2 center(cursorX + kAvatarSize * 0.5f,
+                                chipBaseY + chipH * 0.5f);
+            // Tier-coloured outline ring for visual identity.
+            const ImVec4 ringCol = (tierUpper == "PRO")   ? MvStyle::MvWarning
+                                 : (tierUpper == "INDIE") ? MvStyle::MvBlue500
+                                                          : MvStyle::MvFg3;
+            dl->AddCircleFilled(center, kAvatarSize * 0.5f,
+                                ImGui::ColorConvertFloat4ToU32(MvStyle::MvBg3));
+            dl->AddCircle(center, kAvatarSize * 0.5f,
+                          ImGui::ColorConvertFloat4ToU32(ringCol),
+                          0, 1.5f);
+            if (MvStyle::Font.MonoSm && !initials.empty()) {
+                const ImVec2 ts = MvStyle::Font.MonoSm->CalcTextSizeA(
+                    MvStyle::TypeSize::MonoSm, FLT_MAX, 0.0f,
+                    initials.c_str());
+                dl->AddText(MvStyle::Font.MonoSm,
+                            MvStyle::TypeSize::MonoSm,
+                            ImVec2(center.x - ts.x * 0.5f,
+                                   center.y - ts.y * 0.5f),
+                            ImGui::ColorConvertFloat4ToU32(MvStyle::MvFg1),
+                            initials.c_str());
+            }
+        }
     }
 
     ImGui::EndMenuBar();
