@@ -214,7 +214,14 @@ void StageSidebar::RenderAlignment(Project& project, Actions& out) {
         // Inline upgrade prompt scoped to the source slot only -- the
         // target slot below stays available for every tier.
         if (!canUploadHead) {
-            ui::DrawUpgradePrompt({"Custom MetaHuman head upload", "Indie"});
+            ui::DrawUpgradePrompt({
+                "Custom MetaHuman head upload",
+                "Indie",
+                "Upload your own MetaHuman head mesh instead of the bundled "
+                "default. Indie and Pro plans support custom heads for any "
+                "MetaVisage workflow.",
+                MV_ICON_UPLOAD,
+            });
         }
 
         ImGui::Dummy(ImVec2(0.0f, 4.0f));
@@ -250,7 +257,14 @@ void StageSidebar::RenderAlignment(Project& project, Actions& out) {
         //   AlbedoNormal (Pro)   -- existing behaviour (all six slots)
         if (textureTransferMode == FeatureFlags::TextureTransfer::None) {
             I::DrawSectionLabel("TARGET TEXTURES");
-            ui::DrawUpgradePrompt({"Texture transfer", "Indie"});
+            ui::DrawUpgradePrompt({
+                "Texture transfer",
+                "Indie",
+                "Attach textures (Albedo on Indie, full PBR stack on Pro) so "
+                "MetaVisage carries the target's surface detail through the "
+                "wrap into your Unreal-ready export.",
+                MV_ICON_IMAGE,
+            });
         } else {
             I::DrawSectionLabel("TARGET TEXTURES");
             auto& textures = project.GetTargetTextures();
@@ -295,9 +309,14 @@ void StageSidebar::RenderAlignment(Project& project, Actions& out) {
             }
             // Indie-tier upgrade nudge for the missing five slots.
             if (indieOnly) {
-                ui::DrawUpgradePrompt(
-                    {"Normal / roughness / AO / emissive / metallic transfer",
-                     "Pro"});
+                ui::DrawUpgradePrompt({
+                    "Full PBR texture transfer",
+                    "Pro",
+                    "Pro unlocks Normal / Roughness / AO / Emissive / Metallic "
+                    "slots so the entire PBR stack survives the wrap into "
+                    "Unreal Engine.",
+                    MV_ICON_IMAGE,
+                });
             }
         }
 
@@ -1115,7 +1134,13 @@ void StageSidebar::RenderMorph(Project& project, bool processing, float progress
         if (morphMeshReady) {
             I::DrawSectionLabel("VERTEX MASK");
             if (!canUseMasking) {
-                ui::DrawUpgradePrompt({"Vertex masking", "Indie"});
+                ui::DrawUpgradePrompt({
+                    "Vertex masking",
+                    "Indie",
+                    "Paint to exclude eyes, mouths, and interior cavities "
+                    "from the wrap. Vital for clean MetaHuman conversions.",
+                    MV_ICON_BRUSH,
+                });
             }
             {
                 MvStyle::ScopedFont f(MvStyle::Font.BodySm);
@@ -1210,7 +1235,14 @@ void StageSidebar::RenderMorph(Project& project, bool processing, float progress
         // expand toggle itself stays enabled so the user can still see what
         // controls exist.
         if (!morphParamsFull) {
-            ui::DrawUpgradePrompt({"Manual parameter tuning", "Indie"});
+            ui::DrawUpgradePrompt({
+                "Manual parameter tuning",
+                "Indie",
+                "Tune stiffness, landmark weight, rigidity, and control-node "
+                "sampling directly. Indie and Pro plans get full access to "
+                "every parameter behind the Wrap Engine presets.",
+                MV_ICON_SLIDERS,
+            });
         }
 
         // ---- General (Story 5.1 — collapsible, default expanded) ------
@@ -1394,6 +1426,44 @@ void StageSidebar::RenderTouchUp(Project& project, Actions& out) {
                           false,
                           ImGuiWindowFlags_NoBackground)) {
 
+        // Story 7.4 (revised live-test feedback): show conversions left
+        // on Stage 4 -- it's the last stage before export, and an export
+        // is what counts as a conversion. Goes amber when within 2 of
+        // the cap; muted otherwise. Pending offline conversions fold
+        // into the effective used count so an accept-while-offline
+        // shows up immediately.
+        {
+            const auto& lm = MetaVisage::LicenseManager::Instance();
+            const int used    = lm.GetEffectiveConversionsUsed();
+            const int limit   = lm.GetConversionsLimit();
+            const int pending = lm.GetPendingConversionCount();
+            if (limit > 0) {
+                const int remaining = std::max(0, limit - used);
+                const bool nearCap  = (remaining <= 2);
+                const ImVec4 color  = nearCap ? MvStyle::MvWarning : MvStyle::MvFg2;
+                MvStyle::ScopedFont f(MvStyle::Font.BodySm);
+                ImGui::PushStyleColor(ImGuiCol_Text, color);
+                ImGui::TextUnformatted(MV_ICON_REFRESH);
+                ImGui::SameLine(0.0f, MvStyle::Spacing::S2);
+                if (remaining == 0) {
+                    std::string resetIso = lm.GetConversionsResetAt();
+                    if (resetIso.size() >= 10) resetIso = resetIso.substr(0, 10);
+                    ImGui::TextWrapped(
+                        "0 conversions left this month -- resets %s. "
+                        "Export is blocked until then or after an upgrade.",
+                        resetIso.empty() ? "soon" : resetIso.c_str());
+                } else {
+                    ImGui::TextWrapped(
+                        "%d / %d conversions used this month%s. "
+                        "Each successful export counts as one conversion.",
+                        used, limit,
+                        pending > 0 ? std::format(" ({} pending sync)", pending).c_str() : "");
+                }
+                ImGui::PopStyleColor();
+                ImGui::Dummy(ImVec2(0.0f, MvStyle::Spacing::S2));
+            }
+        }
+
         // ---- BRUSHES — 2×2 card grid ----------------------------------
         I::DrawSectionLabel("BRUSHES");
 
@@ -1463,8 +1533,35 @@ void StageSidebar::RenderTouchUp(Project& project, Actions& out) {
                 // Hover-on-disabled tooltip via AllowWhenDisabled. Tier in
                 // the copy is the *next* tier that unlocks the brush.
                 if (!allowed) {
-                    ui::DrawUpgradePromptTooltip(
-                        {kBrushes[i].name, brushUpgradeTier(kBrushes[i].kind)});
+                    // Per-brush description -- gives the user enough context
+                    // to know if they actually want this brush before
+                    // upgrading.
+                    const char* desc = "Sculpting brush for the Touch Up stage.";
+                    switch (kBrushes[i].kind) {
+                        case BrushType::Grab:
+                            desc = "Drag the surface with the cursor for "
+                                   "free-form sculpting passes after the "
+                                   "automatic wrap.";
+                            break;
+                        case BrushType::PushPull:
+                            desc = "Push or pull vertices along the surface "
+                                   "normal -- great for plumping noses, "
+                                   "deepening eye sockets, and other quick "
+                                   "anatomical tweaks.";
+                            break;
+                        case BrushType::Inflate:
+                            desc = "Expand vertices radially to add volume to "
+                                   "specific regions without rebuilding the "
+                                   "morph.";
+                            break;
+                        default: break;
+                    }
+                    ui::DrawUpgradePromptTooltip({
+                        kBrushes[i].name,
+                        brushUpgradeTier(kBrushes[i].kind),
+                        desc,
+                        kBrushes[i].glyph,
+                    });
                 }
             }
             ImGui::EndTable();

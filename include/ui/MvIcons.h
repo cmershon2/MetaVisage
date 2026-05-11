@@ -104,6 +104,7 @@
 #define MV_ICON_ALERT         "\xEE\x86\x93"  // U+E193  — triangle-alert
 #define MV_ICON_HELP          "\xEE\x82\x82"  // U+E082  — circle-help
 #define MV_ICON_LOCK          "\xEE\x84\x8B"  // U+E10B  — lock
+#define MV_ICON_ZAP           "\xEE\x86\xB4"  // U+E1B4  — zap (lightning) — premium feature marker
 #define MV_ICON_EXTERNAL      "\xEE\x82\xB9"  // U+E0B9  — external-link
 #define MV_ICON_SETTINGS      "\xEE\x89\x85"  // U+E245  — settings-2
 

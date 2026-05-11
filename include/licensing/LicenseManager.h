@@ -154,6 +154,20 @@ public:
     };
     std::optional<ConversionLimitNotice> ConsumeConversionLimitNotice();
 
+    // Story 7.2 -- count of conversions queued for offline-sync. UI
+    // surfaces this as "N pending sync" or folds it into the effective
+    // used count so the user sees their accept reflected immediately
+    // even when the device is offline. Thread-safe read.
+    int GetPendingConversionCount() const;
+
+    // Effective conversion count (in-memory used + locally-queued
+    // pending) for UI display. The server-side used count won't reflect
+    // queued conversions until the next FlushConversionQueue lands, so
+    // this is the read that should drive any "N / Limit" UI.
+    int GetEffectiveConversionsUsed() const {
+        return GetConversionsUsed() + GetPendingConversionCount();
+    }
+
     // Story 6.6 read accessors -- populated by ApplyAuthSuccess /
     // DrainPendingRefresh / cached-JWT bootstrap. Empty / zero values
     // before the first successful exchange.

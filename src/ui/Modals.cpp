@@ -1034,15 +1034,23 @@ void RenderLicenseModal(LicenseModalState& state) {
         ImGui::TextUnformatted("USAGE THIS MONTH");
         ImGui::PopStyleColor();
         ImGui::Separator();
-        const int used = lm.GetConversionsUsed();
-        const int limit = lm.GetConversionsLimit();
+        // Story 7.2 live-test feedback: surface offline-queued conversions
+        // alongside the server-confirmed count so the user sees that
+        // accepts performed offline are tracked.
+        const int used    = lm.GetConversionsUsed();
+        const int pending = lm.GetPendingConversionCount();
+        const int limit   = lm.GetConversionsLimit();
         std::string usage;
         if (limit > 0) {
-            usage = std::format("{} / {} conversions", used, limit);
+            usage = std::format("{} / {} conversions", used + pending, limit);
         } else {
-            usage = std::format("{} conversions", used);
+            usage = std::format("{} conversions", used + pending);
         }
         LicenseRow("USED", usage);
+        if (pending > 0) {
+            LicenseRow("PENDING SYNC",
+                       std::format("{} queued offline", pending));
+        }
         // Story 7.4 -- the API returns conversions_reset_at as ISO 8601
         // (e.g. "2026-04-15T00:00:00.000Z"). Show only the YYYY-MM-DD
         // prefix so the dialog reads cleanly; fall back to the raw

@@ -1121,6 +1121,12 @@ LicenseManager::ConsumeConversionLimitNotice() {
     return out;
 }
 
+int LicenseManager::GetPendingConversionCount() const {
+    std::lock_guard<std::mutex> lock(
+        const_cast<std::mutex&>(conversionQueueMutex_));
+    return static_cast<int>(conversionQueue_.size());
+}
+
 void LicenseManager::EnqueueConversion(
         std::chrono::system_clock::time_point timestamp) {
     std::lock_guard<std::mutex> lock(conversionQueueMutex_);

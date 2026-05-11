@@ -1716,12 +1716,12 @@ void AppWindow::RenderStatusBar() {
 
         // Sprint 7 Story 7.4 -- conversion-limit warning pill. Triggers
         // within 2 conversions of the limit and stays visible at zero
-        // remaining. Pro tier (60-conversion limit) is intentionally not
-        // suppressed; the warning is correct behaviour for any tier
-        // nearing its cap, and a Pro user about to hit the limit wants
-        // to know.
-        const int used  = lm.GetConversionsUsed();
+        // remaining. The "used" value folds in offline-queued
+        // conversions (live-test feedback: an offline accept should be
+        // visible immediately, not invisible until the queue drains).
+        const int used  = lm.GetEffectiveConversionsUsed();
         const int limit = lm.GetConversionsLimit();
+        const int pending = lm.GetPendingConversionCount();
         if (limit > 0 && used >= limit - 2) {
             drawSep();
             const int remaining = std::max(0, limit - used);
@@ -1739,6 +1739,15 @@ void AppWindow::RenderStatusBar() {
             }
             drawSection("\xE2\x97\x8F ", MvStyle::MvWarning);
             drawSection(label, MvStyle::MvWarning);
+        }
+        // Surface offline-queued conversions even when not near the limit
+        // -- the user did an accept-while-offline expecting "their
+        // conversion was tracked", so a small "N pending sync" indicator
+        // confirms the queue persists across launches.
+        if (pending > 0) {
+            drawSep();
+            drawSection("\xE2\x86\xBB ", MvStyle::MvFg3);  // U+21BB recycle-ish arrow
+            drawSection(std::format("{} pending sync", pending), MvStyle::MvFg3);
         }
     }
 
@@ -2061,7 +2070,20 @@ void AppWindow::RenderModals() {
                 std::string("export") + MeshExporter::GetFormatExtension(exportModal_.options.format));
             if (picked) exportModal_.filepath = *picked;
         }
-        if (!exportModal_.filepath.empty()) DoExport();
+        if (!exportModal_.filepath.empty()) {
+            // Story 7.2 -- conversion-limit pre-check fires here (at the
+            // moment the user commits to an export) rather than at
+            // AcceptMorph. The in-memory counter is the truth; the next
+            // refresh + the most recent conversion POST keep it in sync.
+            auto& lm = LicenseManager::Instance();
+            if (lm.GetConversionsLimit() > 0 &&
+                lm.GetConversionsUsed() >= lm.GetConversionsLimit()) {
+                OpenConversionLimitReachedModal(lm.GetConversionsLimit(),
+                                                lm.GetConversionsResetAt());
+            } else {
+                DoExport();
+            }
+        }
     }
 
     // Story 4.4 — Save / Rename Wrap preset modal. The render flips
@@ -2439,6 +2461,13 @@ void AppWindow::DoExport() {
     }
     statusMessage_ = std::format("Exported to {}", FileName(exportModal_.filepath));
     MV_LOG_INFO(std::format("Exported mesh to {}", exportModal_.filepath));
+
+    // Story 7.2 -- a successful export is the conversion. Fire-and-forget:
+    // the LicenseManager worker handles offline queueing, 429/5xx retries,
+    // and 403 surfacing via ConsumeConversionLimitNotice on the next
+    // TickOnce. The in-memory used/limit counters refresh from the server
+    // response on the 200 path so the Stage 4 readout updates this frame.
+    LicenseManager::Instance().ReportConversion();
     // Visible confirmation matching v1.0 behaviour — the QMessageBox::information
     // toast in the Qt era turned into nothing on the ImGui port until now.
     errorModal_.OpenInfo(
@@ -2683,28 +2712,12 @@ void AppWindow::AcceptMorph() {
     if (!project_) return;
     MorphData& morphData = project_->GetMorphData();
     if (!morphData.isProcessed) return;
-
-    // Story 7.2 -- pre-check the user is not already at their monthly
-    // conversion limit. We trust the in-memory counter (kept in sync
-    // with the server by the 24h refresh + the most recent conversion
-    // POST). Refusing the accept on a stale read is safe: the next
-    // refresh / report will rectify, and the user can re-click Accept.
-    auto& lm = LicenseManager::Instance();
-    if (lm.GetConversionsLimit() > 0 &&
-        lm.GetConversionsUsed() >= lm.GetConversionsLimit()) {
-        OpenConversionLimitReachedModal(lm.GetConversionsLimit(),
-                                        lm.GetConversionsResetAt());
-        return;  // Don't flip isAccepted; user can upgrade or wait for reset.
-    }
-
+    // Story 7.2 (revised, live-test feedback): a "conversion" counts at
+    // export time, not accept time -- users may re-wrap several times
+    // before they're satisfied with the result. AcceptMorph remains a
+    // pure state flip; the conversion-limit pre-check + ReportConversion
+    // fire from the Export action path (DoExport) instead.
     morphData.isAccepted = true;
-
-    // Fire the conversion report. The worker handles offline queueing,
-    // 429/5xx retries, 403 (which surfaces a block modal via
-    // ConsumeConversionLimitNotice on the next TickOnce), and applying
-    // the new conversions_used / conversions_limit / conversions_reset_at
-    // from the server response.
-    lm.ReportConversion();
 }
 
 void AppWindow::OpenConversionLimitReachedModal(
