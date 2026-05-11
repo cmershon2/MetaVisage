@@ -1041,7 +1041,11 @@ void RenderLicenseModal(LicenseModalState& state) {
 
     if (ImGui::BeginPopupModal("Account & License", nullptr,
                                ImGuiWindowFlags_NoSavedSettings |
-                               ImGuiWindowFlags_NoResize)) {
+                               ImGuiWindowFlags_NoResize |
+                               ImGuiWindowFlags_NoTitleBar)) {
+        // The popup's native title bar is suppressed -- the custom header
+        // band below carries the title + X close button. Without the flag
+        // ImGui drew a redundant default title bar above our band.
         ImGui::PopStyleVar();  // pop the modal-frame padding override
 
         const auto& lm = LicenseManager::Instance();

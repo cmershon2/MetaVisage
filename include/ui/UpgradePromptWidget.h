@@ -3,6 +3,8 @@
 
 #include <string_view>
 
+#include <imgui.h>
+
 namespace MetaVisage::ui {
 
 // Sprint 7 Story 7.3 -- reusable Premium Feature callout for tier-gated UI.
@@ -35,9 +37,15 @@ struct UpgradePromptCopy {
     // the inline callout and the hover card; empty falls back to the
     // generic "Available on the <Tier> plan" line.
     std::string_view description = {};
-    // Optional glyph for the hover card's image header. Empty falls back
-    // to the zap glyph. Pass an MV_ICON_* constant string.
+    // Optional glyph for the hover card's image header when no heroImage
+    // is supplied. Empty falls back to the zap glyph. Pass an MV_ICON_*
+    // constant string.
     std::string_view featureGlyph = {};
+    // Optional GL texture handle (round-tripped through ImTextureID) for a
+    // hero image rendered at the top of the hover card. Recommended source
+    // is a 320x180 PNG (16:9, ~50 KB). When zero, the card falls back to a
+    // gradient header strip with the feature glyph.
+    ImTextureID heroImage = 0;
 };
 
 void DrawUpgradePrompt(const UpgradePromptCopy& copy);

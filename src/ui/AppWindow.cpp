@@ -1639,9 +1639,12 @@ void AppWindow::RenderMainMenuBar() {
                                              : std::string{};
 
     // ----- Measure --------------------------------------------------------
-    constexpr float kAvatarSize  = 24.0f;
+    // Sized to sit cleanly alongside the save-indicator text in the menu
+    // bar -- pill height matches the text line height so the whole chip
+    // visually centers on the same baseline as "Unsaved" / "Saved ago".
+    constexpr float kAvatarSize  = 18.0f;
     constexpr float kPillPadX    = 8.0f;
-    constexpr float kPillHeight  = 18.0f;
+    constexpr float kPillHeight  = 16.0f;
     constexpr float kChipGap     = 8.0f;
     constexpr float kRightPad    = 10.0f;
     constexpr float kClusterGap  = 12.0f;
@@ -1705,12 +1708,15 @@ void AppWindow::RenderMainMenuBar() {
     // ----- Account chip ---------------------------------------------------
     if (showChip) {
         const ImVec2 chipMin = ImGui::GetCursorScreenPos();
-        // Vertically centre on the menu bar; align the chip to its
-        // visible content height (pill / avatar are the tallest items).
-        const float menuLineH = ImGui::GetTextLineHeightWithSpacing();
+        // Vertically centre chip on the menu bar's text baseline. The save
+        // indicator just rendered to the left uses default text layout
+        // (ImGui::TextUnformatted), so chipMin.y is the menu bar's text-
+        // line top. Centering chip's center on the text's center yields
+        // a small negative Y offset when chipH > textLineHeight.
+        const float textLineH = ImGui::GetTextLineHeight();
         const float chipH     = std::max(kPillHeight, kAvatarSize);
-        const ImVec2 chipMax(chipMin.x + chipW, chipMin.y + chipH);
-        const float chipBaseY = chipMin.y + (menuLineH - chipH) * 0.5f;
+        const float chipBaseY = chipMin.y + (textLineH - chipH) * 0.5f;
+        const ImVec2 chipMax(chipMin.x + chipW, chipBaseY + chipH);
 
         // Make the whole chip a click target. InvisibleButton must lay
         // out at the same x position the visual content paints at; do
