@@ -1709,11 +1709,15 @@ void AppWindow::RenderMainMenuBar() {
     if (showChip) {
         const ImVec2 chipMin = ImGui::GetCursorScreenPos();
         // Vertically centre chip on the menu bar's text baseline. The save
-        // indicator just rendered to the left uses default text layout
-        // (ImGui::TextUnformatted), so chipMin.y is the menu bar's text-
-        // line top. Centering chip's center on the text's center yields
-        // a small negative Y offset when chipH > textLineHeight.
-        const float textLineH = ImGui::GetTextLineHeight();
+        // indicator just rendered to the left uses the Mono font (11 px),
+        // so we MUST measure with that font active -- the default font
+        // (Inter Body, 14 px) gives the wrong reference and the chip
+        // shifted ~3 px below the text baseline (round-3 feedback).
+        float textLineH = 0.0f;
+        {
+            MvStyle::ScopedFont monoF(MvStyle::Font.Mono);
+            textLineH = ImGui::GetTextLineHeight();
+        }
         const float chipH     = std::max(kPillHeight, kAvatarSize);
         const float chipBaseY = chipMin.y + (textLineH - chipH) * 0.5f;
         const ImVec2 chipMax(chipMin.x + chipW, chipBaseY + chipH);

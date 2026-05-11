@@ -1167,24 +1167,12 @@ void RenderLicenseModal(LicenseModalState& state) {
             }
             ImGui::PopStyleColor();
 
-            // License key (mono) -- typically a hex string from the JWT.
-            {
-                std::string key = lm.GetLicenseKey();
-                if (key.empty()) key = "\xE2\x80\x94";
-                ImGui::PushStyleColor(ImGuiCol_Text, MvStyle::MvFg3);
-                {
-                    MvStyle::ScopedFont f(MvStyle::Font.MonoSm);
-                    ImGui::TextUnformatted("KEY");
-                }
-                ImGui::PopStyleColor();
-                ImGui::SameLine(140.0f);
-                ImGui::PushStyleColor(ImGuiCol_Text, MvStyle::MvFg1);
-                {
-                    MvStyle::ScopedFont f(MvStyle::Font.Mono);
-                    ImGui::TextUnformatted(key.c_str());
-                }
-                ImGui::PopStyleColor();
-            }
+            // License key row removed per live-test feedback round 4 --
+            // the original mockup had it but the key should stay secret
+            // (it's still accessible via LicenseManager::GetLicenseKey()
+            // for the cases where the value is required, e.g. support
+            // contact). The data hook stays plumbed; only the visible
+            // row is hidden.
 
             // Status row + Refresh button -- the row carries the same
             // pill text the Sprint 6.6 helper produced; the refresh

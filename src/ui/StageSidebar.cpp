@@ -221,6 +221,7 @@ void StageSidebar::RenderAlignment(Project& project, Actions& out) {
                 "default. Indie and Pro plans support custom heads for any "
                 "MetaVisage workflow.",
                 MV_ICON_UPLOAD,
+                MvStyle::UpgradePreviewTex(MvStyle::UpgradePreview::CustomHead),
             });
         }
 
@@ -264,6 +265,7 @@ void StageSidebar::RenderAlignment(Project& project, Actions& out) {
                 "MetaVisage carries the target's surface detail through the "
                 "wrap into your Unreal-ready export.",
                 MV_ICON_IMAGE,
+                MvStyle::UpgradePreviewTex(MvStyle::UpgradePreview::TextureAlbedo),
             });
         } else {
             I::DrawSectionLabel("TARGET TEXTURES");
@@ -316,6 +318,7 @@ void StageSidebar::RenderAlignment(Project& project, Actions& out) {
                     "slots so the entire PBR stack survives the wrap into "
                     "Unreal Engine.",
                     MV_ICON_IMAGE,
+                    MvStyle::UpgradePreviewTex(MvStyle::UpgradePreview::TextureFullPbr),
                 });
             }
         }
@@ -1140,6 +1143,7 @@ void StageSidebar::RenderMorph(Project& project, bool processing, float progress
                     "Paint to exclude eyes, mouths, and interior cavities "
                     "from the wrap. Vital for clean MetaHuman conversions.",
                     MV_ICON_BRUSH,
+                    MvStyle::UpgradePreviewTex(MvStyle::UpgradePreview::VertexMask),
                 });
             }
             {
@@ -1242,6 +1246,7 @@ void StageSidebar::RenderMorph(Project& project, bool processing, float progress
                 "sampling directly. Indie and Pro plans get full access to "
                 "every parameter behind the Wrap Engine presets.",
                 MV_ICON_SLIDERS,
+                MvStyle::UpgradePreviewTex(MvStyle::UpgradePreview::MorphParams),
             });
         }
 
@@ -1533,26 +1538,28 @@ void StageSidebar::RenderTouchUp(Project& project, Actions& out) {
                 // Hover-on-disabled tooltip via AllowWhenDisabled. Tier in
                 // the copy is the *next* tier that unlocks the brush.
                 if (!allowed) {
-                    // Per-brush description -- gives the user enough context
-                    // to know if they actually want this brush before
-                    // upgrading.
+                    // Per-brush description + hero PNG lookup.
                     const char* desc = "Sculpting brush for the Touch Up stage.";
+                    auto heroSlot = MvStyle::UpgradePreview::BrushGrab;
                     switch (kBrushes[i].kind) {
                         case BrushType::Grab:
                             desc = "Drag the surface with the cursor for "
                                    "free-form sculpting passes after the "
                                    "automatic wrap.";
+                            heroSlot = MvStyle::UpgradePreview::BrushGrab;
                             break;
                         case BrushType::PushPull:
                             desc = "Push or pull vertices along the surface "
                                    "normal -- great for plumping noses, "
                                    "deepening eye sockets, and other quick "
                                    "anatomical tweaks.";
+                            heroSlot = MvStyle::UpgradePreview::BrushPushPull;
                             break;
                         case BrushType::Inflate:
                             desc = "Expand vertices radially to add volume to "
                                    "specific regions without rebuilding the "
                                    "morph.";
+                            heroSlot = MvStyle::UpgradePreview::BrushInflate;
                             break;
                         default: break;
                     }
@@ -1561,6 +1568,7 @@ void StageSidebar::RenderTouchUp(Project& project, Actions& out) {
                         brushUpgradeTier(kBrushes[i].kind),
                         desc,
                         kBrushes[i].glyph,
+                        MvStyle::UpgradePreviewTex(heroSlot),
                     });
                 }
             }

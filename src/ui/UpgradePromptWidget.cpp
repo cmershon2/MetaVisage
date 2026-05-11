@@ -159,8 +159,43 @@ void RenderHoverCardContents(const UpgradePromptCopy& copy, float tipWidth) {
     ImGui::Dummy(ImVec2(0.0f, MvStyle::Spacing::S2));
 }
 
-void OpenHoverCardTooltip(const UpgradePromptCopy& copy) {
+// Sidebar-relative tooltip position: anchored to the LEFT of the sidebar's
+// outer edge so the hover card sits adjacent to the panel rather than at
+// the mouse cursor. Live-test feedback round 4: the prior cursor-anchored
+// positioning placed the card on top of the sidebar (or overlapping the
+// pill that triggered it), which read as a tooltip rather than as a side-
+// panel preview.
+//
+// `sidebarLeftX` is captured by the caller from the parent window's left
+// edge BEFORE the pill's BeginChild scope opens; the disabled-control
+// variant (DrawUpgradePromptTooltip) captures it on entry.
+// `anchorY` is the pill's vertical center so the card vertically tracks
+// what's being hovered.
+void OpenHoverCardTooltip(const UpgradePromptCopy& copy,
+                          float sidebarLeftX,
+                          float anchorY) {
     constexpr float kTipWidth = 320.0f;
+    constexpr float kGap      = 12.0f;
+    constexpr float kEstHeight = 280.0f;
+
+    // Clamp to the visible viewport so the popup never extends off-screen
+    // -- a sidebar at the far left of the viewport falls back to a "right
+    // of cursor" placement so the card still shows something useful.
+    const ImGuiViewport* vp = ImGui::GetMainViewport();
+    float tipX = sidebarLeftX - kGap - kTipWidth;
+    if (tipX < vp->Pos.x + 4.0f) {
+        // Not enough room on the left; place to the right of the cursor.
+        tipX = ImGui::GetMousePos().x + 16.0f;
+    }
+
+    // Vertically centre on the anchor with viewport clamping.
+    float tipY = anchorY - kEstHeight * 0.5f;
+    const float maxY = vp->Pos.y + vp->Size.y - kEstHeight - 4.0f;
+    const float minY = vp->Pos.y + 4.0f;
+    if (tipY > maxY) tipY = maxY;
+    if (tipY < minY) tipY = minY;
+
+    ImGui::SetNextWindowPos(ImVec2(tipX, tipY), ImGuiCond_Always);
     ImGui::SetNextWindowSize(ImVec2(kTipWidth, 0.0f), ImGuiCond_Always);
     if (!ImGui::BeginTooltip()) return;
     RenderHoverCardContents(copy, kTipWidth);
@@ -180,6 +215,12 @@ void DrawUpgradePrompt(const UpgradePromptCopy& copy) {
 
     constexpr float kRounding = 8.0f;
     constexpr float kBorderPx = 1.0f;
+
+    // Capture the sidebar's left edge BEFORE opening BeginChild so the
+    // hover-card placement (to the left of the sidebar) can be anchored
+    // accurately. Inside the child, GetWindowPos returns the child's
+    // own position, not the sidebar's.
+    const float sidebarLeftX = ImGui::GetWindowPos().x;
 
     const float availW = ImGui::GetContentRegionAvail().x;
 
@@ -234,6 +275,8 @@ void DrawUpgradePrompt(const UpgradePromptCopy& copy) {
 
     ImGui::EndChild();
     const bool pillHovered = ImGui::IsItemHovered();
+    const ImVec2 pillMin   = ImGui::GetItemRectMin();
+    const ImVec2 pillMax   = ImGui::GetItemRectMax();
     ImGui::PopID();
 
     ImGui::PopStyleVar(3);
@@ -241,11 +284,12 @@ void DrawUpgradePrompt(const UpgradePromptCopy& copy) {
 
     ImGui::Dummy(ImVec2(0.0f, MvStyle::Spacing::S1));
 
-    // Hover state -- reveal the rich card to the side of the sidebar.
-    // Side-effect-free if not hovering; otherwise BeginTooltip auto-
-    // positions the popup near the mouse cursor.
+    // Hover state -- reveal the rich card to the LEFT of the sidebar
+    // (not at the cursor). Anchor vertical position on the pill's centre
+    // so the card stays visually associated with what's being hovered.
     if (pillHovered) {
-        OpenHoverCardTooltip(copy);
+        const float anchorY = (pillMin.y + pillMax.y) * 0.5f;
+        OpenHoverCardTooltip(copy, sidebarLeftX, anchorY);
     }
 }
 
@@ -258,7 +302,15 @@ void DrawUpgradePrompt(const UpgradePromptCopy& copy) {
 void DrawUpgradePromptTooltip(const UpgradePromptCopy& copy) {
     if (!ImGui::IsItemHovered(ImGuiHoveredFlags_AllowWhenDisabled))
         return;
-    OpenHoverCardTooltip(copy);
+    // Disabled-control variant -- capture the hover target's bounds for
+    // the anchor + the parent window's left edge for the position. The
+    // window-of-record at this point is the sidebar that hosts the
+    // disabled control.
+    const float sidebarLeftX = ImGui::GetWindowPos().x;
+    const ImVec2 itemMin = ImGui::GetItemRectMin();
+    const ImVec2 itemMax = ImGui::GetItemRectMax();
+    const float anchorY  = (itemMin.y + itemMax.y) * 0.5f;
+    OpenHoverCardTooltip(copy, sidebarLeftX, anchorY);
 }
 
 }  // namespace MetaVisage::ui
