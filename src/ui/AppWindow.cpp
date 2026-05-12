@@ -1696,30 +1696,42 @@ void AppWindow::RenderMainMenuBar() {
 
     ImGui::SameLine(startX);
 
+    // Capture the menu bar's actual rendered text-baseline so the chip
+    // can be anchored to where text *actually* draws -- not to where the
+    // cursor reports it should draw. Live-test rounds 2-4 all showed
+    // the chip floating below the save text because the menu bar's
+    // internal layout applies offsets that GetCursorScreenPos doesn't
+    // reflect. Reading the rendered item rect after-the-fact gets us
+    // the truth.
+    float baselineY = 0.0f;
+    bool  baselineCaptured = false;
+
     // ----- Save indicator -------------------------------------------------
     if (showSaved) {
         MvStyle::ScopedFont f(MvStyle::Font.Mono);
         ImGui::PushStyleColor(ImGuiCol_Text, MvStyle::MvFg3);
         ImGui::TextUnformatted(savedLabel.c_str());
         ImGui::PopStyleColor();
+        const ImVec2 savedMin = ImGui::GetItemRectMin();
+        const ImVec2 savedMax = ImGui::GetItemRectMax();
+        baselineY = (savedMin.y + savedMax.y) * 0.5f;
+        baselineCaptured = true;
         if (showChip) ImGui::SameLine(0.0f, kClusterGap);
     }
 
     // ----- Account chip ---------------------------------------------------
     if (showChip) {
         const ImVec2 chipMin = ImGui::GetCursorScreenPos();
-        // Vertically centre chip on the menu bar's text baseline. The save
-        // indicator just rendered to the left uses the Mono font (11 px),
-        // so we MUST measure with that font active -- the default font
-        // (Inter Body, 14 px) gives the wrong reference and the chip
-        // shifted ~3 px below the text baseline (round-3 feedback).
-        float textLineH = 0.0f;
-        {
-            MvStyle::ScopedFont monoF(MvStyle::Font.Mono);
-            textLineH = ImGui::GetTextLineHeight();
-        }
         const float chipH     = std::max(kPillHeight, kAvatarSize);
-        const float chipBaseY = chipMin.y + (textLineH - chipH) * 0.5f;
+
+        // Fall back to a Mono-font textLineH calculation when the chip is
+        // the only thing on the right cluster (no save indicator to read).
+        if (!baselineCaptured) {
+            MvStyle::ScopedFont monoF(MvStyle::Font.Mono);
+            baselineY = chipMin.y + ImGui::GetTextLineHeight() * 0.5f;
+        }
+
+        const float chipBaseY = baselineY - chipH * 0.5f;
         const ImVec2 chipMax(chipMin.x + chipW, chipBaseY + chipH);
 
         // Make the whole chip a click target. InvisibleButton must lay

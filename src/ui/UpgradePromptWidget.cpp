@@ -134,27 +134,61 @@ void RenderHoverCardContents(const UpgradePromptCopy& copy, float tipWidth) {
     {
         MvStyle::ScopedFont f(MvStyle::Font.BodySm);
         ImGui::PushStyleColor(ImGuiCol_Text, MvStyle::MvFg2);
-        ImGui::PushTextWrapPos(hdrMin.x + tipWidth - kSidePad);
+        // PushTextWrapPos takes a WINDOW-LOCAL x; 0.0f wraps at the
+        // window's right edge minus WindowPadding. Previously we were
+        // passing a screen-space value, which caused the body to extend
+        // past the popup right edge and clip.
+        ImGui::PushTextWrapPos(0.0f);
         const std::string body = BuildBody(copy);
         ImGui::TextWrapped("%s", body.c_str());
         ImGui::PopTextWrapPos();
         ImGui::PopStyleColor();
     }
 
-    ImGui::Dummy(ImVec2(0.0f, 4.0f));
+    // Tier-requirement rendered as a pill, not an eyebrow row. Matches the
+    // chip's tier-pill styling (small rounded rect, tier-coloured fill, mono
+    // text). No upgrade link in the hover card -- the sidebar pill (which
+    // hosts the hover) already carries the click affordance.
+    ImGui::Dummy(ImVec2(0.0f, 8.0f));
     {
-        MvStyle::ScopedFont f(MvStyle::Font.MonoSm);
-        ImGui::PushStyleColor(ImGuiCol_Text, MvStyle::MvFg3);
         std::string tier(copy.minimumTier);
         for (auto& c : tier) c = static_cast<char>(
             std::toupper(static_cast<unsigned char>(c)));
-        const std::string label = std::format("REQUIRES {}", tier);
-        ImGui::TextUnformatted(label.c_str());
-        ImGui::PopStyleColor();
+
+        const ImVec4 pillCol = (tier == "PRO")   ? MvStyle::MvWarning
+                             : (tier == "INDIE") ? MvStyle::MvBlue500
+                                                 : MvStyle::MvFg4;
+        constexpr float kPillPadX   = 10.0f;
+        constexpr float kPillHeight = 18.0f;
+
+        float pillTextW = 0.0f;
+        {
+            MvStyle::ScopedFont f(MvStyle::Font.MonoSm);
+            pillTextW = ImGui::CalcTextSize(tier.c_str()).x;
+        }
+        const float pillW = pillTextW + kPillPadX * 2.0f;
+
+        const ImVec2 pillMin = ImGui::GetCursorScreenPos();
+        const ImVec2 pillMax(pillMin.x + pillW, pillMin.y + kPillHeight);
+        ImDrawList* dl2 = ImGui::GetWindowDrawList();
+        dl2->AddRectFilled(pillMin, pillMax,
+                           ImGui::ColorConvertFloat4ToU32(pillCol),
+                           kPillHeight * 0.5f);
+        if (MvStyle::Font.MonoSm) {
+            const float tx = pillMin.x + kPillPadX;
+            const float ty = pillMin.y +
+                (kPillHeight - MvStyle::TypeSize::MonoSm) * 0.5f;
+            dl2->AddText(MvStyle::Font.MonoSm,
+                         MvStyle::TypeSize::MonoSm,
+                         ImVec2(tx, ty),
+                         ImGui::ColorConvertFloat4ToU32(MvStyle::MvFg1),
+                         tier.c_str());
+        }
+        // Advance the layout cursor past the pill so subsequent items
+        // sit below it.
+        ImGui::Dummy(ImVec2(pillW, kPillHeight));
     }
 
-    ImGui::Dummy(ImVec2(0.0f, 4.0f));
-    DrawUpgradeLink();
     ImGui::Unindent(kSidePad);
     ImGui::Dummy(ImVec2(0.0f, MvStyle::Spacing::S2));
 }
@@ -281,6 +315,18 @@ void DrawUpgradePrompt(const UpgradePromptCopy& copy) {
 
     ImGui::PopStyleVar(3);
     ImGui::PopStyleColor(2);
+
+    // Round-5 feedback: the whole sidebar pill is now the click target.
+    // The inner "Upgrade at metavisage.io ->" text was already clickable,
+    // but the pill body wasn't -- meaning users hovering and trying to
+    // click outside the link missed the action. IsMouseClicked + the
+    // pillHovered guard gives us "click anywhere on the pill = upgrade".
+    if (pillHovered) {
+        ImGui::SetMouseCursor(ImGuiMouseCursor_Hand);
+        if (ImGui::IsMouseClicked(ImGuiMouseButton_Left)) {
+            OpenPricingPage();
+        }
+    }
 
     ImGui::Dummy(ImVec2(0.0f, MvStyle::Spacing::S1));
 
