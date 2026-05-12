@@ -134,11 +134,12 @@ void RenderHoverCardContents(const UpgradePromptCopy& copy, float tipWidth) {
     {
         MvStyle::ScopedFont f(MvStyle::Font.BodySm);
         ImGui::PushStyleColor(ImGuiCol_Text, MvStyle::MvFg2);
-        // PushTextWrapPos takes a WINDOW-LOCAL x; 0.0f wraps at the
-        // window's right edge minus WindowPadding. Previously we were
-        // passing a screen-space value, which caused the body to extend
-        // past the popup right edge and clip.
-        ImGui::PushTextWrapPos(0.0f);
+        // PushTextWrapPos takes a WINDOW-LOCAL x. The popup uses zero
+        // WindowPadding so the hero image is edge-to-edge; the body
+        // text still wants kSidePad of breathing room on the right
+        // (matching the Indent(kSidePad) on the left), so push wrap
+        // explicitly to tipWidth - kSidePad.
+        ImGui::PushTextWrapPos(tipWidth - kSidePad);
         const std::string body = BuildBody(copy);
         ImGui::TextWrapped("%s", body.c_str());
         ImGui::PopTextWrapPos();
@@ -229,9 +230,20 @@ void OpenHoverCardTooltip(const UpgradePromptCopy& copy,
     if (tipY > maxY) tipY = maxY;
     if (tipY < minY) tipY = minY;
 
+    // Zero the popup's WindowPadding so the hero image (and the glyph
+    // header fallback) render edge-to-edge into the rounded top corners
+    // instead of being inset by WindowPadding.x on the left while
+    // extending tipWidth wide -- the old behaviour clipped the image's
+    // right edge past the card's rounded border. The image now spans
+    // the full tipWidth and bottoms out at the rounded-corner boundary.
+    // Body content uses Indent(kSidePad) inside RenderHoverCardContents
+    // to keep its own breathing room.
+    ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding, ImVec2(0.0f, 0.0f));
     ImGui::SetNextWindowPos(ImVec2(tipX, tipY), ImGuiCond_Always);
     ImGui::SetNextWindowSize(ImVec2(kTipWidth, 0.0f), ImGuiCond_Always);
-    if (!ImGui::BeginTooltip()) return;
+    const bool open = ImGui::BeginTooltip();
+    ImGui::PopStyleVar();
+    if (!open) return;
     RenderHoverCardContents(copy, kTipWidth);
     ImGui::EndTooltip();
 }
