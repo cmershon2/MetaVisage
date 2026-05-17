@@ -1,5 +1,6 @@
 #include "ui/UpgradePromptWidget.h"
 
+#include <algorithm>
 #include <format>
 #include <string>
 
@@ -14,11 +15,7 @@ namespace MetaVisage::ui {
 
 namespace {
 
-// "Upgrade at metavisage.io" link target. The pricing page is the public
-// upgrade entry point -- distinct from /manage-subscription which is the
-// post-purchase Stripe portal (already used by the License Status modal).
 constexpr const char* kUpgradePathSuffix = "/pricing";
-constexpr const char* kArrowRight = "\xE2\x86\x92";  // U+2192
 
 void OpenPricingPage() {
     const std::string url =
@@ -26,9 +23,6 @@ void OpenPricingPage() {
     MetaVisage::OpenUrl(url);
 }
 
-// Build the body line. If the call site provided a description, use it
-// verbatim; otherwise fall back to a generic "Available on the <Tier> plan"
-// so older call sites keep working.
 std::string BuildBody(const UpgradePromptCopy& copy) {
     if (!copy.description.empty()) {
         return std::string(copy.description);
@@ -38,7 +32,7 @@ std::string BuildBody(const UpgradePromptCopy& copy) {
                        std::string(copy.minimumTier));
 }
 
-// MvStyle::MvWarning at a low alpha for the callout background fill.
+// MvStyle::MvWarning at a low alpha for the callout backgrounds.
 ImVec4 WarnFill(float alpha) {
     return ImVec4(MvStyle::MvWarning.x,
                   MvStyle::MvWarning.y,
@@ -46,37 +40,27 @@ ImVec4 WarnFill(float alpha) {
                   alpha);
 }
 
-// Clickable "Upgrade at metavisage.io ->" link in MvBlue500 text. Caller
-// is responsible for placement; this draws a single text run as a hot item.
-void DrawUpgradeLink() {
-    MvStyle::ScopedFont f(MvStyle::Font.BodySm);
-    const std::string linkText = std::format("Upgrade at metavisage.io {}",
-                                             kArrowRight);
-    ImGui::PushStyleColor(ImGuiCol_Text, MvStyle::MvBlue500);
-    ImGui::TextUnformatted(linkText.c_str());
-    ImGui::PopStyleColor();
-    if (ImGui::IsItemHovered(ImGuiHoveredFlags_AllowWhenDisabled)) {
-        ImGui::SetMouseCursor(ImGuiMouseCursor_Hand);
-    }
-    if (ImGui::IsItemClicked(ImGuiMouseButton_Left)) {
-        OpenPricingPage();
-    }
+// Multiply each colour channel by `factor` (alpha unchanged) -- used for the
+// upgrade button's pressed / icon-box darker amber accent.
+ImVec4 Darken(const ImVec4& c, float factor) {
+    return ImVec4(c.x * factor, c.y * factor, c.z * factor, c.w);
 }
 
-// Render the hover-card body (image / glyph header + description + REQUIRES
-// row + upgrade link). Reused by DrawUpgradePromptTooltip and by the
-// hover state of the inline pill.
+ImU32 ColU32(const ImVec4& c) { return ImGui::ColorConvertFloat4ToU32(c); }
+
+// =============================================================================
+// Hover card body -- image / glyph header, description, REQUIRES <tier> pill.
+// Reused by every entry point that opens the side-anchored popup.
+// =============================================================================
 void RenderHoverCardContents(const UpgradePromptCopy& copy, float tipWidth) {
-    constexpr float kHeaderH = 180.0f;  // matches recommended 320x180 PNG
-    constexpr float kIconHeaderH = 56.0f;  // fallback header when no image
+    constexpr float kHeaderH = 180.0f;   // 320 x 180 hero PNG
+    constexpr float kIconHeaderH = 56.0f;  // glyph fallback band
     constexpr float kSidePad = 14.0f;
 
     const ImVec2 hdrMin = ImGui::GetCursorScreenPos();
     ImDrawList* dl = ImGui::GetWindowDrawList();
 
     if (copy.heroImage != 0) {
-        // Hero PNG header (16:9 = 320x180). The card width is tipWidth;
-        // image height scales to maintain the aspect ratio.
         const float imgH = tipWidth * (kHeaderH / 320.0f);
         const ImVec2 hdrMax(hdrMin.x + tipWidth, hdrMin.y + imgH);
         dl->AddImageRounded(copy.heroImage, hdrMin, hdrMax,
@@ -85,12 +69,9 @@ void RenderHoverCardContents(const UpgradePromptCopy& copy, float tipWidth) {
                             ImDrawFlags_RoundCornersTop);
         ImGui::SetCursorScreenPos(ImVec2(hdrMin.x, hdrMax.y));
     } else {
-        // Gradient header strip with the feature glyph centred vertically
-        // and the feature name to its right. Reads as an "image header"
-        // without requiring a PNG asset.
         const ImVec2 hdrMax(hdrMin.x + tipWidth, hdrMin.y + kIconHeaderH);
         dl->AddRectFilled(hdrMin, hdrMax,
-                          ImGui::ColorConvertFloat4ToU32(WarnFill(0.22f)),
+                          ColU32(WarnFill(0.22f)),
                           6.0f, ImDrawFlags_RoundCornersTop);
 
         const std::string glyphStorage =
@@ -101,7 +82,7 @@ void RenderHoverCardContents(const UpgradePromptCopy& copy, float tipWidth) {
             dl->AddText(MvStyle::Font.Icon, glyphSize,
                         ImVec2(hdrMin.x + kSidePad,
                                hdrMin.y + (kIconHeaderH - glyphSize) * 0.5f),
-                        ImGui::ColorConvertFloat4ToU32(MvStyle::MvWarning),
+                        ColU32(MvStyle::MvWarning),
                         glyphStorage.c_str());
         }
         {
@@ -121,8 +102,6 @@ void RenderHoverCardContents(const UpgradePromptCopy& copy, float tipWidth) {
     ImGui::Dummy(ImVec2(tipWidth, MvStyle::Spacing::S2));
     ImGui::Indent(kSidePad);
 
-    // When the PNG header is in play, repeat the feature name beneath the
-    // image so the title is always rendered in body type.
     if (copy.heroImage != 0) {
         MvStyle::ScopedFont f(MvStyle::Font.Heading);
         ImGui::PushStyleColor(ImGuiCol_Text, MvStyle::MvFg1);
@@ -134,11 +113,6 @@ void RenderHoverCardContents(const UpgradePromptCopy& copy, float tipWidth) {
     {
         MvStyle::ScopedFont f(MvStyle::Font.BodySm);
         ImGui::PushStyleColor(ImGuiCol_Text, MvStyle::MvFg2);
-        // PushTextWrapPos takes a WINDOW-LOCAL x. The popup uses zero
-        // WindowPadding so the hero image is edge-to-edge; the body
-        // text still wants kSidePad of breathing room on the right
-        // (matching the Indent(kSidePad) on the left), so push wrap
-        // explicitly to tipWidth - kSidePad.
         ImGui::PushTextWrapPos(tipWidth - kSidePad);
         const std::string body = BuildBody(copy);
         ImGui::TextWrapped("%s", body.c_str());
@@ -146,10 +120,9 @@ void RenderHoverCardContents(const UpgradePromptCopy& copy, float tipWidth) {
         ImGui::PopStyleColor();
     }
 
-    // Tier-requirement rendered as a pill, not an eyebrow row. Matches the
-    // chip's tier-pill styling (small rounded rect, tier-coloured fill, mono
-    // text). No upgrade link in the hover card -- the sidebar pill (which
-    // hosts the hover) already carries the click affordance.
+    // Tier requirement as a coloured pill, matching the chip's tier-pill
+    // styling. No upgrade link in the card -- the section's Upgrade
+    // button (rendered in the sidebar by the caller) is the action.
     ImGui::Dummy(ImVec2(0.0f, 8.0f));
     {
         std::string tier(copy.minimumTier);
@@ -173,7 +146,7 @@ void RenderHoverCardContents(const UpgradePromptCopy& copy, float tipWidth) {
         const ImVec2 pillMax(pillMin.x + pillW, pillMin.y + kPillHeight);
         ImDrawList* dl2 = ImGui::GetWindowDrawList();
         dl2->AddRectFilled(pillMin, pillMax,
-                           ImGui::ColorConvertFloat4ToU32(pillCol),
+                           ColU32(pillCol),
                            kPillHeight * 0.5f);
         if (MvStyle::Font.MonoSm) {
             const float tx = pillMin.x + kPillPadX;
@@ -182,11 +155,9 @@ void RenderHoverCardContents(const UpgradePromptCopy& copy, float tipWidth) {
             dl2->AddText(MvStyle::Font.MonoSm,
                          MvStyle::TypeSize::MonoSm,
                          ImVec2(tx, ty),
-                         ImGui::ColorConvertFloat4ToU32(MvStyle::MvFg1),
+                         ColU32(MvStyle::MvFg1),
                          tier.c_str());
         }
-        // Advance the layout cursor past the pill so subsequent items
-        // sit below it.
         ImGui::Dummy(ImVec2(pillW, kPillHeight));
     }
 
@@ -194,18 +165,11 @@ void RenderHoverCardContents(const UpgradePromptCopy& copy, float tipWidth) {
     ImGui::Dummy(ImVec2(0.0f, MvStyle::Spacing::S2));
 }
 
-// Sidebar-relative tooltip position: anchored to the LEFT of the sidebar's
-// outer edge so the hover card sits adjacent to the panel rather than at
-// the mouse cursor. Live-test feedback round 4: the prior cursor-anchored
-// positioning placed the card on top of the sidebar (or overlapping the
-// pill that triggered it), which read as a tooltip rather than as a side-
-// panel preview.
-//
-// `sidebarLeftX` is captured by the caller from the parent window's left
-// edge BEFORE the pill's BeginChild scope opens; the disabled-control
-// variant (DrawUpgradePromptTooltip) captures it on entry.
-// `anchorY` is the pill's vertical center so the card vertically tracks
-// what's being hovered.
+// =============================================================================
+// OpenHoverCardTooltip -- anchored to the LEFT of the sidebar (not the
+// cursor) so the card reads as a side panel preview rather than a tooltip
+// hovering over the trigger.
+// =============================================================================
 void OpenHoverCardTooltip(const UpgradePromptCopy& copy,
                           float sidebarLeftX,
                           float anchorY) {
@@ -213,31 +177,21 @@ void OpenHoverCardTooltip(const UpgradePromptCopy& copy,
     constexpr float kGap      = 12.0f;
     constexpr float kEstHeight = 280.0f;
 
-    // Clamp to the visible viewport so the popup never extends off-screen
-    // -- a sidebar at the far left of the viewport falls back to a "right
-    // of cursor" placement so the card still shows something useful.
     const ImGuiViewport* vp = ImGui::GetMainViewport();
     float tipX = sidebarLeftX - kGap - kTipWidth;
     if (tipX < vp->Pos.x + 4.0f) {
-        // Not enough room on the left; place to the right of the cursor.
         tipX = ImGui::GetMousePos().x + 16.0f;
     }
 
-    // Vertically centre on the anchor with viewport clamping.
     float tipY = anchorY - kEstHeight * 0.5f;
     const float maxY = vp->Pos.y + vp->Size.y - kEstHeight - 4.0f;
     const float minY = vp->Pos.y + 4.0f;
     if (tipY > maxY) tipY = maxY;
     if (tipY < minY) tipY = minY;
 
-    // Zero the popup's WindowPadding so the hero image (and the glyph
-    // header fallback) render edge-to-edge into the rounded top corners
-    // instead of being inset by WindowPadding.x on the left while
-    // extending tipWidth wide -- the old behaviour clipped the image's
-    // right edge past the card's rounded border. The image now spans
-    // the full tipWidth and bottoms out at the rounded-corner boundary.
-    // Body content uses Indent(kSidePad) inside RenderHoverCardContents
-    // to keep its own breathing room.
+    // Zero WindowPadding so the hero image is edge-to-edge into the
+    // rounded top corners; body content keeps its breathing room via
+    // Indent / PushTextWrapPos inside RenderHoverCardContents.
     ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding, ImVec2(0.0f, 0.0f));
     ImGui::SetNextWindowPos(ImVec2(tipX, tipY), ImGuiCond_Always);
     ImGui::SetNextWindowSize(ImVec2(kTipWidth, 0.0f), ImGuiCond_Always);
@@ -251,119 +205,122 @@ void OpenHoverCardTooltip(const UpgradePromptCopy& copy,
 }  // namespace
 
 // =============================================================================
-// Inline callout -- rounded amber box matching the Starlight "Caution" aside.
-// Auto-resizes its height to fit the wrapped body text. Hovering reveals the
-// rich hover card (RenderHoverCardContents) so the user can drill into the
-// feature without having to find a disabled control to mouse over.
+// Gated-section hover scope -- captures the sidebar's left edge + the top of
+// the gated block, then on End() tests whether the mouse is anywhere inside
+// the [topY, currentCursorY] vertical range (across the full sidebar width)
+// and fires the hover card if so. Lets a whole section behave as one large
+// hover surface without wrapping its contents in an InvisibleButton or
+// BeginChild (which would interfere with the disabled-control layout the
+// caller is already responsible for).
 // =============================================================================
-void DrawUpgradePrompt(const UpgradePromptCopy& copy) {
-    ImGui::Dummy(ImVec2(0.0f, MvStyle::Spacing::S2));
+GatedSectionScope BeginGatedSectionHover(const UpgradePromptCopy& copy) {
+    GatedSectionScope scope;
+    scope.copy         = copy;
+    scope.sidebarLeftX = ImGui::GetWindowPos().x;
+    scope.topY         = ImGui::GetCursorScreenPos().y;
+    scope.active       = true;
+    return scope;
+}
 
-    constexpr float kRounding = 8.0f;
-    constexpr float kBorderPx = 1.0f;
-
-    // Capture the sidebar's left edge BEFORE opening BeginChild so the
-    // hover-card placement (to the left of the sidebar) can be anchored
-    // accurately. Inside the child, GetWindowPos returns the child's
-    // own position, not the sidebar's.
-    const float sidebarLeftX = ImGui::GetWindowPos().x;
-
-    const float availW = ImGui::GetContentRegionAvail().x;
-
-    // BeginChild with AutoResizeY measures content height for us, so the
-    // body's TextWrapped runs the full width of the child and the child
-    // grows to fit. ChildBg / Border get the amber tokens.
-    ImGui::PushStyleColor(ImGuiCol_ChildBg, WarnFill(0.14f));
-    ImGui::PushStyleColor(ImGuiCol_Border, WarnFill(0.55f));
-    ImGui::PushStyleVar(ImGuiStyleVar_ChildRounding,   kRounding);
-    ImGui::PushStyleVar(ImGuiStyleVar_ChildBorderSize, kBorderPx);
-    ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding,
-                        ImVec2(12.0f, 10.0f));
-
-    // PushID prevents the child name from colliding across multiple
-    // upgrade prompts in the same sidebar (e.g. textures + masking
-    // both rendering pills).
-    ImGui::PushID(std::string(copy.feature).c_str());
-    ImGui::BeginChild("##premiumPill",
-                      ImVec2(availW, 0.0f),
-                      ImGuiChildFlags_Borders | ImGuiChildFlags_AutoResizeY,
-                      ImGuiWindowFlags_NoScrollbar | ImGuiWindowFlags_NoScrollWithMouse);
-
-    // Title row -- zap icon + "PREMIUM FEATURE" mono uppercase.
-    {
-        MvStyle::ScopedFont f(MvStyle::Font.IconSm);
-        ImGui::PushStyleColor(ImGuiCol_Text, MvStyle::MvWarning);
-        ImGui::TextUnformatted(MV_ICON_ZAP);
-        ImGui::PopStyleColor();
-    }
-    ImGui::SameLine(0.0f, MvStyle::Spacing::S2);
-    {
-        MvStyle::ScopedFont f(MvStyle::Font.MonoSm);
-        ImGui::PushStyleColor(ImGuiCol_Text, MvStyle::MvWarning);
-        ImGui::TextUnformatted("PREMIUM FEATURE");
-        ImGui::PopStyleColor();
-    }
-
-    ImGui::Dummy(ImVec2(0.0f, 4.0f));
-    {
-        MvStyle::ScopedFont f(MvStyle::Font.BodySm);
-        ImGui::PushStyleColor(ImGuiCol_Text, MvStyle::MvFg2);
-        const std::string body = BuildBody(copy);
-        // Inside a BeginChild, TextWrapped wraps at the child's right edge
-        // (minus WindowPadding) automatically; no explicit PushTextWrapPos
-        // needed.
-        ImGui::TextWrapped("%s", body.c_str());
-        ImGui::PopStyleColor();
-    }
-
-    ImGui::Dummy(ImVec2(0.0f, 4.0f));
-    DrawUpgradeLink();
-
-    ImGui::EndChild();
-    const bool pillHovered = ImGui::IsItemHovered();
-    const ImVec2 pillMin   = ImGui::GetItemRectMin();
-    const ImVec2 pillMax   = ImGui::GetItemRectMax();
-    ImGui::PopID();
-
-    ImGui::PopStyleVar(3);
-    ImGui::PopStyleColor(2);
-
-    // Round-5 feedback: the whole sidebar pill is now the click target.
-    // The inner "Upgrade at metavisage.io ->" text was already clickable,
-    // but the pill body wasn't -- meaning users hovering and trying to
-    // click outside the link missed the action. IsMouseClicked + the
-    // pillHovered guard gives us "click anywhere on the pill = upgrade".
-    if (pillHovered) {
-        ImGui::SetMouseCursor(ImGuiMouseCursor_Hand);
-        if (ImGui::IsMouseClicked(ImGuiMouseButton_Left)) {
-            OpenPricingPage();
-        }
-    }
-
-    ImGui::Dummy(ImVec2(0.0f, MvStyle::Spacing::S1));
-
-    // Hover state -- reveal the rich card to the LEFT of the sidebar
-    // (not at the cursor). Anchor vertical position on the pill's centre
-    // so the card stays visually associated with what's being hovered.
-    if (pillHovered) {
-        const float anchorY = (pillMin.y + pillMax.y) * 0.5f;
-        OpenHoverCardTooltip(copy, sidebarLeftX, anchorY);
+void EndGatedSectionHover(const GatedSectionScope& scope) {
+    if (!scope.active) return;
+    const float bottomY = ImGui::GetCursorScreenPos().y;
+    const float winW    = ImGui::GetWindowWidth();
+    const ImVec2 rectMin(scope.sidebarLeftX,           scope.topY);
+    const ImVec2 rectMax(scope.sidebarLeftX + winW,    bottomY);
+    if (ImGui::IsMouseHoveringRect(rectMin, rectMax, /*clip=*/true)) {
+        const float anchorY = (scope.topY + bottomY) * 0.5f;
+        OpenHoverCardTooltip(scope.copy, scope.sidebarLeftX, anchorY);
     }
 }
 
 // =============================================================================
-// Hover card -- richer side-popup for disabled controls. Image-style header
-// strip with a 320x180 hero image when supplied, otherwise an amber-tinted
-// band with the feature glyph + name. Description body, REQUIRES <TIER>
-// eyebrow, upgrade link.
+// DrawUpgradeButton -- full-width amber CTA that matches the round-7 mockup:
+// rounded rectangle, "Upgrade" body text on the left, a darker amber square
+// trailing on the right with the zap glyph centred inside.
+// =============================================================================
+void DrawUpgradeButton(const UpgradePromptCopy& copy) {
+    (void)copy;  // copy is here for symmetry / future per-tier theming hooks
+
+    constexpr float kButtonH    = 36.0f;
+    constexpr float kIconBoxW   = 28.0f;
+    constexpr float kRounding   = 8.0f;
+    constexpr float kIconBoxPad = 4.0f;   // inset of the dark-amber accent
+    constexpr float kIconBoxRoundFactor = 0.65f;
+
+    const float availW = ImGui::GetContentRegionAvail().x;
+    if (availW < 1.0f) return;
+
+    const ImVec2 btnMin = ImGui::GetCursorScreenPos();
+    const ImVec2 btnMax(btnMin.x + availW, btnMin.y + kButtonH);
+
+    ImGui::PushID(std::string(copy.feature).c_str());
+    const bool clicked = ImGui::InvisibleButton("##upgradeBtn",
+                                                ImVec2(availW, kButtonH));
+    const bool hovered = ImGui::IsItemHovered();
+    const bool held    = ImGui::IsItemActive();
+    ImGui::PopID();
+
+    if (hovered) ImGui::SetMouseCursor(ImGuiMouseCursor_Hand);
+    if (clicked) OpenPricingPage();
+
+    // Visual states -- subtle hover lift, pressed dim.
+    ImVec4 baseCol = MvStyle::MvWarning;
+    if (held)        baseCol = Darken(baseCol, 0.85f);
+    else if (hovered) baseCol = Darken(baseCol, 1.05f);  // slight lighten; clamps via saturation
+
+    ImDrawList* dl = ImGui::GetWindowDrawList();
+    dl->AddRectFilled(btnMin, btnMax, ColU32(baseCol), kRounding);
+
+    // Darker amber icon-box on the right -- inset by kIconBoxPad, rounded
+    // a touch less than the outer button so the boxes nest cleanly.
+    const ImVec2 iconBoxMin(btnMax.x - kIconBoxW - kIconBoxPad,
+                            btnMin.y + kIconBoxPad);
+    const ImVec2 iconBoxMax(btnMax.x - kIconBoxPad,
+                            btnMax.y - kIconBoxPad);
+    dl->AddRectFilled(iconBoxMin, iconBoxMax,
+                      ColU32(Darken(baseCol, 0.78f)),
+                      kRounding * kIconBoxRoundFactor);
+
+    // "Upgrade" label centred in the left portion (between btnMin.x and
+    // iconBoxMin.x).
+    {
+        MvStyle::ScopedFont f(MvStyle::Font.BodyMd);
+        const ImVec2 ts = ImGui::CalcTextSize("Upgrade");
+        const float zoneL = btnMin.x;
+        const float zoneR = iconBoxMin.x;
+        const float tx = (zoneL + zoneR) * 0.5f - ts.x * 0.5f;
+        const float ty = btnMin.y + (kButtonH - ts.y) * 0.5f;
+        dl->AddText(MvStyle::Font.BodyMd
+                        ? MvStyle::Font.BodyMd
+                        : ImGui::GetFont(),
+                    MvStyle::TypeSize::Body,
+                    ImVec2(tx, ty),
+                    ColU32(MvStyle::MvFg1),
+                    "Upgrade");
+    }
+
+    // Zap glyph centred in the icon box.
+    if (MvStyle::Font.Icon) {
+        const float gs = 16.0f;
+        const ImVec2 iconPos(
+            (iconBoxMin.x + iconBoxMax.x) * 0.5f - gs * 0.5f,
+            (iconBoxMin.y + iconBoxMax.y) * 0.5f - gs * 0.5f);
+        dl->AddText(MvStyle::Font.Icon, gs,
+                    iconPos,
+                    ColU32(MvStyle::MvFg1),
+                    MV_ICON_ZAP);
+    }
+}
+
+// =============================================================================
+// DrawUpgradePromptTooltip -- disabled-control hover variant. Still used by
+// Stage 4 brush cards where each disabled brush card is a click target and
+// hovering it should reveal that brush's specific upgrade preview.
 // =============================================================================
 void DrawUpgradePromptTooltip(const UpgradePromptCopy& copy) {
     if (!ImGui::IsItemHovered(ImGuiHoveredFlags_AllowWhenDisabled))
         return;
-    // Disabled-control variant -- capture the hover target's bounds for
-    // the anchor + the parent window's left edge for the position. The
-    // window-of-record at this point is the sidebar that hosts the
-    // disabled control.
     const float sidebarLeftX = ImGui::GetWindowPos().x;
     const ImVec2 itemMin = ImGui::GetItemRectMin();
     const ImVec2 itemMax = ImGui::GetItemRectMax();

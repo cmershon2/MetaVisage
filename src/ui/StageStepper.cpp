@@ -174,13 +174,11 @@ std::optional<int> Render(const Project* project, float width) {
         if (isComplete) {
             DrawCheckmark(dl, discCenter, DiscSize, Col(discIconColor));
         } else {
-            // "01" / "02" / "03" / "04" mono — Mono (11px) is the closest
-            // handle we have; it's a touch small for a 36px disc but reads
-            // cleanly. A dedicated 13px mono would match design exactly;
-            // can add later if the visual review flags it.
+            // "01" / "02" / "03" / "04" — 13 px JetBrains Mono Medium sized
+            // to match the 36 px disc.
             char buf[8];
             std::snprintf(buf, sizeof(buf), "0%d", i + 1);
-            MvStyle::ScopedFont f(MvStyle::Font.Mono);
+            MvStyle::ScopedFont f(MvStyle::Font.MonoMd);
             const ImVec2 ts = ImGui::CalcTextSize(buf);
             dl->AddText(ImVec2(discCenter.x - ts.x * 0.5f,
                                discCenter.y - ts.y * 0.5f),
@@ -190,7 +188,7 @@ std::optional<int> Render(const Project* project, float width) {
         // Text block (eyebrow + name) -------------------------------------
         // Eyebrow sits just above the vertical centre line; name sits just
         // below. Pre-measured offsets keep the layout stable across font
-        // load / fallback (eyebrow 10px, name 14px Medium).
+        // load / fallback (eyebrow 10px, name 16px Medium).
         const float textX = discMax.x + TextLeftPad;
         const float midY  = stepMin.y + StepperH * 0.5f;
 
@@ -201,7 +199,7 @@ std::optional<int> Render(const Project* project, float width) {
                         Col(statusColor), statusText);
         }
         {
-            MvStyle::ScopedFont f(MvStyle::Font.BodyMd);
+            MvStyle::ScopedFont f(MvStyle::Font.BodyLg);
             dl->AddText(ImVec2(textX, midY + 3.0f),
                         Col(nameColor), kStages[i].name);
         }

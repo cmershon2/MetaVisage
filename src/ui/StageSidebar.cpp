@@ -187,7 +187,25 @@ void StageSidebar::RenderAlignment(Project& project, Actions& out) {
         const auto textureTransferMode = lm.GetTextureTransferMode();
 
         // ---- Source mesh ------------------------------------------------
-        I::DrawSectionLabel("SOURCE MESH");
+        // Sprint 7 round-7 -- gated-section pattern: label gets the zap
+        // glyph, body content is wrapped in BeginDisabled, an Upgrade
+        // CTA button sits at the bottom, and the whole vertical range
+        // is a hover target that opens the rich card.
+        I::DrawSectionLabel("SOURCE MESH", /*gated=*/!canUploadHead);
+
+        ui::UpgradePromptCopy customHeadCopy{
+            "Custom MetaHuman head upload",
+            "Indie",
+            "Swap the bundled MetaHuman head for your own - a custom LOD, "
+            "a non-default rig, or a head pulled from your studio's "
+            "pipeline. Once loaded, every stage of MetaVisage runs against "
+            "your mesh instead of the default.",
+            MV_ICON_UPLOAD,
+            MvStyle::UpgradePreviewTex(MvStyle::UpgradePreview::CustomHead),
+        };
+        ui::GatedSectionScope srcScope;
+        if (!canUploadHead) srcScope = ui::BeginGatedSectionHover(customHeadCopy);
+
         {
             MvStyle::ScopedFont f(MvStyle::Font.BodySm);
             ImGui::PushStyleColor(ImGuiCol_Text, MvStyle::MvFg3);
@@ -196,11 +214,6 @@ void StageSidebar::RenderAlignment(Project& project, Actions& out) {
         }
         ImGui::Dummy(ImVec2(0.0f, 6.0f));
         const std::string srcName = FileNameOrEmpty(morph.filepath);
-        // Story 7.1 gate -- the custom_head_upload flag covers ONLY the
-        // source slot (custom MetaHuman head). Free users must use
-        // "Use Default MetaHuman Head" below; they can still upload a
-        // target mesh to morph against, which is what they actually
-        // convert against the default head.
         ImGui::BeginDisabled(!canUploadHead);
         const auto srcSlot = I::DrawFileSlot(
             srcName.c_str(),
@@ -211,18 +224,10 @@ void StageSidebar::RenderAlignment(Project& project, Actions& out) {
         ImGui::EndDisabled();
         if (srcSlot.importClicked && canUploadHead) out.importMorphMeshRequested = true;
 
-        // Inline upgrade prompt scoped to the source slot only -- the
-        // target slot below stays available for every tier.
         if (!canUploadHead) {
-            ui::DrawUpgradePrompt({
-                "Custom MetaHuman head upload",
-                "Indie",
-                "Upload your own MetaHuman head mesh instead of the bundled "
-                "default. Indie and Pro plans support custom heads for any "
-                "MetaVisage workflow.",
-                MV_ICON_UPLOAD,
-                MvStyle::UpgradePreviewTex(MvStyle::UpgradePreview::CustomHead),
-            });
+            ImGui::Dummy(ImVec2(0.0f, 8.0f));
+            ui::DrawUpgradeButton(customHeadCopy);
+            ui::EndGatedSectionHover(srcScope);
         }
 
         ImGui::Dummy(ImVec2(0.0f, 4.0f));
@@ -257,16 +262,30 @@ void StageSidebar::RenderAlignment(Project& project, Actions& out) {
         //   Albedo       (Indie) -- only Albedo slot offered
         //   AlbedoNormal (Pro)   -- existing behaviour (all six slots)
         if (textureTransferMode == FeatureFlags::TextureTransfer::None) {
-            I::DrawSectionLabel("TARGET TEXTURES");
-            ui::DrawUpgradePrompt({
+            // Free tier -- whole texture-transfer section is gated.
+            ui::UpgradePromptCopy textureCopy{
                 "Texture transfer",
                 "Indie",
-                "Attach textures (Albedo on Indie, full PBR stack on Pro) so "
-                "MetaVisage carries the target's surface detail through the "
-                "wrap into your Unreal-ready export.",
+                "Bring the Albedo from your target scan along for the ride. "
+                "MetaVisage rebakes it onto the wrapped mesh, so the source's "
+                "color and skin detail survive into the Unreal-ready FBX.",
                 MV_ICON_IMAGE,
                 MvStyle::UpgradePreviewTex(MvStyle::UpgradePreview::TextureAlbedo),
-            });
+            };
+            I::DrawSectionLabel("TARGET TEXTURES", /*gated=*/true);
+            auto texScope = ui::BeginGatedSectionHover(textureCopy);
+            ImGui::BeginDisabled(true);
+            {
+                MvStyle::ScopedFont f(MvStyle::Font.BodySm);
+                ImGui::PushStyleColor(ImGuiCol_Text, MvStyle::MvFg4);
+                ImGui::TextWrapped("Attach textures so the target's surface "
+                                   "survives the wrap into the FBX export.");
+                ImGui::PopStyleColor();
+            }
+            ImGui::EndDisabled();
+            ImGui::Dummy(ImVec2(0.0f, 8.0f));
+            ui::DrawUpgradeButton(textureCopy);
+            ui::EndGatedSectionHover(texScope);
         } else {
             I::DrawSectionLabel("TARGET TEXTURES");
             auto& textures = project.GetTargetTextures();
@@ -309,17 +328,26 @@ void StageSidebar::RenderAlignment(Project& project, Actions& out) {
             if (ImGui::Button("+ Texture", ImVec2(-FLT_MIN, 0.0f))) {
                 out.importTextureSlot = kSlotNames[sSelectedSlot];
             }
-            // Indie-tier upgrade nudge for the missing five slots.
+            // Indie-tier upgrade nudge for the missing five PBR slots. The
+            // Albedo slot above stays interactive; the gated portion is
+            // the "rest of the PBR stack". The CTA carries its own hover
+            // tooltip via the InvisibleButton-on-disabled treatment that
+            // DrawUpgradePromptTooltip wires.
             if (indieOnly) {
-                ui::DrawUpgradePrompt({
+                ui::UpgradePromptCopy fullPbrCopy{
                     "Full PBR texture transfer",
                     "Pro",
-                    "Pro unlocks Normal / Roughness / AO / Emissive / Metallic "
-                    "slots so the entire PBR stack survives the wrap into "
-                    "Unreal Engine.",
+                    "Unlock the full PBR stack - Normal, Roughness, AO, Emissive, "
+                    "and Metallic - alongside Albedo. Every material channel from "
+                    "your target survives the wrap, so the head arrives in Unreal "
+                    "already shaded the way you authored it.",
                     MV_ICON_IMAGE,
                     MvStyle::UpgradePreviewTex(MvStyle::UpgradePreview::TextureFullPbr),
-                });
+                };
+                ImGui::Dummy(ImVec2(0.0f, 8.0f));
+                ui::DrawUpgradeButton(fullPbrCopy);
+                // Hover the CTA itself to reveal the Pro preview card.
+                ui::DrawUpgradePromptTooltip(fullPbrCopy);
             }
         }
 
@@ -1135,17 +1163,21 @@ void StageSidebar::RenderMorph(Project& project, bool processing, float progress
         // loaded.
         const bool morphMeshReady = project.GetMorphMesh().isLoaded || morph.isProcessed;
         if (morphMeshReady) {
-            I::DrawSectionLabel("VERTEX MASK");
-            if (!canUseMasking) {
-                ui::DrawUpgradePrompt({
-                    "Vertex masking",
-                    "Indie",
-                    "Paint to exclude eyes, mouths, and interior cavities "
-                    "from the wrap. Vital for clean MetaHuman conversions.",
-                    MV_ICON_BRUSH,
-                    MvStyle::UpgradePreviewTex(MvStyle::UpgradePreview::VertexMask),
-                });
-            }
+            I::DrawSectionLabel("VERTEX MASK", /*gated=*/!canUseMasking);
+
+            ui::UpgradePromptCopy maskCopy{
+                "Vertex masking",
+                "Indie",
+                "Paint over eyes, mouth interior, ear canals, and any "
+                "other regions the Wrap Engine should leave untouched. "
+                "Masked vertices keep MetaHuman topology intact while "
+                "the rest follows your target - essential for clean conversions.",
+                MV_ICON_BRUSH,
+                MvStyle::UpgradePreviewTex(MvStyle::UpgradePreview::VertexMask),
+            };
+            ui::GatedSectionScope maskScope;
+            if (!canUseMasking) maskScope = ui::BeginGatedSectionHover(maskCopy);
+
             {
                 MvStyle::ScopedFont f(MvStyle::Font.BodySm);
                 ImGui::PushStyleColor(ImGuiCol_Text, MvStyle::MvFg3);
@@ -1190,6 +1222,13 @@ void StageSidebar::RenderMorph(Project& project, bool processing, float progress
 
             ImGui::EndDisabled();  // canUseMasking guard
 
+            // CTA + close hover scope only when gated.
+            if (!canUseMasking) {
+                ImGui::Dummy(ImVec2(0.0f, 8.0f));
+                ui::DrawUpgradeButton(maskCopy);
+                ui::EndGatedSectionHover(maskScope);
+            }
+
             // Push current mask UI state through Actions so AppWindow can
             // mirror onto the primary viewport each frame. Force-off when
             // the tier has masking gated so the viewport never treats LMB
@@ -1232,28 +1271,44 @@ void StageSidebar::RenderMorph(Project& project, bool processing, float progress
             return isOpen;
         };
 
-        // Story 7.1 gate -- Free tier (morphing_parameters = presets) gets
-        // a single inline upgrade prompt above the General header; the
-        // collapsible bodies below are wrapped in BeginDisabled so preset
-        // cards remain the only way to set parameters. The CollapsingHeader
-        // expand toggle itself stays enabled so the user can still see what
-        // controls exist.
+        // Story 7.1 gate (round-7) -- Free tier (morphing_parameters =
+        // presets) gets a zap-marked section header, both General and
+        // Advanced collapsibles wrapped in BeginDisabled (so the
+        // CollapsingHeaders themselves can't be toggled), a hover scope
+        // spanning the whole gated block, and a single Upgrade CTA below
+        // covering "Manual parameter tuning" as one concept.
+        ui::UpgradePromptCopy morphParamsCopy{
+            "Manual parameter tuning",
+            "Indie",
+            "Open the General and Advanced panels to dial in stiffness, "
+            "rigidity, landmark weight, and control-node sampling directly. "
+            "Every parameter behind the Wrap Engine presets becomes yours "
+            "to tune for your character.",
+            MV_ICON_SLIDERS,
+            MvStyle::UpgradePreviewTex(MvStyle::UpgradePreview::MorphParams),
+        };
+
+        ui::GatedSectionScope morphParamsScope;
         if (!morphParamsFull) {
-            ui::DrawUpgradePrompt({
-                "Manual parameter tuning",
-                "Indie",
-                "Tune stiffness, landmark weight, rigidity, and control-node "
-                "sampling directly. Indie and Pro plans get full access to "
-                "every parameter behind the Wrap Engine presets.",
-                MV_ICON_SLIDERS,
-                MvStyle::UpgradePreviewTex(MvStyle::UpgradePreview::MorphParams),
-            });
+            // Section header is visible only when gated; for Pro users the
+            // collapsibles render under their normal cards header without
+            // a parent eyebrow (preserves existing layout).
+            I::DrawSectionLabel("MANUAL PARAMETERS", /*gated=*/true);
+            morphParamsScope = ui::BeginGatedSectionHover(morphParamsCopy);
         }
+
+        // BeginDisabled scope wraps BOTH collapsibles so the
+        // CollapsingHeader expand toggles themselves are disabled for
+        // Free users -- previously a Free user could still expand them
+        // and see the disabled slider list, which the team reported as
+        // visually noisy. Now the headers stay closed (or in whatever
+        // state Config last persisted while the user was Pro) and the
+        // user can't toggle them.
+        ImGui::BeginDisabled(!morphParamsFull);
 
         // ---- General (Story 5.1 — collapsible, default expanded) ------
         if (DrawCollapsibleSection("morph.general", "General",
                                    /*defaultExpanded=*/true)) {
-            ImGui::BeginDisabled(!morphParamsFull);
             ImGui::PushItemWidth(ImGui::GetContentRegionAvail().x * 0.55f);
             if (ImGui::SliderInt("Stiffness steps",     &morph.nricpStiffnessSteps, 1, 10))      paramEdited = true;
             if (ImGui::SliderFloat("Stiffness (start)", &morph.nricpAlphaInitial,   1.0f, 500.0f, "%.1f")) paramEdited = true;
@@ -1273,13 +1328,11 @@ void StageSidebar::RenderMorph(Project& project, bool processing, float progress
                                  &morph.nricpBoundaryExclusionHops, 0, 10)) paramEdited = true;
             ImGui::EndDisabled();
             ImGui::PopItemWidth();
-            ImGui::EndDisabled();  // morphParamsFull guard
         }
 
         // ---- Advanced (Story 5.1 — three sub-sections, default closed) -
         if (DrawCollapsibleSection("morph.advanced", "Advanced",
                                    /*defaultExpanded=*/false)) {
-            ImGui::BeginDisabled(!morphParamsFull);
             // Optimization sub-section
             I::DrawSubSectionLabel("OPTIMIZATION");
             ImGui::PushItemWidth(ImGui::GetContentRegionAvail().x * 0.55f);
@@ -1303,7 +1356,14 @@ void StageSidebar::RenderMorph(Project& project, bool processing, float progress
             if (ImGui::SliderFloat("Control density (end)",   &morph.nricpSamplingFinal,   0.0f, 1.0f, "%.3f")) paramEdited = true;
             if (ImGui::Checkbox("Normalize sampling",         &morph.nricpNormalizeSampling)) paramEdited = true;
             ImGui::PopItemWidth();
-            ImGui::EndDisabled();  // morphParamsFull guard
+        }
+
+        ImGui::EndDisabled();  // morphParamsFull guard around both collapsibles
+
+        if (!morphParamsFull) {
+            ImGui::Dummy(ImVec2(0.0f, 8.0f));
+            ui::DrawUpgradeButton(morphParamsCopy);
+            ui::EndGatedSectionHover(morphParamsScope);
         }
 
         // ---- Reset to Defaults (Story 5.1 — relocated outside Advanced) -
@@ -1470,7 +1530,16 @@ void StageSidebar::RenderTouchUp(Project& project, Actions& out) {
         }
 
         // ---- BRUSHES — 2×2 card grid ----------------------------------
-        I::DrawSectionLabel("BRUSHES");
+        // Sprint 7 round-7 -- the per-brush card stays the hover surface
+        // for each individual brush (each one carries its own preview
+        // image), but the whole brush section gets ONE Upgrade CTA below
+        // covering the tier delta (Free->Indie+ or Indie->Pro). Section
+        // label is zap-marked when the active tier doesn't get the Full
+        // toolset.
+        const bool brushesFullyUnlocked =
+            (MetaVisage::LicenseManager::Instance().GetTouchUpToolset() ==
+                FeatureFlags::TouchUpToolset::Full);
+        I::DrawSectionLabel("BRUSHES", /*gated=*/!brushesFullyUnlocked);
 
         struct BrushDef {
             BrushType   kind;
@@ -1573,6 +1642,37 @@ void StageSidebar::RenderTouchUp(Project& project, Actions& out) {
                 }
             }
             ImGui::EndTable();
+        }
+
+        // Single Upgrade CTA below the brush grid -- Stage 4's exception
+        // to the per-setting rule. Tier and copy depend on which brushes
+        // are gated:
+        //   Free  (BasicSmooth) -- 3 of 4 brushes locked, target Indie+
+        //   Indie (Basic)       -- 2 of 4 brushes locked, target Pro
+        if (!brushesFullyUnlocked) {
+            ui::UpgradePromptCopy brushesCopy;
+            brushesCopy.feature = "Touch Up brushes";
+            if (touchUpToolset == FeatureFlags::TouchUpToolset::BasicSmooth) {
+                brushesCopy.minimumTier  = "Indie";
+                brushesCopy.description  =
+                    "Grab unlocks at Indie; Push/Pull and Inflate at Pro. Drag, "
+                    "displace along normals, and add volume to your wrapped "
+                    "MetaHuman head for organic touch-up passes.";
+                brushesCopy.featureGlyph = MV_ICON_HAND;
+                brushesCopy.heroImage    =
+                    MvStyle::UpgradePreviewTex(MvStyle::UpgradePreview::BrushGrab);
+            } else {
+                brushesCopy.minimumTier  = "Pro";
+                brushesCopy.description  =
+                    "Push/Pull and Inflate unlock at Pro -- displace along "
+                    "surface normals and add volume to specific regions for "
+                    "the finer touch-up passes.";
+                brushesCopy.featureGlyph = MV_ICON_MOVE_VERTICAL;
+                brushesCopy.heroImage    =
+                    MvStyle::UpgradePreviewTex(MvStyle::UpgradePreview::BrushPushPull);
+            }
+            ImGui::Dummy(ImVec2(0.0f, 8.0f));
+            ui::DrawUpgradeButton(brushesCopy);
         }
 
         // ---- SETTINGS — brush radius / strength / falloff -------------

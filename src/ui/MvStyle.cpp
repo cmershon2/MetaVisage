@@ -177,6 +177,7 @@ void LoadFonts() {
     Font.Body    = TryLoadFont(atlas, fontDir / "Inter_18pt-Regular.ttf",  TypeSize::Body);
     Font.BodySm  = TryLoadFont(atlas, fontDir / "Inter_18pt-Regular.ttf",  TypeSize::BodySm);
     Font.BodyMd  = TryLoadFont(atlas, fontDir / "Inter_18pt-Medium.ttf",   TypeSize::Body);
+    Font.BodyLg  = TryLoadFont(atlas, fontDir / "Inter_18pt-Medium.ttf",   TypeSize::BodyLg);
     Font.Heading = TryLoadFont(atlas, fontDir / "Inter_24pt-SemiBold.ttf", TypeSize::Heading);
 
     // Saira ExtraBold Italic — bold display headings only. The wordmark is
@@ -186,6 +187,7 @@ void LoadFonts() {
 
     // JetBrains Mono — technical readouts (vert counts, hotkey strips,
     // section eyebrows, status bar fields).
+    Font.MonoMd = TryLoadFont(atlas, fontDir / "JetBrainsMono-Medium.ttf",  TypeSize::MonoMd);
     Font.Mono   = TryLoadFont(atlas, fontDir / "JetBrainsMono-Regular.ttf", TypeSize::Mono);
     Font.MonoSm = TryLoadFont(atlas, fontDir / "JetBrainsMono-Medium.ttf",  TypeSize::MonoSm);
 

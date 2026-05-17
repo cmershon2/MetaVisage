@@ -76,8 +76,10 @@ namespace TypeSize {
     inline constexpr float DisplayLg = 32.0f;  // welcome / login hero
     inline constexpr float Display   = 28.0f;  // stage header
     inline constexpr float Heading   = 20.0f;  // section H4
+    inline constexpr float BodyLg    = 16.0f;  // stepper stage titles, prominent labels
     inline constexpr float Body      = 14.0f;  // labels, buttons, body
     inline constexpr float BodySm    = 13.0f;  // hint text, descriptions
+    inline constexpr float MonoMd    = 13.0f;  // stepper stage numbers (disc-sized mono)
     inline constexpr float Mono      = 11.0f;  // technical readouts, hotkey strips
     inline constexpr float MonoSm    = 10.0f;  // section labels, eyebrows
 }
@@ -91,9 +93,11 @@ struct FontHandles {
     ImFont* DisplayLg = nullptr;  // Saira ExtraBoldItalic        32 px
     ImFont* Display   = nullptr;  // Saira ExtraBoldItalic        28 px
     ImFont* Heading   = nullptr;  // Inter_24pt SemiBold           20 px
+    ImFont* BodyLg    = nullptr;  // Inter_18pt Medium             16 px
     ImFont* Body      = nullptr;  // Inter_18pt Regular            14 px  (also io.FontDefault)
     ImFont* BodyMd    = nullptr;  // Inter_18pt Medium             14 px
     ImFont* BodySm    = nullptr;  // Inter_18pt Regular            13 px
+    ImFont* MonoMd    = nullptr;  // JetBrainsMono Medium          13 px
     ImFont* Mono      = nullptr;  // JetBrainsMono Regular         11 px
     ImFont* MonoSm    = nullptr;  // JetBrainsMono Medium          10 px
     ImFont* Icon      = nullptr;  // lucide.ttf                    16 px  (Story 3.8.5)

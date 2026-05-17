@@ -7,28 +7,20 @@
 
 namespace MetaVisage::ui {
 
-// Sprint 7 Story 7.3 -- reusable Premium Feature callout for tier-gated UI.
+// Sprint 7 Story 7.3 (round-7 redesign) -- premium-feature gating widgets.
 //
-// Two variants share the same copy struct so a tier-rename (Indie -> Studio,
-// etc.) is a single-line change at the call site:
+// The gated-section pattern (see Begin/EndGatedSectionHover + DrawUpgrade
+// Button below) greys out a sidebar section, marks its title with a zap
+// glyph, and renders an amber Upgrade CTA below the disabled content;
+// hovering anywhere in the section's vertical range opens a rich side-
+// panel card with the feature's hero image + description + tier pill.
 //
-//   DrawUpgradePrompt          -- rounded amber callout rendered inline in
-//                                 a sidebar section after a hidden / disabled
-//                                 control. Visual matches the Starlight
-//                                 "Caution" aside (rounded box, amber border,
-//                                 icon + title row, body text, upgrade link).
-//   DrawUpgradePromptTooltip   -- richer hover card variant; called
-//                                 immediately after a disabled ImGui
-//                                 control. Internally checks IsItemHovered
-//                                 with the AllowWhenDisabled flag so it
-//                                 works through BeginDisabled scopes.
-//                                 Renders a side-popup with a large icon
-//                                 header + feature name + description.
+// DrawUpgradePromptTooltip remains as a disabled-control hover variant
+// for Stage 4 brush cards, where each card carries its own per-brush
+// preview.
 //
-// Both variants are themed amber (MvStyle::MvWarning) with the Lucide zap
-// glyph (MV_ICON_ZAP) marking the call-out as a premium-feature gate. A
-// clickable "Upgrade -> metavisage.io" link opens the public pricing page
-// in the system browser.
+// Both surfaces are themed amber (MvStyle::MvWarning) with the Lucide
+// zap glyph (MV_ICON_ZAP) as the brand-consistent gate indicator.
 
 struct UpgradePromptCopy {
     std::string_view feature;        // e.g. "Vertex masking", "Custom MetaHuman head upload"
@@ -48,7 +40,38 @@ struct UpgradePromptCopy {
     ImTextureID heroImage = 0;
 };
 
-void DrawUpgradePrompt(const UpgradePromptCopy& copy);
+// Sprint 7 round-7 -- gated-section pattern (replaces the inline amber
+// pill). Caller layout, in order:
+//   1. MvInspector::DrawSectionLabel(title, /*gated=*/true)  -- zap-marked title
+//   2. auto scope = ui::BeginGatedSectionHover(copy);
+//      ImGui::BeginDisabled(true);
+//      ... render the section's gated content (collapsibles + sliders + etc) ...
+//      ImGui::EndDisabled();
+//   3. ui::DrawUpgradeButton(copy);  -- full-width amber CTA
+//   4. ui::EndGatedSectionHover(scope);  -- tests hover across the captured rect
+//
+// The hover-scope captures the section's vertical range, so anywhere in
+// the gated block (label-to-button) shows the rich hover-card on
+// hover. The card content comes from copy; the card itself opens to the
+// LEFT of the sidebar.
+
+struct GatedSectionScope {
+    float topY = 0.0f;
+    float sidebarLeftX = 0.0f;
+    UpgradePromptCopy copy;
+    bool active = false;
+};
+
+GatedSectionScope BeginGatedSectionHover(const UpgradePromptCopy& copy);
+void EndGatedSectionHover(const GatedSectionScope& scope);
+
+// Full-width amber rounded button with the zap glyph trailing on the
+// right (inset darker amber square). Click opens the pricing page.
+// Visually matches the Sprint 7 round-7 mockup.
+void DrawUpgradeButton(const UpgradePromptCopy& copy);
+
+// Disabled-control tooltip variant -- still used by Stage 4 brush cards
+// where each disabled brush gets its own hover card.
 void DrawUpgradePromptTooltip(const UpgradePromptCopy& copy);
 
 }  // namespace MetaVisage::ui
