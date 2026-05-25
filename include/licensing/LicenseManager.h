@@ -4,10 +4,12 @@
 #include <atomic>
 #include <chrono>
 #include <condition_variable>
+#include <deque>
 #include <mutex>
 #include <optional>
 #include <string>
 #include <thread>
+#include <vector>
 
 namespace MetaVisage {
 
@@ -23,10 +25,32 @@ namespace MetaVisage {
 //   6.5  7-day offline grace using the cached JWT
 //   6.6  SignOut clears caches and returns to Unauthenticated
 //
-// Per CLAUDE.md per-frame state model: AppWindow + LoginScreen poll
+// Per AGENTS.md per-frame state model: AppWindow + LoginScreen poll
 // GetState() each frame; transitions are pushed by the network/IPC
 // layers, never by the UI.
 //
+// Sprint 7 Story 7.1 -- tier-derived feature flags parsed from the license
+// JWT payload. Matches the contract documented in
+// .agents/context/DESKTOP_APP_INTEGRATION.md (Free / Indie / Pro).
+//
+// Defaulting policy: every field starts at the most-restrictive value so a
+// Free-shaped (or bug-shaped, missing-field) JWT can never grant accidental
+// upgrades. Initialize / SignOut / DrainPendingExchange / DrainPendingRefresh
+// must keep this struct symmetric with the rest of the claim fields.
+struct FeatureFlags {
+    enum class TextureTransfer { None, Albedo, AlbedoNormal };
+    enum class MorphingParameters { Presets, Full };
+    enum class TouchUpToolset { BasicSmooth, Basic, Full };
+
+    int                 conversionsLimit       = 0;                       // mirror of conversionsLimit_; single field on the JWT
+    bool                customHeadUpload       = false;
+    TextureTransfer     textureTransfer        = TextureTransfer::None;
+    MorphingParameters  morphingParameters     = MorphingParameters::Presets;
+    bool                masking                = false;
+    TouchUpToolset      touchUpToolset         = TouchUpToolset::BasicSmooth;
+    bool                batchProcessing        = false;                   // Studio-tier reservation -- always false today
+};
+
 // Singleton via Meyer's pattern -- matches Logger + Config.
 class LicenseManager {
 public:
@@ -94,6 +118,54 @@ public:
     // refresh-token-invalid 401 (-> Unauthenticated, force re-auth).
     void DrainPendingRefresh();
 
+    // Story 7.2 -- POST /api/license/conversion after a successful export.
+    // Spawns a fire-and-forget worker thread (mirrors the StartExchange +
+    // DrainPendingExchange pattern). On transport failure after the retry
+    // budget the timestamp is appended to the offline queue so the user's
+    // export is never blocked by a network blip. Caller is AppWindow::DoExport;
+    // the pre-check that the user is not already over their effective limit
+    // lives in the export action path.
+    void ReportConversion();
+
+    // Story 7.2 -- main-thread drain for ReportConversion's worker.
+    // 200 silently updates conversionsUsed_/Limit_/ResetAt_ from the
+    // server response (not from a local increment). 403 limit_reached
+    // sets the limit-reached notice; AppWindow polls
+    // ConsumeConversionLimitNotice() each frame to surface the block
+    // modal. 429/5xx after retry exhaustion enqueues the timestamp.
+    void DrainPendingConversion();
+
+    // Story 7.2 -- drain the offline conversion queue oldest-first via
+    // sequential POSTs. Called from DrainPendingRefresh on
+    // RefreshOutcome::Success so the queue reliably catches up after a
+    // reconnection. No-op when the queue is empty.
+    void FlushConversionQueue();
+
+    // Story 7.2 -- AppWindow polls each frame; non-empty optional means
+    // the most recent ReportConversion came back 403 limit_reached and
+    // the user-facing block modal should open. The optional carries the
+    // limit + reset date snapshot at notice-time. Single-shot per
+    // ReportConversion call.
+    struct ConversionLimitNotice {
+        int limit = 0;
+        std::string resetAtIso;
+    };
+    std::optional<ConversionLimitNotice> ConsumeConversionLimitNotice();
+
+    // Story 7.2 -- count of conversions queued for offline-sync. UI
+    // surfaces this as "N pending sync" or folds it into the effective
+    // used count so the user sees their export reflected immediately
+    // even when the device is offline. Thread-safe read.
+    int GetPendingConversionCount() const;
+
+    // Effective conversion count (in-memory used + locally-queued
+    // pending) for UI display. The server-side used count won't reflect
+    // queued conversions until the next FlushConversionQueue lands, so
+    // this is the read that should drive any "N / Limit" UI.
+    int GetEffectiveConversionsUsed() const {
+        return GetConversionsUsed() + GetPendingConversionCount();
+    }
+
     // Story 6.6 read accessors -- populated by ApplyAuthSuccess /
     // DrainPendingRefresh / cached-JWT bootstrap. Empty / zero values
     // before the first successful exchange.
@@ -103,6 +175,17 @@ public:
     std::string GetConversionsResetAt() const;
     std::string GetUserEmail() const;
     std::string GetLicenseKey() const;
+
+    // Story 7.1 -- typed feature-flag accessors. The full struct accessor
+    // is for sites that need multiple fields at once (License Status modal);
+    // the per-field helpers keep gate sites in StageSidebar / ToolRail
+    // readable.
+    const FeatureFlags& GetFeatureFlags() const { return featureFlags_; }
+    bool                            CanUploadCustomHead()         const { return featureFlags_.customHeadUpload; }
+    FeatureFlags::TextureTransfer    GetTextureTransferMode()      const { return featureFlags_.textureTransfer; }
+    FeatureFlags::MorphingParameters GetMorphingParametersMode()   const { return featureFlags_.morphingParameters; }
+    bool                            CanUseMasking()               const { return featureFlags_.masking; }
+    FeatureFlags::TouchUpToolset    GetTouchUpToolset()           const { return featureFlags_.touchUpToolset; }
 
     // Wall-clock time of the last successful exchange or refresh. nullopt
     // before the first sync this session. Drives the "Last sync ..."
@@ -149,6 +232,12 @@ public:
     // Production code never calls this.
     void SetTestState(AuthState forced);
 
+    // Test-only: inject a feature-flag fixture so smoke_ui scenarios can
+    // exercise Free / Indie / Pro gating paths without standing up a real
+    // RS256-signed JWT. Has no effect unless test mode has been enabled
+    // via SetTestState first; production code never calls this.
+    void SetTestFeatureFlags(const FeatureFlags& flags);
+
 private:
     LicenseManager();
     ~LicenseManager();
@@ -169,6 +258,18 @@ private:
     void SetLastError(std::string message);       // any thread (mutex'd)
     static constexpr int kExchangeMaxAttempts = 4;
     static constexpr int kExchangeBudgetSeconds = 30;
+
+    // Story 7.2 helpers + retry budget. Mirrors the exchange shape so a
+    // future review that retunes one budget can retune both.
+    void StartConversionWorker(std::vector<std::chrono::system_clock::time_point> batch);
+    void EnqueueConversion(std::chrono::system_clock::time_point timestamp);
+    void RemoveCompletedConversions(
+        const std::vector<std::chrono::system_clock::time_point>& completed);
+    void LoadConversionQueue();
+    void PersistConversionQueue() const;
+    static constexpr int    kConversionMaxAttempts  = 4;
+    static constexpr int    kConversionBudgetSeconds = 30;
+    static constexpr size_t kConversionQueueCap      = 100;
 
     // Story 6.4 helpers -- 24h refresh thread.
     void StartRefreshThread();   // launched once when entering Authenticated
@@ -238,6 +339,12 @@ private:
     int conversionsLimit_ = 0;
     std::string conversionsResetAt_;
 
+    // Story 7.1 -- tier-derived feature flags parsed from the JWT payload.
+    // Symmetric with the other claim fields above (reset by SignOut, written
+    // by LoadClaimsFromJwt). Restrictive defaults so missing-field JWTs
+    // can never grant accidental upgrades.
+    FeatureFlags featureFlags_;
+
     // Last successful sync (exchange or refresh). Used by the License
     // Status dialog's "Last sync ..." line.
     std::optional<std::chrono::system_clock::time_point> lastSyncedAt_;
@@ -272,6 +379,39 @@ private:
     bool refreshFireImmediate_ = false;  // guarded by refreshCvMutex_
     std::mutex refreshResultMutex_;
     std::optional<RefreshResult> pendingRefreshResult_;
+
+    // Story 7.2 -- conversion-report worker + offline queue. The worker
+    // runs the POST + retry loop; on transport failure it appends to the
+    // queue. FlushConversionQueue is called from DrainPendingRefresh on
+    // success and runs the same worker path against batched timestamps.
+    struct ConversionResult {
+        bool ok = false;
+        int httpStatus = 0;
+        bool limitReached = false;
+        int conversionsUsed = 0;
+        int conversionsLimit = 0;
+        std::string conversionsResetAt;
+        std::string errorMessage;
+        // Timestamps confirmed by the server. They stay durable in
+        // conversionQueue_ while the worker is in flight, then drain removes
+        // only these confirmed entries.
+        std::vector<std::chrono::system_clock::time_point> completed;
+        // Timestamps left unconfirmed when the worker bailed early (e.g.
+        // mid-batch transient failure). They already remain in
+        // conversionQueue_, so drain only uses this for logging and follow-up
+        // retry decisions.
+        std::vector<std::chrono::system_clock::time_point> remaining;
+    };
+    std::thread conversionThread_;
+    std::atomic<bool> conversionRunning_{false};
+    std::atomic<bool> conversionFinished_{false};
+    std::atomic<bool> shuttingDown_{false};
+    std::mutex conversionResultMutex_;
+    ConversionResult conversionResult_;
+    std::mutex conversionQueueMutex_;
+    std::deque<std::chrono::system_clock::time_point> conversionQueue_;
+    std::mutex conversionLimitNoticeMutex_;
+    std::optional<ConversionLimitNotice> conversionLimitNotice_;
 };
 
 }  // namespace MetaVisage

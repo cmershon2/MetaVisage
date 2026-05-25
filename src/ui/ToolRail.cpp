@@ -1,7 +1,9 @@
 #include "ui/ToolRail.h"
 
+#include "licensing/LicenseManager.h"
 #include "ui/MvIcons.h"
 #include "ui/MvStyle.h"
+#include "ui/UpgradePromptWidget.h"
 #include "ui/Viewport.h"
 #include "core/Project.h"
 #include "core/Types.h"
@@ -10,6 +12,7 @@
 
 #include <cstdio>
 #include <iterator>
+#include <string_view>
 
 namespace MetaVisage::ToolRail {
 
@@ -22,6 +25,23 @@ namespace MetaVisage::ToolRail {
 namespace {
 
 ImU32 Col(const ImVec4& v) { return ImGui::ColorConvertFloat4ToU32(v); }
+
+ImVec4 WithAlpha(const ImVec4& c, float a) {
+    return ImVec4(c.x, c.y, c.z, a);
+}
+
+void DrawDiagonalHatch(ImDrawList* dl,
+                       ImVec2 min,
+                       ImVec2 max,
+                       ImU32 color,
+                       float spacing = 7.0f) {
+    const float h = max.y - min.y;
+    dl->PushClipRect(min, max, true);
+    for (float x = min.x - h; x < max.x + h; x += spacing) {
+        dl->AddLine(ImVec2(x, max.y), ImVec2(x + h, min.y), color, 1.0f);
+    }
+    dl->PopClipRect();
+}
 
 // -----------------------------------------------------------------------------
 // Tool descriptors
@@ -73,10 +93,11 @@ constexpr float kButtonGap  = 4.0f;
 // rectangle to a blue border ring — the PNG mesh+arrow shouldn't fight
 // an MvBlue500 overlay (the arrow itself is MvBlue500 and would
 // disappear into a flat-blue button bg). Used by the Stage 4 brush
-// rail to mirror the brush-preview thumbnails from the sidebar cards.
+// rail to mirror the brush-preview assets used elsewhere in Touch Up.
 bool RenderToolButton(ImDrawList* dl, ImVec2 railOrigin, float yPos,
                       const Tool& tool, bool active, bool stub,
-                      ImTextureID previewTex = 0) {
+                      ImTextureID previewTex = 0,
+                      bool paidLock = false) {
     const float xPad = (WidthPx - kButtonSize) * 0.5f;
     ImGui::SetCursorPos(ImVec2(xPad, yPos));
     const ImVec2 btnMin = ImGui::GetCursorScreenPos();
@@ -86,10 +107,21 @@ bool RenderToolButton(ImDrawList* dl, ImVec2 railOrigin, float yPos,
     ImGui::BeginDisabled(stub);
     const bool clicked = ImGui::InvisibleButton("##tool", ImVec2(kButtonSize, kButtonSize));
     ImGui::EndDisabled();
-    const bool hovered = ImGui::IsItemHovered();
+    const bool hovered = ImGui::IsItemHovered(stub
+        ? ImGuiHoveredFlags_AllowWhenDisabled
+        : ImGuiHoveredFlags_None);
     ImGui::PopID();
 
-    if (active) {
+    if (stub && paidLock) {
+        dl->AddRectFilled(btnMin, btnMax, Col(hovered ? MvStyle::MvBg2
+                                                       : MvStyle::MvBg1), 6.0f);
+        DrawDiagonalHatch(dl, btnMin, btnMax,
+                          Col(WithAlpha(MvStyle::MvLine2,
+                                        hovered ? 0.45f : 0.28f)));
+        dl->AddRect(btnMin, btnMax,
+                    Col(hovered ? MvStyle::MvBlue500 : MvStyle::MvLine2),
+                    6.0f, 0, hovered ? 1.2f : 1.0f);
+    } else if (active) {
         if (previewTex) {
             // Border-ring active treatment for preview buttons — keeps
             // the PNG legible against the rail's normal MvBg2 fill while
@@ -123,6 +155,11 @@ bool RenderToolButton(ImDrawList* dl, ImVec2 railOrigin, float yPos,
         const ImU32 tint = stub ? IM_COL32(255, 255, 255, 128) : IM_COL32_WHITE;
         dl->AddImage(previewTex, imgMin, imgMax,
                      ImVec2(0, 0), ImVec2(1, 1), tint);
+        if (stub && paidLock) {
+            DrawDiagonalHatch(dl, btnMin, btnMax,
+                              Col(WithAlpha(MvStyle::MvLine2,
+                                            hovered ? 0.45f : 0.28f)));
+        }
     } else if (tool.glyph && MvStyle::Font.Icon) {
         // Draw the Lucide glyph centred in the button. The font is
         // baked at 16 px (MvStyle::TypeSize::* — see MvStyle.cpp);
@@ -160,6 +197,16 @@ bool RenderToolButton(ImDrawList* dl, ImVec2 railOrigin, float yPos,
                                (badgeMin.y + badgeMax.y - ts.y) * 0.5f),
                         Col(MvStyle::MvFg3), tool.hotkey);
         }
+    }
+
+    if (stub && paidLock && MvStyle::Font.IconSm) {
+        ImFont* icon = MvStyle::Font.IconSm;
+        constexpr float LockSize = 12.0f;
+        const ImVec2 ts = icon->CalcTextSizeA(LockSize, FLT_MAX, 0.0f, MV_ICON_LOCK);
+        dl->AddText(icon, LockSize,
+                    ImVec2(btnMax.x - ts.x - 3.0f, btnMin.y + 3.0f),
+                    Col(MvStyle::MvFg4),
+                    MV_ICON_LOCK);
     }
 
     if (hovered && !stub) {
@@ -224,6 +271,38 @@ Result Render(WorkflowStage stage, Project* project, Viewport* viewport,
     const Tool* tools     = isStage1 ? kStage1Tools : kStage4Tools;
     const int   toolCount = isStage1 ? 3            : 4;
 
+    // Story 7.1 gate -- Stage 4 touchup_tools tier mapping. Mirrors the
+    // gating in StageSidebar's brush-card grid; both surfaces must be
+    // gated together (architect audit observation).
+    const auto touchUpToolset =
+        MetaVisage::LicenseManager::Instance().GetTouchUpToolset();
+    auto isBrushAllowed = [&](BrushType b) {
+        switch (touchUpToolset) {
+            case FeatureFlags::TouchUpToolset::Full:
+                return true;
+            case FeatureFlags::TouchUpToolset::Basic:
+                return b == BrushType::Smooth || b == BrushType::Grab;
+            case FeatureFlags::TouchUpToolset::BasicSmooth:
+            default:
+                return b == BrushType::Smooth;
+        }
+    };
+    auto brushUpgradeTier = [](BrushType b) -> std::string_view {
+        return b == BrushType::Grab ? "Indie" : "Pro";
+    };
+    auto brushDescription = [](BrushType b) -> const char* {
+        switch (b) {
+            case BrushType::Grab:
+                return "Drag the surface with the cursor for free-form touch-up passes.";
+            case BrushType::PushPull:
+                return "Push or pull vertices along the surface normal.";
+            case BrushType::Inflate:
+                return "Expand vertices radially to add volume without rebuilding the morph.";
+            default:
+                return "Sculpting brush for the Touch Up stage.";
+        }
+    };
+
     constexpr float HeaderHeight = 32.0f; // eyebrow + breathing room
     float y = HeaderHeight;
     for (int i = 0; i < toolCount; ++i) {
@@ -238,8 +317,16 @@ Result Render(WorkflowStage stage, Project* project, Viewport* viewport,
             previewTex = (ImTextureID)(intptr_t)
                          MvStyle::Asset.BrushPreviewTextureIds[i];
         }
+        // Story 7.1 -- gate-disabled Stage 4 brushes render via the
+        // existing `stub=true` path so they look like the Stage 1
+        // "coming soon" tools. Stage 1 transform tools are always
+        // enabled (no tier gating).
+        const bool gated = isStage4 &&
+            !isBrushAllowed(static_cast<BrushType>(tools[i].kind));
         if (RenderToolButton(dl, origin, y, tools[i], active,
-                             /*stub=*/false, previewTex) && viewport) {
+                             /*stub=*/gated, previewTex,
+                             /*paidLock=*/gated)
+            && viewport && !gated) {
             if (isStage1) {
                 viewport->SetTransformMode(static_cast<TransformMode>(tools[i].kind));
             } else {
@@ -247,6 +334,16 @@ Result Render(WorkflowStage stage, Project* project, Viewport* viewport,
                 viewport->SetBrushType(kind);
                 if (project) project->GetSculptState().activeBrush = kind;
             }
+        }
+        if (gated) {
+            const auto kind = static_cast<BrushType>(tools[i].kind);
+            ui::DrawUpgradePromptTooltip({
+                tools[i].tooltip,
+                brushUpgradeTier(kind),
+                brushDescription(kind),
+                tools[i].glyph,
+                ui::UpgradePromptKind::Brush,
+            });
         }
         y += kButtonSize + kButtonGap;
     }

@@ -999,79 +999,322 @@ void LicenseStatusPill(const LicenseManager& lm) {
 
 void LicenseModalState::Open() { pendingOpen = true; }
 
+// Format a "Last sync: X" descriptor from a steady time-point. The token
+// rolls between "just now" / "Xm ago" / "Xh ago" / "Xd ago" / the raw
+// epoch date once we cross a day. Nullopt -> "never".
+namespace {
+std::string LastSyncedLabel(
+        const std::optional<std::chrono::system_clock::time_point>& tp) {
+    if (!tp) return "never";
+    const auto now = std::chrono::system_clock::now();
+    if (*tp > now) return "just now";
+    const auto delta = now - *tp;
+    const auto secs = std::chrono::duration_cast<std::chrono::seconds>(delta).count();
+    if (secs < 45)              return "just now";
+    if (secs < 60 * 90)         return std::format("{}m ago", secs / 60);
+    if (secs < 60 * 60 * 36)    return std::format("{}h ago", secs / 3600);
+    return std::format("{}d ago", secs / (3600 * 24));
+}
+
+// Tier badge colour. Free is muted; Indie is brand-blue; Pro is amber
+// so users on Pro feel the boost.
+ImVec4 TierBadgeColor(const std::string& tier) {
+    if (tier == "pro")   return MvStyle::MvWarning;
+    if (tier == "indie") return MvStyle::MvBlue500;
+    return MvStyle::MvFg3;
+}
+}  // namespace
+
 void RenderLicenseModal(LicenseModalState& state) {
     HandlePendingOpen("Account & License", state.pendingOpen);
 
+    constexpr float kModalW = 560.0f;
+    constexpr float kModalH = 560.0f;
+
     const auto center = ImGui::GetMainViewport()->GetCenter();
     ImGui::SetNextWindowPos(center, ImGuiCond_Appearing, ImVec2(0.5f, 0.5f));
-    ImGui::SetNextWindowSize(ImVec2(520, 420), ImGuiCond_Appearing);
+    ImGui::SetNextWindowSize(ImVec2(kModalW, kModalH), ImGuiCond_Appearing);
+
+    // Tighter padding around content so the header / footer band can
+    // span edge-to-edge without fighting popup's default 8 px frame.
+    ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding, ImVec2(0.0f, 0.0f));
 
     if (ImGui::BeginPopupModal("Account & License", nullptr,
-                               ImGuiWindowFlags_NoSavedSettings)) {
+                               ImGuiWindowFlags_NoSavedSettings |
+                               ImGuiWindowFlags_NoResize |
+                               ImGuiWindowFlags_NoTitleBar)) {
+        // The popup's native title bar is suppressed -- the custom header
+        // band below carries the title + X close button. Without the flag
+        // ImGui drew a redundant default title bar above our band.
+        ImGui::PopStyleVar();  // pop the modal-frame padding override
+
         const auto& lm = LicenseManager::Instance();
+        const std::string tierLower = lm.GetTier();
+        const std::string tierUpper = [&]() {
+            std::string s = tierLower;
+            for (auto& c : s) c = static_cast<char>(
+                std::toupper(static_cast<unsigned char>(c)));
+            return s;
+        }();
 
-        // ---- Account ---------------------------------------------------
-        ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(0.8f, 0.85f, 1.0f, 1.0f));
-        ImGui::TextUnformatted("ACCOUNT");
-        ImGui::PopStyleColor();
-        ImGui::Separator();
-        LicenseRow("EMAIL", lm.GetUserEmail());
-        ImGui::Spacing();
-        ImGui::Spacing();
+        constexpr float kHeaderH = 56.0f;
+        constexpr float kFooterH = 64.0f;
+        constexpr float kSidePad = 24.0f;
 
-        // ---- License ---------------------------------------------------
-        ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(0.8f, 0.85f, 1.0f, 1.0f));
-        ImGui::TextUnformatted("LICENSE");
-        ImGui::PopStyleColor();
-        ImGui::Separator();
-        LicenseRow("TIER", Capitalize(lm.GetTier()));
-        LicenseStatusPill(lm);
-        ImGui::Spacing();
-        ImGui::Spacing();
-
-        // ---- Usage -----------------------------------------------------
-        ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(0.8f, 0.85f, 1.0f, 1.0f));
-        ImGui::TextUnformatted("USAGE THIS MONTH");
-        ImGui::PopStyleColor();
-        ImGui::Separator();
-        const int used = lm.GetConversionsUsed();
-        const int limit = lm.GetConversionsLimit();
-        std::string usage;
-        if (limit > 0) {
-            usage = std::format("{} / {} conversions", used, limit);
-        } else {
-            usage = std::format("{} conversions", used);
+        // ---- Header band -----------------------------------------------
+        const ImVec2 hdrMin = ImGui::GetCursorScreenPos();
+        const ImVec2 hdrMax(hdrMin.x + kModalW, hdrMin.y + kHeaderH);
+        ImDrawList* dl = ImGui::GetWindowDrawList();
+        dl->AddRectFilled(hdrMin, hdrMax, ImGui::ColorConvertFloat4ToU32(MvStyle::MvBg2));
+        // Sparkle glyph on the left
+        if (MvStyle::Font.Icon) {
+            dl->AddText(MvStyle::Font.Icon, 20.0f,
+                        ImVec2(hdrMin.x + kSidePad,
+                               hdrMin.y + (kHeaderH - 20.0f) * 0.5f),
+                        ImGui::ColorConvertFloat4ToU32(MvStyle::MvBlue400),
+                        MV_ICON_SPARKLES);
         }
-        LicenseRow("USED", usage);
-        LicenseRow("RESETS", lm.GetConversionsResetAt());
-        ImGui::Spacing();
-        ImGui::Spacing();
-
-        // ---- Footer ----------------------------------------------------
-        ImGui::Spacing();
-        ImGui::Separator();
-        ImGui::Spacing();
-
-        if (ImGui::Button("Manage Subscription", ImVec2(180, 0))) {
-            state.manageSubscriptionRequested = true;
+        // Title to the right of the glyph
+        {
+            MvStyle::ScopedFont f(MvStyle::Font.Heading);
+            const ImVec2 ts = ImGui::CalcTextSize("Account & License");
+            ImGui::SetCursorScreenPos(ImVec2(hdrMin.x + kSidePad + 32.0f,
+                                             hdrMin.y + (kHeaderH - ts.y) * 0.5f));
+            ImGui::PushStyleColor(ImGuiCol_Text, MvStyle::MvFg1);
+            ImGui::TextUnformatted("Account & License");
+            ImGui::PopStyleColor();
         }
-        ImGui::SameLine();
-        ImGui::PushStyleColor(ImGuiCol_Button,        MvStyle::MvWarning);
-        ImGui::PushStyleColor(ImGuiCol_ButtonHovered, MvStyle::MvWarning);
-        if (ImGui::Button("Sign Out", ImVec2(120, 0))) {
+        // Right-aligned X close button
+        {
+            constexpr float kBtnSize = 28.0f;
+            ImGui::SetCursorScreenPos(ImVec2(hdrMin.x + kModalW - kBtnSize - 14.0f,
+                                             hdrMin.y + (kHeaderH - kBtnSize) * 0.5f));
+            ImGui::PushStyleColor(ImGuiCol_Button,        ImVec4(0, 0, 0, 0));
+            ImGui::PushStyleColor(ImGuiCol_ButtonHovered, MvStyle::MvBg3);
+            ImGui::PushStyleColor(ImGuiCol_ButtonActive,  MvStyle::MvBg4);
+            // The button payload itself is the glyph rendered via custom draw
+            // because the Lucide font isn't the default button font.
+            if (ImGui::Button("##xclose", ImVec2(kBtnSize, kBtnSize))) {
+                ImGui::CloseCurrentPopup();
+            }
+            ImGui::PopStyleColor(3);
+            const ImVec2 btnMin = ImGui::GetItemRectMin();
+            const ImVec2 btnMax = ImGui::GetItemRectMax();
+            if (MvStyle::Font.IconSm) {
+                const float gs = 14.0f;
+                dl->AddText(MvStyle::Font.IconSm, gs,
+                            ImVec2(btnMin.x + (kBtnSize - gs) * 0.5f,
+                                   btnMin.y + (kBtnSize - gs) * 0.5f),
+                            ImGui::ColorConvertFloat4ToU32(MvStyle::MvFg2),
+                            MV_ICON_X);
+            }
+            (void)btnMax;
+        }
+        // Bottom hairline below the header band
+        dl->AddLine(ImVec2(hdrMin.x, hdrMax.y - 1.0f),
+                    ImVec2(hdrMax.x, hdrMax.y - 1.0f),
+                    ImGui::ColorConvertFloat4ToU32(MvStyle::MvLine2));
+
+        // Move the layout cursor past the header.
+        ImGui::SetCursorScreenPos(ImVec2(hdrMin.x, hdrMax.y));
+
+        // ---- Scrollable body -------------------------------------------
+        const float bodyH = kModalH - kHeaderH - kFooterH;
+        if (ImGui::BeginChild("##licBody", ImVec2(kModalW, bodyH),
+                              false, ImGuiWindowFlags_NoBackground)) {
+            ImGui::Indent(kSidePad);
+            ImGui::Dummy(ImVec2(0.0f, MvStyle::Spacing::S3));
+
+            // ACCOUNT section
+            ImGui::PushStyleColor(ImGuiCol_Text, MvStyle::MvBlue400);
+            {
+                MvStyle::ScopedFont f(MvStyle::Font.MonoSm);
+                ImGui::TextUnformatted("ACCOUNT");
+            }
+            ImGui::PopStyleColor();
+            ImGui::PushStyleColor(ImGuiCol_Separator, MvStyle::MvLine2);
+            ImGui::Separator();
+            ImGui::PopStyleColor();
+            ImGui::Dummy(ImVec2(0.0f, 4.0f));
+            LicenseRow("EMAIL", lm.GetUserEmail());
+            ImGui::Dummy(ImVec2(0.0f, MvStyle::Spacing::S3));
+
+            // LICENSE section
+            ImGui::PushStyleColor(ImGuiCol_Text, MvStyle::MvBlue400);
+            {
+                MvStyle::ScopedFont f(MvStyle::Font.MonoSm);
+                ImGui::TextUnformatted("LICENSE");
+            }
+            ImGui::PopStyleColor();
+            ImGui::PushStyleColor(ImGuiCol_Separator, MvStyle::MvLine2);
+            ImGui::Separator();
+            ImGui::PopStyleColor();
+            ImGui::Dummy(ImVec2(0.0f, 4.0f));
+
+            // Tier row with coloured badge text
+            ImGui::PushStyleColor(ImGuiCol_Text, MvStyle::MvFg3);
+            {
+                MvStyle::ScopedFont f(MvStyle::Font.MonoSm);
+                ImGui::TextUnformatted("TIER");
+            }
+            ImGui::PopStyleColor();
+            ImGui::SameLine(140.0f);
+            ImGui::PushStyleColor(ImGuiCol_Text, TierBadgeColor(tierLower));
+            {
+                MvStyle::ScopedFont f(MvStyle::Font.BodyMd);
+                ImGui::TextUnformatted(tierUpper.empty() ? "\xE2\x80\x94"
+                                                         : tierUpper.c_str());
+            }
+            ImGui::PopStyleColor();
+
+            // License key row removed per live-test feedback round 4 --
+            // the original mockup had it but the key should stay secret
+            // (it's still accessible via LicenseManager::GetLicenseKey()
+            // for the cases where the value is required, e.g. support
+            // contact). The data hook stays plumbed; only the visible
+            // row is hidden.
+
+            // Status row + Refresh button -- the row carries the same
+            // pill text the Sprint 6.6 helper produced; the refresh
+            // button sits to the far right of the row and triggers an
+            // immediate /api/desktop/token call via NotifyRefreshNow.
+            LicenseStatusPill(lm);
+            {
+                // "Last sync: ..." below the status pill, muted.
+                ImGui::PushStyleColor(ImGuiCol_Text, MvStyle::MvFg3);
+                {
+                    MvStyle::ScopedFont f(MvStyle::Font.BodySm);
+                    ImGui::TextUnformatted("");
+                    ImGui::SameLine(140.0f);
+                    ImGui::Text("Last sync: %s",
+                                LastSyncedLabel(lm.GetLastSyncedAt()).c_str());
+                }
+                ImGui::PopStyleColor();
+            }
+            // Refresh-license button on its own row, indented to align
+            // with the value column.
+            ImGui::Dummy(ImVec2(0.0f, 4.0f));
+            ImGui::Dummy(ImVec2(140.0f - kSidePad, 0.0f));
+            ImGui::SameLine();
+            {
+                MvStyle::ScopedFont f(MvStyle::Font.BodySm);
+                if (ImGui::Button("\xE2\x86\xBB  Refresh license",
+                                  ImVec2(180.0f, 0.0f))) {
+                    LicenseManager::Instance().RequestRefresh();
+                }
+            }
+            ImGui::Dummy(ImVec2(0.0f, MvStyle::Spacing::S3));
+
+            // USAGE section -- progress bar + numeric overlay
+            ImGui::PushStyleColor(ImGuiCol_Text, MvStyle::MvBlue400);
+            {
+                MvStyle::ScopedFont f(MvStyle::Font.MonoSm);
+                ImGui::TextUnformatted("USAGE THIS MONTH");
+            }
+            ImGui::PopStyleColor();
+            ImGui::PushStyleColor(ImGuiCol_Separator, MvStyle::MvLine2);
+            ImGui::Separator();
+            ImGui::PopStyleColor();
+            ImGui::Dummy(ImVec2(0.0f, 4.0f));
+
+            const int used    = lm.GetConversionsUsed();
+            const int pending = lm.GetPendingConversionCount();
+            const int limit   = lm.GetConversionsLimit();
+            const int effective = used + pending;
+            std::string usage;
+            if (limit > 0) {
+                usage = std::format("{} / {} conversions", effective, limit);
+            } else {
+                usage = std::format("{} conversions", effective);
+            }
+            LicenseRow("USED", usage);
+            if (pending > 0) {
+                LicenseRow("PENDING SYNC",
+                           std::format("{} queued offline", pending));
+            }
+            // Progress bar -- amber when within 2 of the limit, blue
+            // otherwise. ImGui::ProgressBar fits cleanly between rows.
+            if (limit > 0) {
+                const float frac = std::clamp(
+                    static_cast<float>(effective) / static_cast<float>(limit),
+                    0.0f, 1.0f);
+                const bool nearCap = (limit - effective) <= 2;
+                ImGui::Dummy(ImVec2(0.0f, 4.0f));
+                ImGui::PushStyleColor(ImGuiCol_PlotHistogram,
+                                      nearCap ? MvStyle::MvWarning
+                                              : MvStyle::MvBlue500);
+                ImGui::PushStyleColor(ImGuiCol_FrameBg, MvStyle::MvBg3);
+                ImGui::ProgressBar(
+                    frac, ImVec2(kModalW - kSidePad * 2.0f, 8.0f), "");
+                ImGui::PopStyleColor(2);
+            }
+            // Reset date (YYYY-MM-DD prefix of the ISO 8601 reset).
+            std::string resetDisplay = lm.GetConversionsResetAt();
+            if (resetDisplay.size() >= 10) resetDisplay = resetDisplay.substr(0, 10);
+            ImGui::Dummy(ImVec2(0.0f, 4.0f));
+            LicenseRow("RESETS", resetDisplay);
+            ImGui::Dummy(ImVec2(0.0f, MvStyle::Spacing::S3));
+
+            ImGui::Unindent(kSidePad);
+        }
+        ImGui::EndChild();
+
+        // ---- Footer band -----------------------------------------------
+        const ImVec2 footerMin = ImGui::GetCursorScreenPos();
+        const ImVec2 footerMax(footerMin.x + kModalW, footerMin.y + kFooterH);
+        dl->AddRectFilled(footerMin, footerMax,
+                          ImGui::ColorConvertFloat4ToU32(MvStyle::MvBg2));
+        dl->AddLine(footerMin, ImVec2(footerMax.x, footerMin.y),
+                    ImGui::ColorConvertFloat4ToU32(MvStyle::MvLine2));
+
+        // Manage subscription -- left-aligned text link
+        {
+            MvStyle::ScopedFont f(MvStyle::Font.BodySm);
+            const std::string link = "Manage subscription \xE2\x86\x92";
+            ImGui::SetCursorScreenPos(
+                ImVec2(footerMin.x + kSidePad,
+                       footerMin.y + (kFooterH - ImGui::GetTextLineHeight()) * 0.5f));
+            ImGui::PushStyleColor(ImGuiCol_Text, MvStyle::MvBlue500);
+            ImGui::TextUnformatted(link.c_str());
+            ImGui::PopStyleColor();
+            if (ImGui::IsItemHovered()) ImGui::SetMouseCursor(ImGuiMouseCursor_Hand);
+            if (ImGui::IsItemClicked(ImGuiMouseButton_Left)) {
+                state.manageSubscriptionRequested = true;
+            }
+        }
+
+        // Sign out (red) + Close (primary blue) right-aligned
+        constexpr float kBtnPadY = (kFooterH - 32.0f) * 0.5f;
+        const float kBtnY = footerMin.y + kBtnPadY;
+        const float kCloseW   = 100.0f;
+        const float kSignOutW = 100.0f;
+        const float kBtnGap   = 8.0f;
+
+        ImGui::SetCursorScreenPos(
+            ImVec2(footerMax.x - kSidePad - kCloseW, kBtnY));
+        ImGui::PushStyleColor(ImGuiCol_Button,        MvStyle::MvBlue500);
+        ImGui::PushStyleColor(ImGuiCol_ButtonHovered, MvStyle::MvBlue400);
+        ImGui::PushStyleColor(ImGuiCol_ButtonActive,  MvStyle::MvBlue600);
+        if (ImGui::Button("Close", ImVec2(kCloseW, 32.0f))) {
+            ImGui::CloseCurrentPopup();
+        }
+        ImGui::PopStyleColor(3);
+
+        ImGui::SetCursorScreenPos(
+            ImVec2(footerMax.x - kSidePad - kCloseW - kBtnGap - kSignOutW, kBtnY));
+        ImGui::PushStyleColor(ImGuiCol_Button,        ImVec4(0, 0, 0, 0));
+        ImGui::PushStyleColor(ImGuiCol_ButtonHovered, MvStyle::MvBg3);
+        ImGui::PushStyleColor(ImGuiCol_ButtonActive,  MvStyle::MvBg4);
+        ImGui::PushStyleColor(ImGuiCol_Text,          MvStyle::MvDanger);
+        if (ImGui::Button("Sign out", ImVec2(kSignOutW, 32.0f))) {
             state.signOutRequested = true;
             ImGui::CloseCurrentPopup();
         }
-        ImGui::PopStyleColor(2);
-        ImGui::SameLine();
-
-        // Right-aligned Close button.
-        const float btnW = 100.0f;
-        const float avail = ImGui::GetContentRegionAvail().x;
-        if (avail > btnW) ImGui::SetCursorPosX(ImGui::GetCursorPosX() + (avail - btnW));
-        if (ImGui::Button("Close", ImVec2(btnW, 0))) ImGui::CloseCurrentPopup();
+        ImGui::PopStyleColor(4);
 
         ImGui::EndPopup();
+    } else {
+        ImGui::PopStyleVar();
     }
 }
 

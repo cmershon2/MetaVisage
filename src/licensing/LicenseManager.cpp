@@ -33,10 +33,15 @@
 #include <array>
 #include <chrono>
 #include <cstdint>
+#include <deque>
 #include <exception>
+#include <filesystem>
 #include <format>
+#include <fstream>
 #include <string_view>
+#include <system_error>
 #include <thread>
+#include <vector>
 
 namespace MetaVisage {
 
@@ -169,10 +174,25 @@ LicenseManager::~LicenseManager() {
 }
 
 void LicenseManager::Shutdown() {
+    shuttingDown_.store(true);
     StopRefreshThread();
     if (exchangeThread_.joinable()) {
         exchangeThread_.join();
     }
+    // Story 7.2 -- conversion-report worker is fire-and-forget and
+    // bounded by the retry budget; it should always finish on its own.
+    // Persist the queue so any timestamps still in memory survive the
+    // exit (the worker writes the file after each operation, but a
+    // mid-execution shutdown could miss the most recent enqueue).
+    if (conversionThread_.joinable()) {
+        conversionThread_.join();
+    }
+    // Normal shutdown still gets a chance to apply a completed conversion
+    // worker result. This prevents a successful POST from being reported
+    // again on the next launch just because the app closed before the next
+    // frame drained the worker result.
+    DrainPendingConversion();
+    PersistConversionQueue();
 }
 
 void LicenseManager::Initialize() {
@@ -193,6 +213,10 @@ void LicenseManager::Initialize() {
     }
 
     EnsureSchemeRegistered();
+
+    // Story 7.2 -- conversion queue persists across launches so an
+    // export-while-offline-then-quit flow doesn't lose the report.
+    LoadConversionQueue();
 
     // Story 6.3 -- verify the cached JWT before granting Authenticated.
     // Bad signature / expired / wrong issuer / missing audience all force
@@ -292,8 +316,17 @@ void LicenseManager::SignOut() {
     conversionsUsed_ = 0;
     conversionsLimit_ = 0;
     conversionsResetAt_.clear();
+    featureFlags_ = FeatureFlags{};  // restrictive defaults
     lastSyncedAt_.reset();
     offlineMode_ = false;
+    // Story 7.2 -- queue is per-account; sign-out drops it. The queue
+    // file is rewritten as an empty array so a sign-in by a different
+    // user doesn't inherit the previous user's pending reports.
+    {
+        std::lock_guard<std::mutex> lock(conversionQueueMutex_);
+        conversionQueue_.clear();
+    }
+    PersistConversionQueue();
     TransitionTo(AuthState::Unauthenticated);
 }
 
@@ -303,6 +336,18 @@ void LicenseManager::SetTestState(AuthState forced) {
     testMode_ = true;
     MV_LOG_INFO(std::format("LicenseManager: test override -> {}",
                             StateName(forced)));
+}
+
+void LicenseManager::SetTestFeatureFlags(const FeatureFlags& flags) {
+    if (!testMode_) {
+        MV_LOG_WARNING(
+            "LicenseManager::SetTestFeatureFlags ignored (test mode off)");
+        return;
+    }
+    featureFlags_ = flags;
+    if (flags.conversionsLimit > 0) {
+        conversionsLimit_ = flags.conversionsLimit;
+    }
 }
 
 void LicenseManager::QueueDeepLink(std::string uri) {
@@ -556,9 +601,10 @@ void LicenseManager::DrainPendingExchange() {
 
 void LicenseManager::LoadClaimsFromJwt(const std::string& jwt) {
     // Decode payload only -- VerifyJwt has already run signature checks
-    // by this point. jwt-cpp throws on malformed input; we swallow and
-    // leave the previous values in place so a corrupt JWT doesn't
-    // silently zero the badge.
+    // by this point. jwt-cpp throws on malformed input; legacy claim values
+    // stay visible for diagnostics, but feature flags reset first so a
+    // bug-shaped refreshed JWT can never preserve stale paid entitlements.
+    featureFlags_ = FeatureFlags{};
     try {
         auto decoded = jwt::decode(jwt);
         if (decoded.has_payload_claim("tier")) {
@@ -579,10 +625,79 @@ void LicenseManager::LoadClaimsFromJwt(const std::string& jwt) {
             conversionsResetAt_ =
                 decoded.get_payload_claim("conversions_reset_at").as_string();
         }
+
+        // Story 7.1 -- feature_flags object. Restrictive defaults already
+        // live on featureFlags_ from a fresh struct value; we overwrite
+        // each field only when the JWT carries it. Missing fields (server
+        // bug, tier downgrade racing the client) keep the Free-tier shape
+        // so we never grant accidental upgrades.
+        FeatureFlags ff{};
+        bool sawFlags = false;
+        if (decoded.has_payload_claim("feature_flags")) {
+            sawFlags = true;
+            const auto& claim = decoded.get_payload_claim("feature_flags");
+            const auto& obj = claim.to_json();  // nlohmann::json under the traits header
+            auto getInt = [&](const char* key, int fallback) {
+                auto it = obj.find(key);
+                return (it != obj.end() && it->is_number_integer())
+                           ? it->get<int>()
+                           : fallback;
+            };
+            auto getBool = [&](const char* key, bool fallback) {
+                auto it = obj.find(key);
+                return (it != obj.end() && it->is_boolean())
+                           ? it->get<bool>()
+                           : fallback;
+            };
+            auto getString = [&](const char* key) -> std::string {
+                auto it = obj.find(key);
+                return (it != obj.end() && it->is_string())
+                           ? it->get<std::string>()
+                           : std::string{};
+            };
+
+            ff.conversionsLimit  = getInt("conversions_limit", 0);
+            ff.customHeadUpload  = getBool("custom_head_upload", false);
+            ff.masking           = getBool("masking", false);
+            ff.batchProcessing   = getBool("batch_processing", false);
+
+            const std::string tt = getString("texture_transfer");
+            if      (tt == "albedo_normal") ff.textureTransfer = FeatureFlags::TextureTransfer::AlbedoNormal;
+            else if (tt == "albedo")        ff.textureTransfer = FeatureFlags::TextureTransfer::Albedo;
+            else                            ff.textureTransfer = FeatureFlags::TextureTransfer::None;
+
+            const std::string mp = getString("morphing_parameters");
+            ff.morphingParameters = (mp == "full")
+                                        ? FeatureFlags::MorphingParameters::Full
+                                        : FeatureFlags::MorphingParameters::Presets;
+
+            const std::string tu = getString("touchup_tools");
+            if      (tu == "full")  ff.touchUpToolset = FeatureFlags::TouchUpToolset::Full;
+            else if (tu == "basic") ff.touchUpToolset = FeatureFlags::TouchUpToolset::Basic;
+            else                    ff.touchUpToolset = FeatureFlags::TouchUpToolset::BasicSmooth;
+
+            // One-time warnings for missing fields so a bug-shaped JWT is
+            // debuggable. Restrictive defaults still apply -- the warning
+            // is informational.
+            if (!obj.contains("conversions_limit"))     MV_LOG_WARNING("LicenseManager: feature_flags missing conversions_limit");
+            if (!obj.contains("custom_head_upload"))    MV_LOG_WARNING("LicenseManager: feature_flags missing custom_head_upload");
+            if (!obj.contains("texture_transfer"))      MV_LOG_WARNING("LicenseManager: feature_flags missing texture_transfer");
+            if (!obj.contains("morphing_parameters"))   MV_LOG_WARNING("LicenseManager: feature_flags missing morphing_parameters");
+            if (!obj.contains("masking"))               MV_LOG_WARNING("LicenseManager: feature_flags missing masking");
+            if (!obj.contains("touchup_tools"))         MV_LOG_WARNING("LicenseManager: feature_flags missing touchup_tools");
+        } else {
+            MV_LOG_WARNING(
+                "LicenseManager: JWT carries no feature_flags object -- "
+                "defaulting to Free-tier-restrictive shape");
+        }
+        featureFlags_ = ff;
+
         MV_LOG_INFO(std::format(
-            "LicenseManager: claims tier={}, conversions={}/{}",
-            tier_, conversionsUsed_, conversionsLimit_));
+            "LicenseManager: claims tier={}, conversions={}/{}, flags={}",
+            tier_, conversionsUsed_, conversionsLimit_,
+            sawFlags ? "parsed" : "defaulted"));
     } catch (const std::exception& e) {
+        featureFlags_ = FeatureFlags{};
         MV_LOG_WARNING(std::format(
             "LicenseManager: failed to decode JWT claims: {}", e.what()));
     }
@@ -821,6 +936,9 @@ void LicenseManager::DrainPendingRefresh() {
             }
             // Stay in Authenticated; this was a background refresh.
             MV_LOG_INFO("LicenseManager: refresh succeeded");
+            // Story 7.2 -- now that we're back online with a fresh token,
+            // drain anything queued during prior offline windows.
+            FlushConversionQueue();
             break;
         }
         case RefreshOutcome::Inactive: {
@@ -988,6 +1106,390 @@ void LicenseManager::TransitionTo(AuthState next) {
                             StateName(state_),
                             StateName(next)));
     state_ = next;
+}
+
+// =============================================================================
+// Story 7.2 -- conversion tracking + offline queue
+// =============================================================================
+
+namespace {
+
+std::string ConversionQueuePath() {
+    const std::string dir = MetaVisage::Paths::AppDataDir();
+    if (dir.empty()) return {};
+    return dir + "/conversion_queue.json";
+}
+
+#ifdef _WIN32
+std::wstring Utf8ToWide(std::string_view value) {
+    if (value.empty()) return {};
+    const int wideChars = MultiByteToWideChar(
+        CP_UTF8, 0,
+        value.data(), static_cast<int>(value.size()),
+        nullptr, 0);
+    if (wideChars <= 0) return {};
+    std::wstring out(static_cast<size_t>(wideChars), L'\0');
+    MultiByteToWideChar(
+        CP_UTF8, 0,
+        value.data(), static_cast<int>(value.size()),
+        out.data(), wideChars);
+    return out;
+}
+#endif
+
+}  // namespace
+
+std::optional<LicenseManager::ConversionLimitNotice>
+LicenseManager::ConsumeConversionLimitNotice() {
+    std::optional<ConversionLimitNotice> out;
+    std::lock_guard<std::mutex> lock(conversionLimitNoticeMutex_);
+    out.swap(conversionLimitNotice_);
+    return out;
+}
+
+int LicenseManager::GetPendingConversionCount() const {
+    std::lock_guard<std::mutex> lock(
+        const_cast<std::mutex&>(conversionQueueMutex_));
+    return static_cast<int>(conversionQueue_.size());
+}
+
+void LicenseManager::EnqueueConversion(
+        std::chrono::system_clock::time_point timestamp) {
+    std::lock_guard<std::mutex> lock(conversionQueueMutex_);
+    conversionQueue_.push_back(timestamp);
+    while (conversionQueue_.size() > kConversionQueueCap) {
+        // Drop oldest beyond the cap; one warning total per overflow.
+        conversionQueue_.pop_front();
+        MV_LOG_WARNING(
+            "LicenseManager: conversion queue at cap; dropped oldest entry");
+    }
+}
+
+void LicenseManager::RemoveCompletedConversions(
+        const std::vector<std::chrono::system_clock::time_point>& completed) {
+    if (completed.empty()) return;
+
+    std::lock_guard<std::mutex> lock(conversionQueueMutex_);
+    for (const auto& tp : completed) {
+        const auto it = std::find(conversionQueue_.begin(),
+                                  conversionQueue_.end(),
+                                  tp);
+        if (it != conversionQueue_.end()) {
+            conversionQueue_.erase(it);
+        }
+    }
+}
+
+void LicenseManager::LoadConversionQueue() {
+    const std::string path = ConversionQueuePath();
+    if (path.empty()) return;
+    std::ifstream f(path);
+    if (!f) return;  // first run / file does not exist -- not an error
+    try {
+        nlohmann::json j;
+        f >> j;
+        if (!j.is_array()) return;
+        std::lock_guard<std::mutex> lock(conversionQueueMutex_);
+        conversionQueue_.clear();
+        for (const auto& v : j) {
+            if (!v.is_number_integer()) continue;
+            const auto epochSec = v.get<int64_t>();
+            conversionQueue_.push_back(
+                std::chrono::system_clock::time_point(
+                    std::chrono::seconds(epochSec)));
+        }
+        if (!conversionQueue_.empty()) {
+            MV_LOG_INFO(std::format(
+                "LicenseManager: loaded {} queued conversions from disk",
+                conversionQueue_.size()));
+        }
+    } catch (const std::exception& e) {
+        MV_LOG_WARNING(std::format(
+            "LicenseManager: failed to parse conversion_queue.json: {}; "
+            "dropping queue", e.what()));
+        std::lock_guard<std::mutex> lock(conversionQueueMutex_);
+        conversionQueue_.clear();
+    }
+}
+
+void LicenseManager::PersistConversionQueue() const {
+    const std::string path = ConversionQueuePath();
+    if (path.empty()) return;
+    nlohmann::json j = nlohmann::json::array();
+    {
+        std::lock_guard<std::mutex> lock(
+            const_cast<std::mutex&>(conversionQueueMutex_));
+        for (const auto& tp : conversionQueue_) {
+            const auto epochSec = std::chrono::duration_cast<std::chrono::seconds>(
+                                      tp.time_since_epoch()).count();
+            j.push_back(epochSec);
+        }
+    }
+    // Atomic write through .tmp + rename so a power failure can't leave
+    // a half-written file (mirrors the Sprint 6 session.cache pattern).
+    const std::string tmp = path + ".tmp";
+    {
+        std::ofstream out(tmp, std::ios::trunc);
+        if (!out) {
+            MV_LOG_WARNING("LicenseManager: failed to open conversion_queue.tmp");
+            return;
+        }
+        out << j.dump();
+    }
+#ifdef _WIN32
+    const std::wstring tmpWide = Utf8ToWide(tmp);
+    const std::wstring pathWide = Utf8ToWide(path);
+    if (tmpWide.empty() || pathWide.empty() ||
+        !MoveFileExW(tmpWide.c_str(), pathWide.c_str(),
+                     MOVEFILE_REPLACE_EXISTING | MOVEFILE_WRITE_THROUGH)) {
+        MV_LOG_WARNING(std::format(
+            "LicenseManager: failed to persist conversion queue (Win32 {})",
+            GetLastError()));
+        std::error_code ignored;
+        std::filesystem::remove(tmp, ignored);
+    }
+#else
+    std::error_code ec;
+    std::filesystem::rename(tmp, path, ec);
+    if (ec) {
+        MV_LOG_WARNING(std::format(
+            "LicenseManager: failed to persist conversion queue: {}",
+            ec.message()));
+        std::filesystem::remove(tmp, ec);
+    }
+#endif
+}
+
+void LicenseManager::ReportConversion() {
+    const auto now = std::chrono::system_clock::now();
+    EnqueueConversion(now);
+    PersistConversionQueue();
+
+    // Offline path -- queue and bail. The next successful refresh
+    // (DrainPendingRefresh -> FlushConversionQueue) drains.
+    if (offlineMode_) {
+        MV_LOG_INFO("LicenseManager: conversion queued (offline mode)");
+        return;
+    }
+
+    // Already-running worker -- queue and let DrainPendingConversion()
+    // start a follow-up flush after the active report completes cleanly.
+    if (conversionRunning_.load()) {
+        return;
+    }
+
+    // No active worker and we're online -- drain the durable queue.
+    FlushConversionQueue();
+}
+
+void LicenseManager::FlushConversionQueue() {
+    if (conversionRunning_.load()) return;  // drain starts a follow-up flush
+
+    std::vector<std::chrono::system_clock::time_point> batch;
+    {
+        std::lock_guard<std::mutex> lock(conversionQueueMutex_);
+        if (conversionQueue_.empty()) return;
+        // Copy the queue into the batch, but keep it durable until the
+        // server confirms each timestamp. This keeps effective usage honest
+        // while the worker is in flight and avoids losing reports during
+        // shutdown or a transient worker failure.
+        batch.assign(conversionQueue_.begin(), conversionQueue_.end());
+    }
+    MV_LOG_INFO(std::format(
+        "LicenseManager: flushing {} queued conversions", batch.size()));
+    StartConversionWorker(std::move(batch));
+}
+
+void LicenseManager::StartConversionWorker(
+        std::vector<std::chrono::system_clock::time_point> batch) {
+    if (batch.empty()) return;
+    if (conversionThread_.joinable()) conversionThread_.join();
+    conversionRunning_.store(true);
+    conversionFinished_.store(false);
+
+    // Snapshot tokens for the worker -- it must not touch member fields
+    // mid-flight. accessToken_ is std::optional; an empty token short-
+    // circuits the POST and we re-queue the batch.
+    std::string accessTokenCopy = accessToken_.value_or("");
+
+    conversionThread_ = std::thread(
+        [this, batch = std::move(batch),
+         accessTokenCopy = std::move(accessTokenCopy)]() mutable {
+            ConversionResult result;
+            const std::string url = std::format(
+                "{}/api/license/conversion", LicenseConfig::kApiBaseUrl);
+
+            if (accessTokenCopy.empty()) {
+                // Should never happen on the export path (we are
+                // Authenticated); guard for completeness.
+                result.errorMessage = "No access token; conversion deferred.";
+                result.remaining = std::move(batch);
+                {
+                    std::lock_guard<std::mutex> lock(conversionResultMutex_);
+                    conversionResult_ = std::move(result);
+                }
+                conversionFinished_.store(true);
+                return;
+            }
+
+            HttpClient http;
+            // POST one entry at a time so a 403 limit_reached mid-batch
+            // can stop the rest cleanly.
+            while (!batch.empty()) {
+                const auto deadline =
+                    std::chrono::steady_clock::now() +
+                    std::chrono::seconds(kConversionBudgetSeconds);
+
+                HttpResponse resp;
+                bool retried = false;
+                for (int attempt = 0; attempt < kConversionMaxAttempts; ++attempt) {
+                    resp = http.PostJsonBearer(url, "{}", accessTokenCopy);
+                    const bool transient =
+                        (resp.status == 0) || (resp.status == 429) ||
+                        (resp.status >= 500);
+                    if (!transient) break;
+                    int waitSec =
+                        (resp.status == 429 && resp.retryAfterSeconds > 0)
+                            ? static_cast<int>(resp.retryAfterSeconds)
+                            : (1 << attempt);  // 1s, 2s, 4s, 8s
+                    const auto wakeAt =
+                        std::chrono::steady_clock::now() +
+                        std::chrono::seconds(waitSec);
+                    if (wakeAt > deadline) break;
+                    retried = true;
+                    std::this_thread::sleep_until(wakeAt);
+                }
+                (void)retried;
+
+                result.httpStatus = static_cast<int>(resp.status);
+                if (resp.status == 200 && resp.errorMessage.empty()) {
+                    const auto completed = batch.front();
+                    try {
+                        auto j = nlohmann::json::parse(resp.body);
+                        result.conversionsUsed   = j.value("conversions_used", 0);
+                        result.conversionsLimit  = j.value("conversions_limit", 0);
+                        result.conversionsResetAt = j.value("conversions_reset_at",
+                                                            std::string{});
+                        result.limitReached      = j.value("limit_reached", false);
+                        result.ok = true;
+                    } catch (const std::exception& e) {
+                        MV_LOG_WARNING(std::format(
+                            "LicenseManager: conversion JSON parse: {}", e.what()));
+                    }
+                    result.completed.push_back(completed);
+                    batch.erase(batch.begin());  // entry succeeded; drop
+                    continue;
+                }
+                if (resp.status == 403) {
+                    // limit_reached -- response carries usage fields.
+                    try {
+                        auto j = nlohmann::json::parse(resp.body);
+                        result.conversionsUsed    = j.value("conversions_used", 0);
+                        result.conversionsLimit   = j.value("conversions_limit", 0);
+                        result.conversionsResetAt = j.value("conversions_reset_at",
+                                                            std::string{});
+                    } catch (const std::exception&) { /* fields stay zero */ }
+                    result.limitReached = true;
+                    result.errorMessage = "Monthly conversion limit reached.";
+                    // Drop the rest of the batch -- no point pushing more
+                    // POSTs we know will all fail with the same 403.
+                    batch.clear();
+                    break;
+                }
+                // Any other terminal error: stop the batch and re-queue
+                // remaining timestamps so we try again on the next refresh.
+                result.errorMessage = resp.errorMessage.empty()
+                    ? std::format("Conversion report failed (status {}).",
+                                  resp.status)
+                    : resp.errorMessage;
+                break;
+            }
+
+            // Anything left in batch failed transiently and gets re-queued.
+            if (!batch.empty()) {
+                result.remaining = std::move(batch);
+            }
+
+            {
+                std::lock_guard<std::mutex> lock(conversionResultMutex_);
+                conversionResult_ = std::move(result);
+            }
+            conversionFinished_.store(true);
+        });
+}
+
+void LicenseManager::DrainPendingConversion() {
+    if (!conversionFinished_.load()) return;
+    if (conversionThread_.joinable()) conversionThread_.join();
+    conversionRunning_.store(false);
+    conversionFinished_.store(false);
+
+    ConversionResult result;
+    {
+        std::lock_guard<std::mutex> lock(conversionResultMutex_);
+        result = std::move(conversionResult_);
+        conversionResult_ = ConversionResult{};
+    }
+
+    // Apply usage fields from the server (200 or 403 both return them).
+    // Local state mirrors server truth -- we never increment locally.
+    if (result.httpStatus == 200 || result.httpStatus == 403) {
+        if (result.conversionsLimit > 0) {
+            conversionsUsed_   = result.conversionsUsed;
+            conversionsLimit_  = result.conversionsLimit;
+        }
+        if (!result.conversionsResetAt.empty()) {
+            conversionsResetAt_ = result.conversionsResetAt;
+        }
+    }
+
+    if (!result.completed.empty()) {
+        RemoveCompletedConversions(result.completed);
+        PersistConversionQueue();
+        MV_LOG_INFO(std::format(
+            "LicenseManager: confirmed {} conversion report(s)",
+            result.completed.size()));
+    }
+
+    // Unconfirmed timestamps remain in the durable queue while the worker is
+    // in flight, so a transient failure only needs to log and persist.
+    if (!result.remaining.empty()) {
+        PersistConversionQueue();
+        MV_LOG_INFO(std::format(
+            "LicenseManager: kept {} conversion(s) queued after transient failure",
+            result.remaining.size()));
+    } else {
+        // The batch fully cleared -- persist the queue after removing the
+        // confirmed entries, plus anything queued during the worker run.
+        PersistConversionQueue();
+    }
+
+    // 403 -> raise a one-shot block-modal notice. If another export
+    // queued while this worker was in flight, drop it too: the server
+    // says this account is at its cap, so additional reports cannot land
+    // until the next reset or upgrade.
+    if (result.limitReached) {
+        {
+            std::lock_guard<std::mutex> lock(conversionQueueMutex_);
+            conversionQueue_.clear();
+        }
+        PersistConversionQueue();
+        std::lock_guard<std::mutex> lock(conversionLimitNoticeMutex_);
+        conversionLimitNotice_ = ConversionLimitNotice{
+            result.conversionsLimit, result.conversionsResetAt};
+        return;
+    }
+
+    // If another export happened while this worker was reporting, drain
+    // that online backlog immediately after a clean completion instead of
+    // waiting for the next 24h/manual refresh. Do not immediately retry a
+    // transient failure; that path waits for refresh so it cannot spin.
+    if (result.httpStatus == 200 &&
+        result.remaining.empty() &&
+        !offlineMode_ &&
+        !shuttingDown_.load()) {
+        FlushConversionQueue();
+    }
 }
 
 }  // namespace MetaVisage

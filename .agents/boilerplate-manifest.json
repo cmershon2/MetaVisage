@@ -1,0 +1,160 @@
+{
+  "schemaVersion": 2,
+  "plugin": {
+    "name": "codex-agent-boilerplate",
+    "versionSource": ".codex-plugin/plugin.json"
+  },
+  "payloadRoot": "payload",
+  "vendorRoot": ".agents/vendor/codex-agent-boilerplate",
+  "lockFile": ".agents/boilerplate.lock.json",
+  "description": "Defines where each boilerplate artifact is sourced, installed, activated, and upgraded. The plugin is a control plane only; project repositories own the active runtime files.",
+  "artifacts": [
+    {
+      "type": "instructions",
+      "source": "AGENTS.md",
+      "activeTarget": "AGENTS.md",
+      "referenceTarget": ".agents/vendor/codex-agent-boilerplate/AGENTS.md",
+      "ownership": "merge",
+      "activation": "project",
+      "installPolicy": "merge",
+      "upgradePolicy": "reference-auto-active-merge",
+      "reason": "Persistent instructions are loaded from the project and must preserve project-specific context."
+    },
+    {
+      "type": "manifest",
+      "source": ".agents/boilerplate-manifest.json",
+      "activeTarget": ".agents/boilerplate-manifest.json",
+      "referenceTarget": ".agents/vendor/codex-agent-boilerplate/.agents/boilerplate-manifest.json",
+      "ownership": "managed",
+      "activation": "project",
+      "installPolicy": "copy-if-missing",
+      "upgradePolicy": "safe-managed",
+      "reason": "Upgrade policy is project-visible but owned by the boilerplate."
+    },
+    {
+      "type": "skills",
+      "source": ".agents/skills/**",
+      "activeTarget": ".agents/skills/**",
+      "referenceTarget": ".agents/vendor/codex-agent-boilerplate/.agents/skills/**",
+      "ownership": "managed",
+      "activation": "project",
+      "installPolicy": "copy-if-missing",
+      "upgradePolicy": "safe-managed",
+      "reason": "Runtime skills are active only after they are installed into the project."
+    },
+    {
+      "type": "rules",
+      "source": ".agents/rules/**",
+      "activeTarget": ".agents/rules/**",
+      "referenceTarget": ".agents/vendor/codex-agent-boilerplate/.agents/rules/**",
+      "ownership": "managed",
+      "activation": "project",
+      "installPolicy": "copy-if-missing",
+      "upgradePolicy": "safe-managed",
+      "reason": "Workflow and engineering rules are visible project files referenced by AGENTS.md."
+    },
+    {
+      "type": "context-templates",
+      "source": ".agents/context/**/*-template.md",
+      "activeTarget": ".agents/context/**/*-template.md",
+      "referenceTarget": ".agents/vendor/codex-agent-boilerplate/.agents/context/**/*-template.md",
+      "ownership": "merge",
+      "activation": "project",
+      "installPolicy": "copy-if-missing",
+      "upgradePolicy": "reference-auto-active-merge",
+      "reason": "Templates can improve over time, but live beside project-owned planning context."
+    },
+    {
+      "type": "context-seeds",
+      "source": ".agents/context/development/*.md",
+      "activeTarget": ".agents/context/development/*.md",
+      "referenceTarget": ".agents/vendor/codex-agent-boilerplate/.agents/context/development/*.md",
+      "ownership": "preserve",
+      "activation": "project",
+      "installPolicy": "copy-if-missing",
+      "upgradePolicy": "preserve",
+      "reason": "Backlog and changelog become project-owned durable context after installation."
+    },
+    {
+      "type": "product-vision",
+      "source": ".agents/context/product-vision.md",
+      "activeTarget": ".agents/context/product-vision.md",
+      "referenceTarget": ".agents/vendor/codex-agent-boilerplate/.agents/context/product-vision.md",
+      "ownership": "preserve",
+      "activation": "project",
+      "installPolicy": "copy-if-missing",
+      "upgradePolicy": "preserve",
+      "reason": "Product vision becomes project-owned durable context after installation."
+    },
+    {
+      "type": "custom-agents",
+      "source": ".codex/agents/**",
+      "activeTarget": ".codex/agents/**",
+      "referenceTarget": ".agents/vendor/codex-agent-boilerplate/.codex/agents/**",
+      "ownership": "managed",
+      "activation": "project",
+      "installPolicy": "copy-if-missing",
+      "upgradePolicy": "safe-managed",
+      "reason": "Subagent definitions are active only from the project .codex directory."
+    },
+    {
+      "type": "hooks",
+      "source": ".codex/hooks/**",
+      "activeTarget": ".codex/hooks/**",
+      "referenceTarget": ".agents/vendor/codex-agent-boilerplate/.codex/hooks/**",
+      "ownership": "merge",
+      "activation": "project",
+      "installPolicy": "confirm",
+      "upgradePolicy": "reference-auto-active-merge",
+      "reason": "Hook scripts are reviewed in the project before they become active."
+    },
+    {
+      "type": "hook-config",
+      "source": ".codex/hooks.json",
+      "activeTarget": ".codex/hooks.json",
+      "referenceTarget": ".agents/vendor/codex-agent-boilerplate/.codex/hooks.json",
+      "ownership": "merge",
+      "activation": "project",
+      "installPolicy": "confirm",
+      "upgradePolicy": "reference-auto-active-merge",
+      "reason": "Hook registration is project-active and must remain reviewable."
+    },
+    {
+      "type": "codex-config",
+      "source": ".codex/config.toml",
+      "activeTarget": ".codex/config.toml",
+      "referenceTarget": ".agents/vendor/codex-agent-boilerplate/.codex/config.toml",
+      "ownership": "merge",
+      "activation": "project",
+      "installPolicy": "copy-if-missing",
+      "upgradePolicy": "reference-auto-active-merge",
+      "reason": "Codex runtime settings may include project-specific preferences."
+    }
+  ],
+  "preserve": [
+    {
+      "glob": ".agents/boilerplate.lock.json",
+      "reason": "The lock records the target project's synchronized state."
+    },
+    {
+      "glob": ".agents/context/product-vision.md",
+      "reason": "Product vision is project-owned durable context."
+    },
+    {
+      "glob": ".agents/context/development/**",
+      "reason": "Backlog and changelog history are project-owned durable context."
+    },
+    {
+      "glob": ".agents/context/campaigns/**",
+      "reason": "Campaign plans, readiness checks, and handoffs are project-owned durable context."
+    },
+    {
+      "glob": ".agents/context/sprints/**",
+      "reason": "Sprint plans and outcomes are project-owned durable context."
+    },
+    {
+      "glob": ".agents/context/retrospectives/**",
+      "reason": "Retrospectives are project-owned durable context."
+    }
+  ]
+}

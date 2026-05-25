@@ -1,0 +1,43 @@
+{
+  "hooks": {
+    "SessionStart": [
+      {
+        "matcher": "startup|resume|clear",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "python -c \"import pathlib, runpy; root = next(p for p in [pathlib.Path.cwd(), *pathlib.Path.cwd().parents] if (p / '.codex/hooks/session_start.py').exists()); runpy.run_path(str(root / '.codex/hooks/session_start.py'), run_name='__main__')\"",
+            "timeout": 10,
+            "statusMessage": "Loading project context"
+          }
+        ]
+      }
+    ],
+    "PreToolUse": [
+      {
+        "matcher": "Bash",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "python -c \"import pathlib, runpy; root = next(p for p in [pathlib.Path.cwd(), *pathlib.Path.cwd().parents] if (p / '.codex/hooks/pre_tool_use_policy.py').exists()); runpy.run_path(str(root / '.codex/hooks/pre_tool_use_policy.py'), run_name='__main__')\"",
+            "timeout": 15,
+            "statusMessage": "Checking command policy"
+          }
+        ]
+      }
+    ],
+    "PostToolUse": [
+      {
+        "matcher": "Edit|Write|Bash",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "python -c \"import pathlib, runpy; root = next(p for p in [pathlib.Path.cwd(), *pathlib.Path.cwd().parents] if (p / '.codex/hooks/post_tool_use_advisory.py').exists()); runpy.run_path(str(root / '.codex/hooks/post_tool_use_advisory.py'), run_name='__main__')\"",
+            "timeout": 40,
+            "statusMessage": "Running advisory project check"
+          }
+        ]
+      }
+    ]
+  }
+}

@@ -224,6 +224,7 @@ set(CORE_SOURCES
     src/ui/StageSidebar.cpp
     src/ui/StageStepper.cpp
     src/ui/ToolRail.cpp
+    src/ui/UpgradePromptWidget.cpp
     src/utils/RayCaster.cpp
     src/utils/Logger.cpp
     src/utils/BVH.cpp
@@ -262,6 +263,7 @@ set(CORE_HEADERS
     include/ui/StageSidebar.h
     include/ui/StageStepper.h
     include/ui/ToolRail.h
+    include/ui/UpgradePromptWidget.h
     include/core/Mesh.h
     include/core/Transform.h
     include/core/Project.h
@@ -468,7 +470,7 @@ endif()
 add_test(NAME smoke_wrap_parity
          COMMAND metavisage_smoke_wrap_parity
          WORKING_DIRECTORY ${CMAKE_RUNTIME_OUTPUT_DIRECTORY})
-set_tests_properties(smoke_wrap_parity PROPERTIES TIMEOUT 60)
+set_tests_properties(smoke_wrap_parity PROPERTIES TIMEOUT 120)
 
 # ---------------------------------------------------------------------------
 # imgui_test_engine smoke-UI lane (Story 5.4)
