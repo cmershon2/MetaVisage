@@ -1,4 +1,4 @@
-![MetaVisage Banner](https://github.com/cmershon2/MetaVisage/blob/master/docs/MetaVisage_Banner.png?raw=true)
+﻿![MetaVisage Banner](https://github.com/cmershon2/MetaVisage/blob/master/docs/MetaVisage_Banner.png?raw=true)
 
 An open-source desktop application for automated MetaHuman mesh morphing. Wrap MetaHuman head meshes to custom head models for use in Unreal Engine.
 
@@ -111,7 +111,8 @@ MetaVisage/
 │                     # over Quick + Fantasy presets, and an imgui_test_engine
 │                     # click-through smoke against the live AppWindow (4 scenarios:
 │                     # welcome modal / dockspace / shading-mode / login cycle)
-├── .claude/          # Sprint plans, retros, agents, hooks, skills (dev tooling)
+├── .agents/          # Codex context, rules, skills, memory, boilerplate baseline
+├── .codex/           # Codex custom agents, hooks, and local runtime config
 ├── .env.example      # Build-profile template (API URL, Supabase URL, anon key, key file)
 ├── .env.development  # Localhost dev profile (committed; non-secret defaults)
 ├── CMakeLists.txt    # Build configuration
