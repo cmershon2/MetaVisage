@@ -15,7 +15,7 @@ An open-source desktop application for automated MetaHuman mesh morphing. Wrap M
 - **Unreal Engine ready**: Exports preserve topology, UVs, normals, and material slots — quad topology is preserved end-to-end for UE5 MetaHuman Conform compatibility
 - **Project management**: Save/load workflow state with full undo/redo support; v1.0.0 `.mmproj` files load without modification
 - **Included assets**: Ships with a MetaHuman head mesh (LOD0) ready to use
-- **Browser-based sign-in (v2.0)**: First launch hands off to the system browser via the `metavisage://` URL handler; the desktop intercepts the redirect, exchanges the code for a signed RS256 license JWT, and caches it (DPAPI-encrypted) for a 7-day offline grace window. License Status modal exposes tier / usage / Sign Out
+- **Tier-aware licensing (v2.0)**: First launch hands off to the system browser via the `metavisage://` URL handler; the desktop intercepts the redirect, exchanges the code for a signed RS256 license JWT, and caches it (DPAPI-encrypted) for a 7-day offline grace window. Feature flags gate paid tools, conversion usage reports through a durable offline queue, and the License Status modal exposes tier / usage / Sign Out
 
 ## Requirements
 
@@ -34,7 +34,7 @@ An open-source desktop application for automated MetaHuman mesh morphing. Wrap M
   - GLFW3, Dear ImGui (with `glfw-binding` + `opengl3-binding` + `docking-experimental` + `test-engine`), GLEW
   - nlohmann/json, native-file-dialog-extended (NFD), libcurl
   - Assimp, Eigen3
-  - jwt-cpp + OpenSSL (RS256 license JWT verification — Sprint 6)
+  - jwt-cpp + OpenSSL (RS256 license JWT verification and feature-flag parsing)
 - **No Qt dependency.** Earlier versions linked `Qt6::Core` transitionally; Sprint 3.7 removed it entirely. The CMake configure-time guard fails the build if any Qt target is reintroduced.
 
 ## Quick Start
@@ -53,10 +53,10 @@ cmake --build . --config Release
 # Run the full smoke suite (load → serialize → reload → export round-trip,
 # v1.0.0 backward-compat regression, Wrap Engine behavioural-parity, and
 # imgui_test_engine click-through smoke against the live AppWindow)
-ctest -C Release
+ctest -C Release --output-on-failure
 
 # Or filter to just the imgui_test_engine UI lane
-ctest -C Release -L ui
+ctest -C Release -L ui --output-on-failure
 
 # Launch
 ./bin/Release/MetaVisage.exe
@@ -68,13 +68,13 @@ See [BUILD.md](BUILD.md) for detailed instructions (MinGW, vcpkg setup, troubles
 
 ```powershell
 # MSVC build, development profile (default; reads .env.development)
-.\build-msvc.ps1 -Deploy -VcpkgToolchain "C:/vcpkg/scripts/buildsystems/vcpkg.cmake"
+.\build-msvc.ps1 -Profile development -Deploy -VcpkgToolchain "C:/vcpkg/scripts/buildsystems/vcpkg.cmake"
 
 # MSVC build, staging profile (reads .env.staging — gitignored)
 .\build-msvc.ps1 -Profile staging -Deploy -VcpkgToolchain "C:/vcpkg/scripts/buildsystems/vcpkg.cmake"
 
 # MinGW build
-.\build-mingw.ps1 -VcpkgToolchain "C:/vcpkg/scripts/buildsystems/vcpkg.cmake"
+.\build-mingw.ps1 -Profile development -VcpkgToolchain "C:/vcpkg/scripts/buildsystems/vcpkg.cmake"
 ```
 
 **Build profile** (Sprint 6+): the `-Profile` flag selects which `.env.<profile>` is read into CMake at configure time. `.env.development` ships with localhost defaults and the non-secret Supabase dev creds; `.env.staging` / `.env.production` and `keys/*.pem` (the RS256 license-JWT public keys) are gitignored and delivered out-of-band. CMake refuses to configure non-development profiles without a real API URL, Supabase URL, anon key, and public key.
@@ -117,7 +117,7 @@ MetaVisage/
 ├── .env.example      # Build-profile template (API URL, Supabase URL, anon key, key file)
 ├── .env.development  # Localhost dev profile (committed; non-secret defaults)
 ├── CMakeLists.txt    # Build configuration
-├── vcpkg.json        # Pinned dependency manifest (jwt-cpp + openssl as of Sprint 6)
+├── vcpkg.json        # Pinned dependency manifest (jwt-cpp + openssl + ImGui test engine)
 ├── build-msvc.ps1    # MSVC build helper (-Profile + -Deploy flags)
 ├── build-mingw.ps1   # MinGW build helper (-Profile flag)
 ├── BUILD.md          # Detailed build instructions
@@ -125,7 +125,7 @@ MetaVisage/
 └── LICENSE           # MIT License
 ```
 
-The UI lives under `include/ui/` & `src/ui/`: shell hosts (`AppWindow`, `Viewport`, `ViewportHost`, `StageSidebar`, `StageStepper`, `ToolRail`, `Modals`, `FileDialogs`, `LoginScreen`) plus the design-system primitives (`MvStyle` for tokens + brand asset texture handles, `MvIcons` for the Lucide icon font, `MvInspectorPrimitives` for shared section / sub-section / row helpers). The licensing layer (`include/licensing/`, `src/licensing/`) owns the auth state machine, browser-based OAuth via the `metavisage://` URL handler, RS256 JWT verification, and the 24h refresh thread that keeps tokens current.
+The UI lives under `include/ui/` & `src/ui/`: shell hosts (`AppWindow`, `Viewport`, `ViewportHost`, `StageSidebar`, `StageStepper`, `ToolRail`, `Modals`, `FileDialogs`, `LoginScreen`) plus the design-system primitives (`MvStyle` for tokens + brand asset texture handles, `MvIcons` for the Lucide icon font, `MvInspectorPrimitives` for shared section / sub-section / row helpers, and `UpgradePromptWidget` for paid-feature gates). The licensing layer (`include/licensing/`, `src/licensing/`) owns the auth state machine, browser-based OAuth via the `metavisage://` URL handler, RS256 JWT verification, feature-flag enforcement, durable conversion reporting, and the 24h refresh thread that keeps tokens current.
 
 ## Contributing
 

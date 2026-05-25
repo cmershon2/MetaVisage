@@ -786,58 +786,58 @@ This sprint plan covers the v2.0 release of MetaVisage. It addresses all v1.0.0 
 | `batch_processing` | false | false | false |
 
 **Tasks:**
-- [ ] Expose all feature flag values from `LicenseManager` via typed getters (e.g. `LicenseManager::CanUploadCustomHead()`, `LicenseManager::GetTextureTransferMode()`, `LicenseManager::GetTouchUpToolset()`)
-- [ ] `custom_head_upload = false` (Free): Disable only the custom source MetaHuman head upload in Stage 1; keep the target mesh upload and default MetaHuman head path available; show an upgrade prompt explaining the source-head feature requires Indie or higher
-- [ ] `texture_transfer = none` (Free): Hide the texture upload section in Stage 1 entirely
-- [ ] `texture_transfer = albedo` (Indie): Allow Albedo texture upload; hide and disable additional texture slot uploads beyond one (Albedo only); show an upgrade prompt for additional slots
-- [ ] `texture_transfer = albedo_normal` (Pro): Allow unlimited texture uploads (existing behavior)
-- [ ] `morphing_parameters = presets` (Free): Disable the General and Advanced collapsible parameter sections; only preset cards are selectable and parameters cannot be individually adjusted; show an upgrade prompt on the section headers
-- [ ] `morphing_parameters = full` (Indie/Pro): Full parameter access (existing behavior)
-- [ ] `masking = false` (Free): Hide/disable the Vertex Masking section in Stage 3; show an upgrade prompt
-- [ ] `touchup_tools = basic_smooth` (Free): Only Smooth brush is available in Stage 4; Grab, Push/Pull, and Inflate brushes are visible but disabled with an upgrade prompt on hover
-- [ ] `touchup_tools = basic` (Indie): Smooth and Grab brushes available; Push/Pull and Inflate disabled with upgrade prompt
-- [ ] `touchup_tools = full` (Pro): All brushes available (existing behavior)
+- [x] Expose all feature flag values from `LicenseManager` via typed getters (e.g. `LicenseManager::CanUploadCustomHead()`, `LicenseManager::GetTextureTransferMode()`, `LicenseManager::GetTouchUpToolset()`)
+- [x] `custom_head_upload = false` (Free): Disable only the custom source MetaHuman head upload in Stage 1; keep the target mesh upload and default MetaHuman head path available; show an upgrade prompt explaining the source-head feature requires Indie or higher
+- [x] `texture_transfer = none` (Free): Hide the texture upload section in Stage 1 entirely
+- [x] `texture_transfer = albedo` (Indie): Allow Albedo texture upload; hide and disable additional texture slot uploads beyond one (Albedo only); show an upgrade prompt for additional slots
+- [x] `texture_transfer = albedo_normal` (Pro): Allow unlimited texture uploads (existing behavior)
+- [x] `morphing_parameters = presets` (Free): Disable the General and Advanced collapsible parameter sections; only preset cards are selectable and parameters cannot be individually adjusted; show an upgrade prompt on the section headers
+- [x] `morphing_parameters = full` (Indie/Pro): Full parameter access (existing behavior)
+- [x] `masking = false` (Free): Hide/disable the Vertex Masking section in Stage 3; show an upgrade prompt
+- [x] `touchup_tools = basic_smooth` (Free): Only Smooth brush is available in Stage 4; Grab, Push/Pull, and Inflate brushes are visible but disabled with an upgrade prompt on hover
+- [x] `touchup_tools = basic` (Indie): Smooth and Grab brushes available; Push/Pull and Inflate disabled with upgrade prompt
+- [x] `touchup_tools = full` (Pro): All brushes available (existing behavior)
 
 #### Story 7.2: Conversion Tracking
 **Background:** Each successful export counts as one conversion against the user's monthly limit. Accepting a morph in Stage 3 does not count; users can reprocess and compare settings freely before committing an export.
 
 **Tasks:**
-- [ ] Implement `LicenseManager::ReportConversion()` which calls `POST /api/license/conversion` with `Authorization: Bearer <access_token>`
-- [ ] Call `ReportConversion()` only after a mesh export succeeds
-- [ ] On success (HTTP 200): update the in-memory `conversions_used` counter and refresh the `LicenseStatusDialog` if open
-- [ ] Before export, block when effective usage is already at the monthly limit; on server-side `403 limit_reached`, show a dialog explaining the limit, when it resets (`conversions_reset_at`), and a link to upgrade
-- [ ] Handle `429 rate_limited` with `Retry-After` backoff; handle `500` with exponential backoff and surface a non-blocking notification if the retry ultimately fails
-- [ ] If the device is offline after a successful export: queue the conversion report and send it on next successful network connection; do not block the completed export due to network error
+- [x] Implement `LicenseManager::ReportConversion()` which calls `POST /api/license/conversion` with `Authorization: Bearer <access_token>`
+- [x] Call `ReportConversion()` only after a mesh export succeeds
+- [x] On success (HTTP 200): update the in-memory `conversions_used` counter and refresh the `LicenseStatusDialog` if open
+- [x] Before export, block when effective usage is already at the monthly limit; on server-side `403 limit_reached`, show a dialog explaining the limit, when it resets (`conversions_reset_at`), and a link to upgrade
+- [x] Handle `429 rate_limited` with `Retry-After` backoff; handle `500` with exponential backoff and surface a non-blocking notification if the retry ultimately fails
+- [x] If the device is offline after a successful export: queue the conversion report and send it on next successful network connection; do not block the completed export due to network error
 
 #### Story 7.3: Upgrade Prompts
 **Background:** Free and Indie users should see clear, non-intrusive upgrade prompts when they encounter a feature gated to a higher tier.
 
 **Tasks:**
-- [ ] Implement a reusable `UpgradePromptWidget` — a small inline panel or tooltip-style callout that displays: a brief description of the locked feature, the tier required to unlock it, and a "Upgrade at metavisage.io" button that opens the pricing page
-- [ ] Use `UpgradePromptWidget` consistently at all feature gate points identified in Story 7.1
-- [ ] Upgrade prompts should be informative and non-alarming — no modal dialogs for passive feature gates; use inline disabled states with a visible indicator
+- [x] Implement a reusable `UpgradePromptWidget` — a small inline panel or tooltip-style callout that displays: a brief description of the locked feature, the tier required to unlock it, and a "Upgrade at metavisage.io" button that opens the pricing page
+- [x] Use `UpgradePromptWidget` consistently at all feature gate points identified in Story 7.1
+- [x] Upgrade prompts should be informative and non-alarming — no modal dialogs for passive feature gates; use inline disabled states with a visible indicator
 
 #### Story 7.4: Conversion Limit Warning
 **Background:** Users approaching their monthly conversion limit should be warned before they hit it.
 
 **Tasks:**
-- [ ] After each successful conversion report, check if `conversions_used >= conversions_limit - 2` (within 2 conversions of the limit)
-- [ ] If so, show a non-blocking status bar notification: "You have X conversions remaining this month. Resets on [date]."
-- [ ] When `conversions_used == conversions_limit`, show the same notification with "0 conversions remaining" and an upgrade link
-- [ ] Display current conversion usage (`conversions_used / conversions_limit`) in the `LicenseStatusDialog`
+- [x] After each successful conversion report, check if `conversions_used >= conversions_limit - 2` (within 2 conversions of the limit)
+- [x] If so, show a non-blocking status bar notification: "You have X conversions remaining this month. Resets on [date]."
+- [x] When `conversions_used == conversions_limit`, show the same notification with "0 conversions remaining" and an upgrade link
+- [x] Display current conversion usage (`conversions_used / conversions_limit`) in the `LicenseStatusDialog`
 
 ### Acceptance Criteria
-- [ ] Free tier users cannot load a custom source MetaHuman head; target mesh upload remains available and an upgrade prompt is shown on the gated source slot
-- [ ] Free tier users cannot access individual morphing parameters; preset cards are the only option
-- [ ] Free tier users cannot use Vertex Masking
-- [ ] Free tier users can only use the Smooth brush in Stage 4
-- [ ] Indie tier users can use Smooth and Grab brushes; Push/Pull and Inflate show upgrade prompts
-- [ ] Pro tier users have access to all features
-- [ ] Each successful export reports to `POST /api/license/conversion`
-- [ ] Exporting when the limit is reached is blocked with a clear dialog
-- [ ] Offline export queues the conversion report for later delivery
-- [ ] Upgrade prompts appear inline at all gated feature locations
-- [ ] A warning appears in the status bar when within 2 conversions of the monthly limit
+- [x] Free tier users cannot load a custom source MetaHuman head; target mesh upload remains available and an upgrade prompt is shown on the gated source slot
+- [x] Free tier users cannot access individual morphing parameters; preset cards are the only option
+- [x] Free tier users cannot use Vertex Masking
+- [x] Free tier users can only use the Smooth brush in Stage 4
+- [x] Indie tier users can use Smooth and Grab brushes; Push/Pull and Inflate show upgrade prompts
+- [x] Pro tier users have access to all features
+- [x] Each successful export reports to `POST /api/license/conversion`
+- [x] Exporting when the limit is reached is blocked with a clear dialog
+- [x] Offline export queues the conversion report for later delivery
+- [x] Upgrade prompts appear inline at all gated feature locations
+- [x] A warning appears in the status bar when within 2 conversions of the monthly limit
 
 ---
 
@@ -856,7 +856,7 @@ This sprint plan covers the v2.0 release of MetaVisage. It addresses all v1.0.0 
 - [ ] Write the Inno Setup script (`installer/metavisage_setup.iss`):
   - Application name, version, publisher metadata
   - Install directory: `%PROGRAMFILES%\MetaVisage`
-  - Bundle all Qt DLLs, Assimp DLL, WinSparkle DLL, and application assets (shaders, models, preset thumbnails, brush previews)
+  - Bundle runtime DLLs (Assimp, GLFW/GLEW as needed, WinSparkle) and application assets (shaders, models, preset thumbnails, brush previews)
   - Create Start Menu shortcuts
   - Create Desktop shortcut (optional, user-selectable during install)
   - Register application in Windows `Add or Remove Programs`
@@ -886,6 +886,8 @@ This sprint plan covers the v2.0 release of MetaVisage. It addresses all v1.0.0 
 - [ ] Test the complete workflow using a Pro tier account — verify all features are accessible
 - [ ] Test offline operation: disconnect from the internet after a valid validation, verify the app functions for the grace period, verify blocking occurs after the JWT expires
 - [ ] Test conversion limit enforcement: exhaust the monthly conversion limit on a Free account, verify the block dialog appears on the next export attempt
+- [ ] Verify staging `/api/desktop/token` and `/api/license/conversion` are live before treating auth/conversion testing as release evidence
+- [ ] Capture paid-feature visual QA frames for Free / Indie / Pro gate states, including standard locked rows, hover cards, ToolRail gates, and brush preview preservation
 - [ ] Test the Stage 2 save/load regression (from Sprint 1)
 - [ ] Test the installer on a clean Windows 10 VM
 - [ ] Test the installer on a clean Windows 11 VM

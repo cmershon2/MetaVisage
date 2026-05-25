@@ -371,7 +371,7 @@ bool AppWindow::Initialize(int width, int height, const char* title) {
     }
 
     project_ = std::make_unique<Project>();
-    // Quick Wrap is the canonical project default per CLAUDE.md and the
+    // Quick Wrap is the canonical project default per AGENTS.md and the
     // Sprint 4 plan — apply on every fresh-project construction so the
     // inspector card row opens with that built-in highlighted.
     WrapPreset::QuickWrap().ApplyTo(project_->GetMorphData());
@@ -2243,7 +2243,7 @@ void AppWindow::RenderModals() {
 
     // Sprint 6 Story 6.6 -- License Status modal. Action requests are
     // polled here so RenderLicenseModal stays a pure render fn (matches
-    // the per-frame state-passing convention from CLAUDE.md).
+    // the per-frame state-passing convention from AGENTS.md).
     RenderLicenseModal(licenseModal_);
     if (licenseModal_.manageSubscriptionRequested) {
         licenseModal_.manageSubscriptionRequested = false;

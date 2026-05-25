@@ -1,7 +1,7 @@
 ﻿# Product Backlog
 
 **Project**: MetaVisage
-**Last Updated**: April 20, 2026
+**Last Updated**: May 25, 2026
 
 > Active v2.0 work is tracked in `.agents/context/sprints/SPRINT_PLAN.md` and individual sprint files seeded via `$sprint-planner`. This backlog holds items **not yet committed to a sprint** — candidates pulled from v1.0.0 feedback that fell out of v2.0 scope, and post-v2.0 enhancements from the PRD.
 
@@ -19,13 +19,13 @@
   - **Effort**: ~15–20 points (~1.5 weeks solo)
   - **Value**: Completes the Qt exit begun in Sprint 3.5; shrinks installer; removes final Qt build-tool dependency
 
-- [/] **Investigate "cottage cheese face" morph artifacts** *(Sprint 5, in progress — Story 5.2 shipped Outcome B stopgap)*
-  - Users report geometry stretching at correspondence point locations after morphing. Needs diagnostic work: determine whether this is an NRICP parameter-tuning issue, a point-density issue, or a normal-recomputation bug.
-  - **Effort**: ~1–2 weeks (investigation + fix)
-  - **Value**: Directly affects output quality — the feature users pay for
+- [x] **Investigate "cottage cheese face" morph artifacts** *(Sprint 7 complete - Outcome B stopgap decision)*
+  - Users report geometry stretching at correspondence point locations after morphing. Sprint 7 closed the root-cause spike with the explicit "Outcome B stopgap is the answer" decision; the amber parameter warning and `METAVISAGE_DUMP_RESIDUALS=1` diagnostic path remain the supported response until a stable repro fixture and residual data justify reopening.
+  - **Effort actual**: Sprint 5 stopgap + Sprint 7 decision spike
+  - **Value**: Directly affects output quality - the feature users pay for
 
 - [x] **Cottage-cheese-face — root-cause spike** *(Sprint 7 Story 7.5, closed with "Outcome B stopgap is the answer" decision)*
-  - **Closed 2026-05-04 with explicit decision per Sprint 6 retro AI #2 framing.** See [cottage_cheese_face_decision.md](./cottage_cheese_face_decision.md) for the full close-out rationale + the residual-dump-backed criteria that would reopen the spike.
+  - **Closed 2026-05-25 with explicit decision per Sprint 6 retro AI #2 framing.** See [cottage_cheese_face_decision.md](./cottage_cheese_face_decision.md) for the full close-out rationale + the residual-dump-backed criteria that would reopen the spike.
   - Three-sprint deferral closed without a code change to NRICPDeformer. Each of the three audit-flagged hypothesis sites was reviewed: Hypothesis 1 (constant landmark weight at [NRICPDeformer.cpp:764-794](../../../src/deformation/NRICPDeformer.cpp#L764)) is the standard NRICP formulation, not a bug; Hypothesis 2 (UV-seam BFS at [NRICPDeformer.cpp:198-285](../../../src/deformation/NRICPDeformer.cpp#L198)) cannot be validated without a stable repro fixture + residual-dump data; Hypothesis 3 (excluded-vertex landmark contribution at [NRICPDeformer.cpp:354, 391](../../../src/deformation/NRICPDeformer.cpp#L354)) is a precondition issue, not an indexing defect.
   - The Sprint 5 Outcome B stopgap (StageSidebar amber warning at `landmarkWeight / alphaFinal > 0.5` + the `METAVISAGE_DUMP_RESIDUALS=1` diagnostic-dump scaffolding) stays in place as the user-facing fix.
   - **Reopen criteria**: a stable repro fixture + residual-dump data correlating peaks against landmarks / seams / scattered. A backlog item should be filed if/when those preconditions exist; the decision document captures the workflow.
@@ -35,9 +35,24 @@
   - **Effort**: ~3–5 days
   - **Value**: Data loss during long morph sessions is the highest-severity user complaint category not addressed in v2.0
 
+- [ ] **Staging licensing endpoint deployment for desktop release QA**
+  - `/api/desktop/token` and `/api/license/conversion` need to be live in staging so desktop release testing can validate the same auth refresh, feature flag, conversion reporting, and limit-reached paths users will hit outside the localhost development portal.
+  - **Effort**: Web-team deployment + desktop verification pass
+  - **Value**: Converts Sprint 6/7 development-profile validation into release-readiness evidence
+
 ---
 
 ## 🟡 Medium Priority
+
+- [ ] **Conversion reporting idempotency / account-scoped queue ownership**
+  - Sprint 7 hardened the local durable queue so reports are removed only after server confirmation, but a hard crash after a successful POST and before local drain can still duplicate a conversion on next launch. Coordinate with the web team on an idempotency key and/or persist queue ownership by account/license so queued reports cannot cross sessions incorrectly.
+  - **Effort**: ~1–2 days desktop + web API coordination
+  - **Value**: Protects billing accuracy and user trust around paid conversion limits
+
+- [ ] **Paid-feature visual QA checklist**
+  - Capture a compact checklist with screenshots or frames for Free / Indie / Pro gate states, including standard locked inspector rows, hover cards, ToolRail gates, and brush preview preservation.
+  - **Effort**: ~0.5 day
+  - **Value**: Keeps future UI-heavy PRs aligned with the paid-feature CTA standard without relying on memory from live review
 
 - [x] **License Status modal redesign + title-bar account chip** *(Sprint 7 live-test feedback, pulled in from Sprint 6 retro AI #3)*
   - Shipped in Sprint 7 instead of the originally-planned Sprint 8 deferral, after the user surfaced it during live testing. The redesigned modal renders a dedicated header band (sparkle glyph + title + X close button), three sectioned bodies (ACCOUNT / LICENSE / USAGE THIS MONTH with mono-uppercase eyebrows), the existing `LicenseRow` primitive for label/value pairs, a tier-coloured `TIER` badge, a `KEY` row in mono, the `STATUS` pill + "Last sync: Xm ago" via a new `LastSyncedLabel` helper, a `↻ Refresh license` button wired to `LicenseManager::RequestRefresh()`, a tier-aware progress bar (`ImGui::ProgressBar` recoloured amber within 2 of the cap), and a footer band carrying the `Manage subscription →` text link plus right-aligned `Sign out` (red) and `Close` (primary blue) buttons. The title-bar account chip renders to the right of the Autosave indicator: tier pill (FREE muted / INDIE blue / PRO amber), email (mono, truncated past 24 chars), tier-ringed initials avatar pulled from the email's local part. Click anywhere on the chip opens the License Status modal. Graceful degradation when the menu bar runs out of room — chip wins, save indicator drops first.

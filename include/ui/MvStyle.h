@@ -4,7 +4,7 @@
 #include <imgui.h>
 
 // Sprint 3.8 design system — direct mirror of
-// .claude/context/design/version_2/colors_and_type.css.
+// .agents/context/design/version_2/colors_and_type.css.
 //
 // All UI surfaces should source colors from this header. Never write a raw
 // ImVec4(r,g,b,a) literal in stage / modal / overlay code — if a token is

@@ -174,6 +174,7 @@ LicenseManager::~LicenseManager() {
 }
 
 void LicenseManager::Shutdown() {
+    shuttingDown_.store(true);
     StopRefreshThread();
     if (exchangeThread_.joinable()) {
         exchangeThread_.join();
@@ -186,6 +187,11 @@ void LicenseManager::Shutdown() {
     if (conversionThread_.joinable()) {
         conversionThread_.join();
     }
+    // Normal shutdown still gets a chance to apply a completed conversion
+    // worker result. This prevents a successful POST from being reported
+    // again on the next launch just because the app closed before the next
+    // frame drained the worker result.
+    DrainPendingConversion();
     PersistConversionQueue();
 }
 
@@ -595,9 +601,10 @@ void LicenseManager::DrainPendingExchange() {
 
 void LicenseManager::LoadClaimsFromJwt(const std::string& jwt) {
     // Decode payload only -- VerifyJwt has already run signature checks
-    // by this point. jwt-cpp throws on malformed input; we swallow and
-    // leave the previous values in place so a corrupt JWT doesn't
-    // silently zero the badge.
+    // by this point. jwt-cpp throws on malformed input; legacy claim values
+    // stay visible for diagnostics, but feature flags reset first so a
+    // bug-shaped refreshed JWT can never preserve stale paid entitlements.
+    featureFlags_ = FeatureFlags{};
     try {
         auto decoded = jwt::decode(jwt);
         if (decoded.has_payload_claim("tier")) {
@@ -690,6 +697,7 @@ void LicenseManager::LoadClaimsFromJwt(const std::string& jwt) {
             tier_, conversionsUsed_, conversionsLimit_,
             sawFlags ? "parsed" : "defaulted"));
     } catch (const std::exception& e) {
+        featureFlags_ = FeatureFlags{};
         MV_LOG_WARNING(std::format(
             "LicenseManager: failed to decode JWT claims: {}", e.what()));
     }
@@ -1157,6 +1165,21 @@ void LicenseManager::EnqueueConversion(
     }
 }
 
+void LicenseManager::RemoveCompletedConversions(
+        const std::vector<std::chrono::system_clock::time_point>& completed) {
+    if (completed.empty()) return;
+
+    std::lock_guard<std::mutex> lock(conversionQueueMutex_);
+    for (const auto& tp : completed) {
+        const auto it = std::find(conversionQueue_.begin(),
+                                  conversionQueue_.end(),
+                                  tp);
+        if (it != conversionQueue_.end()) {
+            conversionQueue_.erase(it);
+        }
+    }
+}
+
 void LicenseManager::LoadConversionQueue() {
     const std::string path = ConversionQueuePath();
     if (path.empty()) return;
@@ -1239,12 +1262,12 @@ void LicenseManager::PersistConversionQueue() const {
 
 void LicenseManager::ReportConversion() {
     const auto now = std::chrono::system_clock::now();
+    EnqueueConversion(now);
+    PersistConversionQueue();
 
     // Offline path -- queue and bail. The next successful refresh
     // (DrainPendingRefresh -> FlushConversionQueue) drains.
     if (offlineMode_) {
-        EnqueueConversion(now);
-        PersistConversionQueue();
         MV_LOG_INFO("LicenseManager: conversion queued (offline mode)");
         return;
     }
@@ -1252,13 +1275,11 @@ void LicenseManager::ReportConversion() {
     // Already-running worker -- queue and let DrainPendingConversion()
     // start a follow-up flush after the active report completes cleanly.
     if (conversionRunning_.load()) {
-        EnqueueConversion(now);
-        PersistConversionQueue();
         return;
     }
 
-    // No queued backlog and we're online -- single-shot worker.
-    StartConversionWorker({now});
+    // No active worker and we're online -- drain the durable queue.
+    FlushConversionQueue();
 }
 
 void LicenseManager::FlushConversionQueue() {
@@ -1268,13 +1289,12 @@ void LicenseManager::FlushConversionQueue() {
     {
         std::lock_guard<std::mutex> lock(conversionQueueMutex_);
         if (conversionQueue_.empty()) return;
-        // Move the entire queue into the batch; if the worker fails
-        // partway through, ConversionResult.remaining repopulates the
-        // queue on drain.
+        // Copy the queue into the batch, but keep it durable until the
+        // server confirms each timestamp. This keeps effective usage honest
+        // while the worker is in flight and avoids losing reports during
+        // shutdown or a transient worker failure.
         batch.assign(conversionQueue_.begin(), conversionQueue_.end());
-        conversionQueue_.clear();
     }
-    PersistConversionQueue();  // empty queue persisted; safe even if worker fails
     MV_LOG_INFO(std::format(
         "LicenseManager: flushing {} queued conversions", batch.size()));
     StartConversionWorker(std::move(batch));
@@ -1343,6 +1363,7 @@ void LicenseManager::StartConversionWorker(
 
                 result.httpStatus = static_cast<int>(resp.status);
                 if (resp.status == 200 && resp.errorMessage.empty()) {
+                    const auto completed = batch.front();
                     try {
                         auto j = nlohmann::json::parse(resp.body);
                         result.conversionsUsed   = j.value("conversions_used", 0);
@@ -1355,6 +1376,7 @@ void LicenseManager::StartConversionWorker(
                         MV_LOG_WARNING(std::format(
                             "LicenseManager: conversion JSON parse: {}", e.what()));
                     }
+                    result.completed.push_back(completed);
                     batch.erase(batch.begin());  // entry succeeded; drop
                     continue;
                 }
@@ -1421,24 +1443,24 @@ void LicenseManager::DrainPendingConversion() {
         }
     }
 
-    // Re-queue any leftover timestamps from a transient failure.
-    if (!result.remaining.empty()) {
-        {
-            std::lock_guard<std::mutex> lock(conversionQueueMutex_);
-            for (const auto& tp : result.remaining) {
-                conversionQueue_.push_back(tp);
-                while (conversionQueue_.size() > kConversionQueueCap) {
-                    conversionQueue_.pop_front();
-                }
-            }
-        }
+    if (!result.completed.empty()) {
+        RemoveCompletedConversions(result.completed);
         PersistConversionQueue();
         MV_LOG_INFO(std::format(
-            "LicenseManager: re-queued {} conversion(s) after transient failure",
+            "LicenseManager: confirmed {} conversion report(s)",
+            result.completed.size()));
+    }
+
+    // Unconfirmed timestamps remain in the durable queue while the worker is
+    // in flight, so a transient failure only needs to log and persist.
+    if (!result.remaining.empty()) {
+        PersistConversionQueue();
+        MV_LOG_INFO(std::format(
+            "LicenseManager: kept {} conversion(s) queued after transient failure",
             result.remaining.size()));
     } else {
-        // The batch fully cleared -- persist the now-empty in-memory queue
-        // (or whatever's been added between flush and drain).
+        // The batch fully cleared -- persist the queue after removing the
+        // confirmed entries, plus anything queued during the worker run.
         PersistConversionQueue();
     }
 
@@ -1462,7 +1484,10 @@ void LicenseManager::DrainPendingConversion() {
     // that online backlog immediately after a clean completion instead of
     // waiting for the next 24h/manual refresh. Do not immediately retry a
     // transient failure; that path waits for refresh so it cannot spin.
-    if (result.httpStatus == 200 && result.remaining.empty() && !offlineMode_) {
+    if (result.httpStatus == 200 &&
+        result.remaining.empty() &&
+        !offlineMode_ &&
+        !shuttingDown_.load()) {
         FlushConversionQueue();
     }
 }

@@ -4,6 +4,7 @@
 **Duration**: 2026-05-05 — 2026-05-18 (2 weeks, 10 working days)
 **Capacity**: 28 points (solo dev, 10 working days, ~6h focused/day @ 0.7 focus factor — same baseline as Sprints 4/5/6; the cottage-cheese spike's open-ended profile is the reason for keeping the buffer at 3 pts rather than committing the full 28)
 **Committed**: 25 points
+**Approval**: Approved by Casey in the Sprint 7 working thread; approval record backfilled during closeout on 2026-05-25.
 
 > Scope is set by [SPRINT_PLAN.md § Sprint 7](./SPRINT_PLAN.md#sprint-7-licensing-infrastructure--feature-gating--conversion-tracking) (Stories 7.1–7.4) plus carryover Action Item #2 from [retro-sprint-06.md](../retrospectives/retro-sprint-06.md) (cottage-cheese root-cause spike — Sprint 5 retro AI #2 → Sprint 6 deferred → Sprint 7 hard close) and the partial portion of Sprint 5 retro AI #1 still open (Stage Stepper `smoke_ui` scenario; the Login Screen portion shipped in Sprint 6 Story 6.7).
 >
@@ -11,7 +12,7 @@
 >
 > **Standing on Sprint 6's plumbing**: every data hook the Sprint 7 stories need is already wired. `LicenseManager` exposes `GetTier()` / `GetConversionsUsed()` / `GetConversionsLimit()` / `GetConversionsResetAt()` / `GetLicenseKey()` / `GetLastSyncedAt()` / `RequestRefresh()`. The exchange-worker pattern (`ExchangeResult` struct + `exchangeThread_` + `std::atomic<bool>` finished flag + `DrainPendingExchange()` on the main thread) is the template Story 7.2's `ReportConversion()` mirrors. The amber `Offline` pill in `RenderStatusBar` is the visual template Stories 7.3 and 7.4 reuse for inline upgrade prompts and limit warnings. **Sprint 7 adds new behaviour on top of an already-shaped surface — no foundational refactors expected.**
 >
-> **Sprint 6 retro AI #3 (License Status modal redesign + title-bar account chip)** is deliberately deferred to Sprint 8 — see "Deferred & Out of Scope" below for the rationale. Story 7.4 still touches the existing modal to add the conversion-usage row, but the full ~325 LoC redesign pairs better with Sprint 8's installer/release surface than with Sprint 7's functional gating.
+> **Sprint 6 retro AI #3 (License Status modal redesign + title-bar account chip)** was originally deferred to Sprint 8, then pulled into Sprint 7 during live-test feedback as unpointed polish. Story 7.4 still owns the conversion-usage data path; the broader modal/chip redesign is recorded in the Sprint Outcome and retrospective as tangential work.
 
 ---
 
@@ -19,12 +20,12 @@
 
 | # | Story | Points | Dependencies | Status |
 |---|-------|--------|--------------|--------|
-| 1 | **Story 7.1: Feature Flag Enforcement** | 8 | None — foundational getters the rest of the sprint reads from | [ ] |
-| 2 | **Story 7.2: Conversion Tracking** | 5 | Story 7.1 (`GetConversionsLimit()` for the limit-reached path) | [ ] |
-| 3 | **Story 7.3: Upgrade Prompts** | 3 | Story 7.1 (gate sites surface upgrade prompts) | [ ] |
-| 4 | **Story 7.4: Conversion Limit Warning** | 2 | Story 7.2 (counter increment after a successful report) | [ ] |
-| 5 | **Story 7.5: Cottage-Cheese-Face Root-Cause Spike** *(Sprint 5 retro AI #2 → Sprint 6 → Sprint 7 hard close)* | 5 | None — orthogonal to licensing surface | [ ] |
-| 6 | **Story 7.6: Stage Stepper smoke_ui Scenario** *(Sprint 5 retro AI #1, partial carryover — Stage Stepper portion only)* | 2 | Story 7.1 (`SetTestFeatureFlags` test-mode hook makes Free/Indie/Pro fixtures hermetic) | [ ] |
+| 1 | **Story 7.1: Feature Flag Enforcement** | 8 | None — foundational getters the rest of the sprint reads from | [x] |
+| 2 | **Story 7.2: Conversion Tracking** | 5 | Story 7.1 (`GetConversionsLimit()` for the limit-reached path) | [x] |
+| 3 | **Story 7.3: Upgrade Prompts** | 3 | Story 7.1 (gate sites surface upgrade prompts) | [x] |
+| 4 | **Story 7.4: Conversion Limit Warning** | 2 | Story 7.2 (counter increment after a successful report) | [x] |
+| 5 | **Story 7.5: Cottage-Cheese-Face Root-Cause Spike** *(Sprint 5 retro AI #2 → Sprint 6 → Sprint 7 hard close)* | 5 | None — orthogonal to licensing surface | [x] |
+| 6 | **Story 7.6: Stage Stepper smoke_ui Scenario** *(Sprint 5 retro AI #1, partial carryover — Stage Stepper portion only)* | 2 | Story 7.1 (`SetTestFeatureFlags` test-mode hook makes Free/Indie/Pro fixtures hermetic) | [x] |
 
 > **Critical-path**: 7.1 → (7.2, 7.3) is the load-bearing chain. 7.1 lands the typed getters and the JWT `feature_flags` parser; the gating UI in 7.1 itself uses 7.3's `UpgradePromptWidget`, so 7.3 is best done as a parallel track that 7.1 calls into rather than sequenced after. Aim for 7.1 + 7.3 by Day 5 so 7.2 + 7.4 (the conversion path) lands in the second week. 7.5 is independent and can run in parallel; 7.6 lands once 7.1's `SetTestFeatureFlags` exists.
 
@@ -113,7 +114,7 @@ Each gate uses the same pattern: `ImGui::BeginDisabled(!licenseManager.GetX())` 
 **`limit_reached` blocking dialog** (Free-tier 4th export of the month):
 - Reuse the existing `Modals::OpenConfirm` infrastructure with custom title "Monthly conversion limit reached", body listing the limit (`conversions_limit`), the reset date (`conversions_reset_at` formatted as a readable date string), and an "Upgrade at metavisage.io" link (left-aligned, `OpenUrl(METAVISAGE_API_BASE_URL "/pricing")`) plus a "Close" button. **Important**: the local pre-check blocks export when effective usage is already at the cap; users can still tweak parameters, re-run, and compare results, they just can't write another export until reset or upgrade.
 
-**Out of scope this story**: status-bar warning at `limit - 2` (Story 7.4); License Status modal usage row update (Story 7.4); the `Help > Account & License` modal redesign (Sprint 8).
+**Out of scope this story**: status-bar warning at `limit - 2` (Story 7.4); License Status modal usage row update (Story 7.4). The broader `Help > Account & License` redesign was later pulled into Sprint 7 as live-test polish, outside the Story 7.2 conversion-reporting estimate.
 
 ### Story 7.3: Upgrade Prompts (3 pts)
 
@@ -158,7 +159,7 @@ Two surfaces touched: the status bar (new "X conversions remaining" indicator) a
 - Sprint 6 already renders `<used> / <limit>`. Add a one-line "Resets <date>" beneath using the same `ImGui::TextColored` muted-grey treatment used elsewhere in the modal. Use `MvStyle::Colors::MvSlate400` for the muted line.
 - No structural changes — the redesign per Sprint 6 retro AI #3 is Sprint 8 territory.
 
-**Out of scope this story**: full License Status modal redesign + title-bar account chip (Sprint 6 retro AI #3 → Sprint 8).
+**Originally out of scope for this story**: full License Status modal redesign + title-bar account chip. It was later pulled into Sprint 7 during live-test feedback as unpointed polish; Story 7.4 remains the owner for the conversion-usage data path.
 
 ### Story 7.5: Cottage-Cheese-Face Root-Cause Spike (5 pts) *(Sprint 5 retro AI #2 — three-sprint hard close)*
 
@@ -241,26 +242,26 @@ The Sprint 5 retro AI #1 split cleanly: Login Screen portion shipped in Sprint 6
 
 ## Definition of Done
 
-- [ ] All committed stories implemented and merged to the sprint branch (`sprint/Licensing-Infrastructure-Feature-Gating-&-Conversion-Tracking`)
-- [ ] Build clean: `cmake --build . --config Release` succeeds with no new warnings (the three pre-existing C5054 warnings in the dockspace flag-combine code carry over from Sprint 3.6 unchanged — out of scope here, same as Sprints 3.8 / 4 / 5 / 6)
-- [ ] CTest green: `ctest -C Release` passes the existing smoke lanes (`smoke_load_serialize_export`, `smoke_v1_backward_compat`, `smoke_wrap_parity`, and `smoke_ui`) with the six current UI scenarios, including `stage_stepper_progression` and `touchup_brush_gate_clamp` — and, conditional on Story 7.5 landing a fix, the new `wrap_parity_cottage_cheese` regression case
-- [ ] `feature_flags` parsing extracts all 7 fields from a fresh-from-portal JWT; missing fields default to Free-tier-restrictive shape with a one-time `MV_LOG_WARN` per missing field
-- [ ] **Free tier** (verified via `SetTestFeatureFlags` fixture): cannot load a custom source MetaHuman head but can still load a target head; texture upload section hidden with upgrade prompt; General + Advanced morphing parameter sections disabled with upgrade prompt above the General header; Vertex Mask section disabled with upgrade prompt; only Smooth brush enabled in Stage 4 (inspector cards + ToolRail, hotkeys included)
-- [ ] **Indie tier** (verified via fixture): mesh upload enabled; texture upload restricted to Albedo only with upgrade prompt for additional slots; full morphing parameters; masking enabled; Smooth + Grab brushes enabled, Push-Pull + Inflate disabled with upgrade prompts
-- [ ] **Pro tier** (verified via fixture): all features enabled (no regressions from Sprint 6 surface)
-- [ ] `LicenseManager::ReportConversion()` posts to `/api/license/conversion` with the access token; counter updates from the response body, not from a local increment
-- [ ] Conversion-limit pre-check blocks the export path when effective usage is at the cap; 403 `limit_reached` from the server clears queued reports and shows the limit + reset date + an "Upgrade at metavisage.io" link
-- [ ] 429 retries with `Retry-After`; 5xx retries with exponential backoff (1s/2s/4s/30s, 3 retries)
-- [ ] Offline export queues the conversion to `%APPDATA%\MetaVisage\conversion_queue.json` and never blocks the user; queue is drained on the next successful refresh or after an in-flight online report completes cleanly
-- [ ] Queue cap at 100 entries — overflow drops oldest with a `MV_LOG_WARN`
-- [ ] `UpgradePromptWidget` (inline pill + hover tooltip) renders consistently at all 7 gate sites identified in Story 7.1; copy lives in a single `kUpgradePromptCopy` table
-- [ ] Status bar shows the "X conversions remaining" amber pill when `used >= limit - 2`; shows "0 conversions left — resets <date>" with an upgrade link at `used == limit`
-- [ ] License Status modal shows a "Resets <date>" line beneath the existing `<used> / <limit>` text
-- [ ] Cottage-cheese-face spike closed: either a fix landed with a `smoke_wrap_parity` regression case, **or** the explicit "Outcome B stopgap is the answer" decision is documented in the close-out commit body with residual-dump evidence; either outcome closes Sprint 5 retro AI #2 for good
-- [ ] `stage_stepper_progression` and `touchup_brush_gate_clamp` scenarios pass under `ctest -L ui`; total `smoke_ui` runtime budget under 5 seconds
-- [ ] PR opened against `development` and `$review-pr` agent run; all blocking findings resolved
-- [ ] Phase D manual UI smoke — all three tier fixtures walked end-to-end (Stage 1 → 2 → 3 → 4 → Export); offline-pill smoke (Wi-Fi off + successful export + verify queue persistence + Wi-Fi on + verify queue drain); Undo/Redo regression check on point placement / gizmo drag / mask paint / sculpt brush. Done against the **development** profile (staging endpoint deployment is tracked separately per Sprint 6 retro Open Item #1)
-- [ ] Sprint outcome notes updated with actual velocity, carryover, retrospective link, and explicit close-outs on Sprint 5 retro AI #1 (Stage Stepper portion) + AI #2 (cottage-cheese spike)
+- [x] All committed stories implemented and merged to the sprint branch (`sprint/Licensing-Infrastructure-Feature-Gating-&-Conversion-Tracking`)
+- [x] Build clean: `.\build-msvc.ps1 -Profile development -Deploy` succeeds. Known warnings remain: C4996 on the residual-dump getenv path and the three pre-existing C5054 dockspace flag-combine warnings.
+- [x] CTest green: `ctest -C Release --output-on-failure` passes the existing smoke lanes (`smoke_load_serialize_export`, `smoke_v1_backward_compat`, `smoke_wrap_parity`, and `smoke_ui`) with the six current UI scenarios, including `stage_stepper_progression` and `touchup_brush_gate_clamp`
+- [x] `feature_flags` parsing extracts all 7 fields from a fresh-from-portal JWT; missing fields and malformed claim parses default to Free-tier-restrictive shape with a one-time `MV_LOG_WARN` per missing field
+- [x] **Free tier** (verified via `SetTestFeatureFlags` fixture and live UI review): cannot load a custom source MetaHuman head but can still load a target head; texture upload section hidden with upgrade prompt; General + Advanced morphing parameter sections disabled with upgrade prompt above the General header; Vertex Mask section disabled with upgrade prompt; only Smooth brush enabled in Stage 4 (inspector cards + ToolRail, hotkeys included)
+- [x] **Indie tier** (verified via fixture): mesh upload enabled; texture upload restricted to Albedo only with upgrade prompt for additional slots; full morphing parameters; masking enabled; Smooth + Grab brushes enabled, Push-Pull + Inflate disabled with upgrade prompts
+- [x] **Pro tier** (verified via fixture): all features enabled (no regressions from Sprint 6 surface)
+- [x] `LicenseManager::ReportConversion()` posts to `/api/license/conversion` with the access token; counter updates from the response body, not from a local increment
+- [x] Conversion-limit pre-check blocks the export path when effective usage is at the cap; 403 `limit_reached` from the server clears queued reports and shows the limit + reset date + an "Upgrade at metavisage.io" link
+- [x] 429 retries with `Retry-After`; 5xx retries with exponential backoff (1s/2s/4s/30s, 3 retries)
+- [x] Offline export queues the conversion to `%APPDATA%\MetaVisage\conversion_queue.json` and never blocks the user; queue is drained on the next successful refresh or after an in-flight online report completes cleanly
+- [x] Queue cap at 100 entries — overflow drops oldest with a `MV_LOG_WARN`
+- [x] `UpgradePromptWidget` hover-card/locked-row treatment renders consistently at all 7 gate sites identified in Story 7.1, including the final UI/UX redesign and restored brush preview images
+- [x] Status bar shows the "X conversions remaining" amber pill when `used >= limit - 2`; shows "0 conversions left — resets <date>" with an upgrade path at `used == limit`
+- [x] License Status modal shows usage progress, pending sync count, reset date, and the Sprint 7 live-test redesign/title-bar account chip
+- [x] Cottage-cheese-face spike closed with the explicit "Outcome B stopgap is the answer" decision in [cottage_cheese_face_decision.md](../development/cottage_cheese_face_decision.md)
+- [x] `stage_stepper_progression` and `touchup_brush_gate_clamp` scenarios pass under `ctest -C Release`; `smoke_ui` runtime was 4.42 seconds on the final full test run
+- [x] PR opened against `development` and `$review-pr` run; blocking findings resolved in the follow-up patch before merge
+- [x] Phase D manual/UI smoke evidence recorded against the **development** profile: live user review covered the paid-feature CTA rest/hover redesign and brush-preview restoration; automated smoke covers stage progression, login cycle, brush gate clamping, export round-trip, v1 compatibility, and wrap parity. Staging endpoint deployment remains tracked separately per Sprint 6 retro Open Item #1.
+- [x] Sprint outcome notes updated with actual velocity, carryover, retrospective link, and explicit close-outs on Sprint 5 retro AI #1 (Stage Stepper portion) + AI #2 (cottage-cheese spike)
 
 > **Mechanical guard (Sprint 4 Action Item #3 + Sprint 5 Story 5.5):** the
 > `$sprint-retrospective` skill refuses to run in two cases — (Clause A) when
@@ -276,7 +277,7 @@ The Sprint 5 retro AI #1 split cleanly: Login Screen portion shipped in Sprint 6
 
 ## Deferred & Out of Scope
 
-- **Sprint 6 retro Action Item #3 — License Status modal redesign + title-bar account chip** (~325 LoC of pure rendering work). Deliberately deferred to Sprint 8. Rationale: Sprint 7 already adds 25 pts of functional gating; the modal redesign is orthogonal rendering polish that pairs better with Sprint 8's installer/release surface than with Sprint 7's gating logic. Story 7.4 still touches `RenderLicenseModal` to add the "Resets <date>" line, but the full redesign waits. Every data hook the redesign needs (`license_key`, `lastSyncedAt_`, `RequestRefresh()`) was plumbed in Sprint 6 and stays plumbed.
+- **Sprint 6 retro Action Item #3 — License Status modal redesign + title-bar account chip** (~290 LoC of pure rendering work) was pulled into Sprint 7 during live-test feedback. The redesign is complete and no longer carries to Sprint 8; the only omitted mockup detail is the "ANNUAL" plan badge because no JWT/exchange-response field carries billing cadence.
 - **`smoke_ui` full deep-link round trip with mock HTTP server** (Sprint 6 retro "longed for"). Defer indefinitely until the second Login Screen scenario is wanted; for Sprint 7 the `SetTestFeatureFlags` hook covers the realistic-fixture concern that motivated it.
 - **Stage 3 process+Accept and Stage 4 brush+sculpt+undo `smoke_ui` scenarios** (original Sprint 5.4 spec). Defer post-v2.0 — they need real worker-thread + sculpt-mesh state which is genuinely heavy to fixture; the Stage Stepper progression scenario in Story 7.6 is the carryover the retros tracked.
 - **`Win32Window` + `utils/Random` consolidation helpers** (Sprint 6 retro "longed for"). Defer post-v2.0 — Sprint 6 added scattered raw Win32 surface across `LicenseManager.cpp`, `SingleInstance.cpp`, `AppWindow.cpp`; centralizing it is a refactor opportunity, not a v2.0 ship blocker.
@@ -287,7 +288,7 @@ The Sprint 5 retro AI #1 split cleanly: Login Screen portion shipped in Sprint 6
 
 ## Sprint Outcome
 
-**Status**: Planned
-**Velocity (Actual)**: TBD
-**Carryover**: TBD (track Sprint 5 retro AI #1 Stage Stepper portion + AI #2 cottage-cheese spike close-out explicitly in the retro)
-**Notes**: TBD (populate at retrospective; reference [retro-sprint-07.md](../retrospectives/retro-sprint-07.md) once written)
+**Status**: Complete
+**Velocity (Actual)**: 25 committed points completed (6 of 6 stories), plus unpointed live-test polish for the License Status modal/account chip and final paid-feature CTA redesign.
+**Carryover**: None. Sprint 5 retro AI #1 Stage Stepper portion closed by `stage_stepper_progression`; Sprint 5/6 cottage-cheese carryover closed by the Outcome B decision document.
+**Notes**: Sprint 7 shipped tier feature enforcement, conversion tracking with durable offline queue, conversion warnings, redesigned upgrade prompts, restored brush previews, and smoke coverage for Stage Stepper + brush gate clamping. See [retro-sprint-07.md](../retrospectives/retro-sprint-07.md).

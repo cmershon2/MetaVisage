@@ -38,7 +38,8 @@ slash commands, Claude hooks, or `CLAUDE.md` as active project instructions.
 - Mesh processing: libigl, OpenMesh, CGAL.
 - Math and serialization: Eigen, GLM, nlohmann/json.
 - Licensing/auth: libcurl, jwt-cpp, OpenSSL, Win32 URL handlers, DPAPI-backed
-  token storage, Supabase refresh flow.
+  token storage, Supabase refresh flow, tier feature flags, durable conversion
+  reporting queue.
 - Installer/update: Inno Setup and WinSparkle.
 
 ## Build And Test
@@ -59,13 +60,15 @@ relinking; Windows MSVC fails with `LNK1104` if the executable is open.
 Run smoke tests with:
 
 ```powershell
-ctest -C Release
-ctest -C Release -L ui
+ctest -C Release --output-on-failure
+ctest -C Release -L ui --output-on-failure
 ```
 
 `VCPKG_ROOT` or `-DCMAKE_TOOLCHAIN_FILE=...` is required for configure.
 Production builds must have non-empty API URL, Supabase URL, anon key, and
-public key inputs.
+public key inputs. The full smoke suite has four targets; `smoke_wrap_parity`
+can take about 70 seconds on development machines and has a 120-second CTest
+timeout.
 
 ## Architecture
 
@@ -112,6 +115,10 @@ Use `MvIcons::*` for Lucide icon glyphs. Do not hand-draw glyphs with
 Inspector rows should go through `MvInspectorPrimitives` so layout and
 one-undo-per-gesture behavior stay consistent.
 
+Paid feature gates should use `UpgradePromptWidget`: compact locked rows for
+standard inspector controls and hover cards for brush/tool buttons. Brush gates
+must keep the underlying brush preview image visible under the lock treatment.
+
 Algorithm secrecy matters: do not reference NRICP by name in user-facing UI
 text, logs, documentation, or error messages. Internal code comments and sprint
 docs may use the internal name.
@@ -123,6 +130,7 @@ docs may use the internal name.
 - Aggregated sprint plan: `.agents/context/sprints/SPRINT_PLAN.md`
 - v1.0.0 feedback: `.agents/context/Version 1.0.0 Feedback.md`
 - Product backlog: `.agents/context/development/product_backlog.md`
+- Latest retrospective: `.agents/context/retrospectives/retro-sprint-07.md`
 - Web integration specs:
   `.agents/context/DESKTOP_APP_INTEGRATION.md`,
   `.agents/context/DESKTOP_AUTH_FLOW.md`,

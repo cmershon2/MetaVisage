@@ -94,7 +94,7 @@ WrapPreset MakeQuickWrap() {
     // Default params (= Fantasy Wrap baseline) plus rigidity (gamma) locked
     // to 1.0 on both ends of the schedule. Higher rigidity preserves the
     // source mesh's shape, which is what indie devs want for realistic
-    // human heads. CLAUDE.md and product-vision.md pin these semantics.
+    // human heads. AGENTS.md and product-vision.md pin these semantics.
     preset.params.nricpGammaInitial = 1.0f;
     preset.params.nricpGammaFinal   = 1.0f;
     return preset;

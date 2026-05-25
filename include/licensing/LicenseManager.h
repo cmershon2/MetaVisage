@@ -25,13 +25,13 @@ namespace MetaVisage {
 //   6.5  7-day offline grace using the cached JWT
 //   6.6  SignOut clears caches and returns to Unauthenticated
 //
-// Per CLAUDE.md per-frame state model: AppWindow + LoginScreen poll
+// Per AGENTS.md per-frame state model: AppWindow + LoginScreen poll
 // GetState() each frame; transitions are pushed by the network/IPC
 // layers, never by the UI.
 //
 // Sprint 7 Story 7.1 -- tier-derived feature flags parsed from the license
 // JWT payload. Matches the contract documented in
-// .claude/context/DESKTOP_APP_INTEGRATION.md (Free / Indie / Pro).
+// .agents/context/DESKTOP_APP_INTEGRATION.md (Free / Indie / Pro).
 //
 // Defaulting policy: every field starts at the most-restrictive value so a
 // Free-shaped (or bug-shaped, missing-field) JWT can never grant accidental
@@ -263,6 +263,8 @@ private:
     // future review that retunes one budget can retune both.
     void StartConversionWorker(std::vector<std::chrono::system_clock::time_point> batch);
     void EnqueueConversion(std::chrono::system_clock::time_point timestamp);
+    void RemoveCompletedConversions(
+        const std::vector<std::chrono::system_clock::time_point>& completed);
     void LoadConversionQueue();
     void PersistConversionQueue() const;
     static constexpr int    kConversionMaxAttempts  = 4;
@@ -390,14 +392,20 @@ private:
         int conversionsLimit = 0;
         std::string conversionsResetAt;
         std::string errorMessage;
-        // Timestamps left on the queue when the worker bailed early (e.g.
-        // mid-batch transient failure). These are re-persisted so we
-        // don't lose them across launches.
+        // Timestamps confirmed by the server. They stay durable in
+        // conversionQueue_ while the worker is in flight, then drain removes
+        // only these confirmed entries.
+        std::vector<std::chrono::system_clock::time_point> completed;
+        // Timestamps left unconfirmed when the worker bailed early (e.g.
+        // mid-batch transient failure). They already remain in
+        // conversionQueue_, so drain only uses this for logging and follow-up
+        // retry decisions.
         std::vector<std::chrono::system_clock::time_point> remaining;
     };
     std::thread conversionThread_;
     std::atomic<bool> conversionRunning_{false};
     std::atomic<bool> conversionFinished_{false};
+    std::atomic<bool> shuttingDown_{false};
     std::mutex conversionResultMutex_;
     ConversionResult conversionResult_;
     std::mutex conversionQueueMutex_;

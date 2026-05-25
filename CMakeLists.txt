@@ -470,7 +470,7 @@ endif()
 add_test(NAME smoke_wrap_parity
          COMMAND metavisage_smoke_wrap_parity
          WORKING_DIRECTORY ${CMAKE_RUNTIME_OUTPUT_DIRECTORY})
-set_tests_properties(smoke_wrap_parity PROPERTIES TIMEOUT 60)
+set_tests_properties(smoke_wrap_parity PROPERTIES TIMEOUT 120)
 
 # ---------------------------------------------------------------------------
 # imgui_test_engine smoke-UI lane (Story 5.4)

@@ -770,7 +770,7 @@ int NRICPDeformer::BuildSystemMatrix(
     // formulation, NOT a bug. The cottage-cheese-face spike was closed
     // with "Outcome B stopgap is the answer" (the StageSidebar amber
     // warning at landmarkWeight/alphaFinal > 0.5 is the user-facing
-    // fix). See .claude/context/development/cottage_cheese_face_decision.md
+    // fix). See .agents/context/development/cottage_cheese_face_decision.md
     // for the full rationale + reopen criteria. Three-sprint deferral
     // closed without a code change here.
     double wl = static_cast<double>(params_.landmarkWeight);
