@@ -120,38 +120,8 @@ struct AssetHandles {
     // the Lucide glyph in that case so the panel stays usable.
     unsigned int BrushPreviewTextureIds[4] = { 0, 0, 0, 0 };
 
-    // Sprint 7 round-4 — Upgrade prompt hover-card preview images.
-    // Index order matches UpgradePreview below; zero means "load
-    // failed" and the hover card falls back to the glyph-header
-    // strip. Source PNGs live under assets/upgrade/ at 320x180.
-    unsigned int UpgradePreviewTextureIds[8] = { 0, 0, 0, 0, 0, 0, 0, 0 };
 };
 extern AssetHandles Asset;
-
-// Sprint 7 -- per-gate preview lookup. Call sites do
-//   ImTextureID hero = MvStyle::UpgradePreviewTex(UpgradePreview::VertexMask);
-// and pass `hero` into the UpgradePromptCopy::heroImage field. Missing
-// images (handle == 0) cause the hover card to fall back to the amber
-// glyph header band, so calling at a slot with no asset is safe.
-enum class UpgradePreview : int {
-    CustomHead       = 0,
-    TextureAlbedo    = 1,
-    TextureFullPbr   = 2,
-    VertexMask       = 3,
-    MorphParams      = 4,
-    BrushGrab        = 5,
-    BrushPushPull    = 6,
-    BrushInflate     = 7,
-    _Count           = 8,
-};
-inline ImTextureID UpgradePreviewTex(UpgradePreview p) {
-    const int idx = static_cast<int>(p);
-    if (idx < 0 || idx >= static_cast<int>(UpgradePreview::_Count)) return 0;
-    // Matches the cast pattern existing code uses for ImTextureID (e.g.
-    // StageSidebar / ToolRail brush previews) -- ImTextureID is ImU64
-    // in current ImGui, so a C-style cast collapses to static_cast.
-    return (ImTextureID)(intptr_t)Asset.UpgradePreviewTextureIds[idx];
-}
 
 // =============================================================================
 // Lifecycle — call sequence in AppWindow::Initialize:

@@ -325,29 +325,6 @@ void LoadAssets() {
             UploadPngAsTexture(assetsRoot / "brushes" / kBrushPreviewFilenames[i]);
     }
 
-    // Sprint 7 round-4 -- Upgrade prompt hover-card preview images.
-    // Filenames match the UpgradePreview enum in MvStyle.h. Slots whose
-    // PNG is missing (e.g. brush_*.png before the artist renames the
-    // placeholder copies) load as 0 and silently fall back to the glyph
-    // header in the hover card.
-    static constexpr const char* kUpgradePreviewFilenames[] = {
-        "custom_head.png",
-        "texture_albedo.png",
-        "texture_full_pbr.png",
-        "vertex_mask.png",
-        "morph_params.png",
-        "brush_grab.png",
-        "brush_pushpull.png",
-        "brush_inflate.png",
-    };
-    static_assert(std::size(kUpgradePreviewFilenames) ==
-                      std::size(Asset.UpgradePreviewTextureIds),
-                  "kUpgradePreviewFilenames and UpgradePreviewTextureIds must "
-                  "stay the same length; pair with the UpgradePreview enum");
-    for (size_t i = 0; i < std::size(kUpgradePreviewFilenames); ++i) {
-        Asset.UpgradePreviewTextureIds[i] =
-            UploadPngAsTexture(assetsRoot / "upgrade" / kUpgradePreviewFilenames[i]);
-    }
 }
 
 void Shutdown() {
@@ -358,12 +335,6 @@ void Shutdown() {
     for (size_t i = 0; i < std::size(Asset.BrushPreviewTextureIds); ++i) {
         if (Asset.BrushPreviewTextureIds[i]) {
             GLuint t = Asset.BrushPreviewTextureIds[i];
-            glDeleteTextures(1, &t);
-        }
-    }
-    for (size_t i = 0; i < std::size(Asset.UpgradePreviewTextureIds); ++i) {
-        if (Asset.UpgradePreviewTextureIds[i]) {
-            GLuint t = Asset.UpgradePreviewTextureIds[i];
             glDeleteTextures(1, &t);
         }
     }
