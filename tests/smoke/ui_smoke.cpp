@@ -1,9 +1,9 @@
 // Story 5.4 — imgui_test_engine smoke-UI lane.
 //
-// Drives the live AppWindow through three click-through scenarios that
-// catch the bug classes flagged in the Sprint 3.6 / 3.7 / 3.8 retros:
-// stage progression, modal/window toggling, and viewport-toolbar
-// click-through. Each scenario exits on first failure with a screenshot
+// Drives the live AppWindow through focused smoke scenarios that catch
+// the bug classes flagged across the Sprint 3.6-7 retros: modal/window
+// toggling, viewport-toolbar click-through, auth gating, stage progression,
+// and tier-gated brush clamping. Each scenario exits on first failure with a screenshot
 // available via ImGuiTestEngineIO::ScreenCaptureFunc — currently nullptr
 // so failures only surface in stdout, but the hook is wired so we can
 // add screenshot-on-failure later.
@@ -15,14 +15,10 @@
 //   3  one or more test scenarios failed
 //
 // Limitations vs. the Sprint 5 plan's original 5-scenario spec:
-//   - The shipped 3 are pragmatic substitutes: welcome modal dismiss,
-//     dockspace window-existence smoke, and viewport-toolbar shading
-//     modes (the original spec's #2). The Sprint 5 spec's stage
-//     stepper and login-screen scenarios were dropped after iteration
-//     showed their ImGui paths involved BeginChild + nested-menu
-//     resolution that isn't easily addressable via the test-engine
-//     path syntax — chasing them in this commit would have cost more
-//     than the whole story's budget.
+//   - The original three pragmatic substitutes remain: welcome modal
+//     dismiss, dockspace window-existence smoke, and viewport-toolbar
+//     shading modes. Sprint 6 added login_screen_cycle; Sprint 7 added
+//     stage_stepper_progression and touchup_brush_gate_clamp.
 //   - Scenarios 3 (Stage 3 process+Accept) and 4 (Stage 4 brush+sculpt
 //     +undo) are NOT implemented — both require loading a mesh,
 //     running a multi-second worker, or synthesising mouse strokes
@@ -233,6 +229,63 @@ void RegisterScenario_StageStepperProgression(ImGuiTestEngine* engine) {
     };
 }
 
+void RegisterScenario_TouchUpBrushGateClamp(ImGuiTestEngine* engine) {
+    // Sprint 7 review fix -- paid Touch Up brushes must be gated below the
+    // visible sidebar/ToolRail controls too. This scenario forces the project
+    // state to a disallowed brush and verifies the per-frame AppWindow mirror
+    // clamps it back to an allowed brush for the active tier.
+    ImGuiTest* t = IM_REGISTER_TEST(engine, "smoke", "touchup_brush_gate_clamp");
+    t->TestFunc = [](ImGuiTestContext* ctx) {
+        ctx->SetRef("");
+        DismissWelcomeModalIfOpen(ctx);
+
+        if (!g_app || !g_app->GetProject()) {
+            IM_CHECK(false);
+            return;
+        }
+
+        Project* project = g_app->GetProject();
+        auto& lm = LicenseManager::Instance();
+
+        FeatureFlags freeTier;
+        freeTier.conversionsLimit = 3;
+        freeTier.touchUpToolset = FeatureFlags::TouchUpToolset::BasicSmooth;
+        lm.SetTestFeatureFlags(freeTier);
+
+        project->SetCurrentStage(WorkflowStage::TouchUp);
+        project->GetSculptState().activeBrush = BrushType::Inflate;
+        ctx->Yield();
+        ctx->Yield();
+        IM_CHECK(project->GetSculptState().activeBrush == BrushType::Smooth);
+
+        FeatureFlags indieTier = freeTier;
+        indieTier.conversionsLimit = 20;
+        indieTier.touchUpToolset = FeatureFlags::TouchUpToolset::Basic;
+        lm.SetTestFeatureFlags(indieTier);
+
+        project->GetSculptState().activeBrush = BrushType::Grab;
+        ctx->Yield();
+        ctx->Yield();
+        IM_CHECK(project->GetSculptState().activeBrush == BrushType::Grab);
+
+        project->GetSculptState().activeBrush = BrushType::PushPull;
+        ctx->Yield();
+        ctx->Yield();
+        IM_CHECK(project->GetSculptState().activeBrush == BrushType::Smooth);
+
+        FeatureFlags proTier = indieTier;
+        proTier.conversionsLimit = 60;
+        proTier.customHeadUpload = true;
+        proTier.textureTransfer = FeatureFlags::TextureTransfer::AlbedoNormal;
+        proTier.morphingParameters = FeatureFlags::MorphingParameters::Full;
+        proTier.masking = true;
+        proTier.touchUpToolset = FeatureFlags::TouchUpToolset::Full;
+        lm.SetTestFeatureFlags(proTier);
+        project->SetCurrentStage(WorkflowStage::Alignment);
+        ctx->Yield();
+    };
+}
+
 void RegisterScenario_LoginScreenCycle(ImGuiTestEngine* engine) {
     // Sprint 6 Story 6.7 -- exercise the LoginScreen Sign in / Cancel
     // cycle. Pre-condition: flip LicenseManager into Unauthenticated so
@@ -312,6 +365,7 @@ int main(int /*argc*/, char** /*argv*/) {
     RegisterScenario_DockspaceWindowSmoke(engine);
     RegisterScenario_ViewportShadingModes(engine);
     RegisterScenario_StageStepperProgression(engine);
+    RegisterScenario_TouchUpBrushGateClamp(engine);
     RegisterScenario_LoginScreenCycle(engine);
 
     ImGuiTestEngine_Start(engine, ImGui::GetCurrentContext());

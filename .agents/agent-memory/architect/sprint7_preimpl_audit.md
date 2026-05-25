@@ -1,10 +1,14 @@
 ---
 name: Sprint 7 Pre-Implementation Audit
-description: Feature gating and conversion tracking audit — LicenseManager claim state, sidebar surfaces, status bar, modal, AcceptMorph hook, smoke_ui pattern
+description: Feature gating and conversion tracking audit — LicenseManager claim state, sidebar surfaces, status bar, modal, export hook, smoke_ui pattern
 type: project
 ---
 
 Key findings:
+
+> Superseded implementation decision: conversion counting now happens after a
+> successful export, not on Stage 3 Accept Result. The AcceptMorph hook notes
+> below are historical audit context only; use the export path for Sprint 7.2.
 
 **LicenseManager claims (LicenseManager.h + .cpp)**
 - Parses: tier_, licenseKey_, conversionsUsed_, conversionsLimit_, conversionsResetAt_ — done in LoadClaimsFromJwt at lines 557-589
@@ -18,10 +22,10 @@ Key findings:
 - Retry budget constants live at LicenseManager.h:170-171 (kExchangeMaxAttempts=4, kExchangeBudgetSeconds=30)
 - RefreshOutcome enum + pendingRefreshResult_ is the offline-queue analog in LicenseManager.h:253-274
 
-**AcceptMorph — conversion trigger point**
-- AppWindow.cpp:895 dispatches acceptMorphRequested → AcceptMorph()
-- AcceptMorph() body at AppWindow.cpp:2643-2648: sets morphData.isAccepted = true, nothing else
-- ReportConversion() call slots in right here after the isAccepted flip
+**Export — conversion trigger point**
+- AppWindow dispatches exportMeshRequested → Export modal → DoExport()
+- Export pre-check blocks when effective usage is already at the monthly cap
+- ReportConversion() runs only after MeshExporter::Export succeeds
 
 **Stage 1 mesh-load buttons**
 - StageSidebar.cpp:159 RenderAlignment(); mesh slot buttons at ~line 197 (morph) and ~220 (target)
@@ -59,7 +63,7 @@ Key findings:
 - LicenseStatusPill() helper at Modals.cpp:957
 
 **smoke_ui**
-- tests/smoke/ui_smoke.cpp — 4 scenarios registered at main() lines 239-242
+- tests/smoke/ui_smoke.cpp — current scenarios register in main() before `ImGuiTestEngine_Start`
 - Pattern: RegisterScenario_X(engine) free function, IM_REGISTER_TEST macro, TestFunc lambda
 - g_app static pointer used to reach AppWindow/Viewport state from within tests
 - New scenario = new RegisterScenario_X() function + call in main() before ImGuiTestEngine_Start

@@ -123,9 +123,8 @@ private:
     void AcceptMorph();
 
     // Story 7.2 -- reuses confirmModal_ to surface the conversion-limit
-    // block dialog. Called both proactively (AcceptMorph pre-check) and
-    // reactively (after a 403 limit_reached result lands on the next
-    // TickOnce).
+    // block dialog. Called proactively from the export pre-check and
+    // reactively after a 403 limit_reached result lands on the next TickOnce.
     void OpenConversionLimitReachedModal(int limit,
                                          const std::string& resetAtIso);
 

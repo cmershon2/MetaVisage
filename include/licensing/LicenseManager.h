@@ -118,15 +118,13 @@ public:
     // refresh-token-invalid 401 (-> Unauthenticated, force re-auth).
     void DrainPendingRefresh();
 
-    // Story 7.2 -- POST /api/license/conversion for the just-accepted
-    // morph. Spawns a fire-and-forget worker thread (mirrors the
-    // StartExchange + DrainPendingExchange pattern). On transport
-    // failure after the retry budget the timestamp is appended to the
-    // offline queue so the user is never blocked by a network blip.
-    // Caller is AppWindow::AcceptMorph; the pre-check that the user is
-    // not already over their limit lives in AcceptMorph (we trust the
-    // caller here -- the limit pre-check is a UX concern, not a data
-    // integrity one).
+    // Story 7.2 -- POST /api/license/conversion after a successful export.
+    // Spawns a fire-and-forget worker thread (mirrors the StartExchange +
+    // DrainPendingExchange pattern). On transport failure after the retry
+    // budget the timestamp is appended to the offline queue so the user's
+    // export is never blocked by a network blip. Caller is AppWindow::DoExport;
+    // the pre-check that the user is not already over their effective limit
+    // lives in the export action path.
     void ReportConversion();
 
     // Story 7.2 -- main-thread drain for ReportConversion's worker.
@@ -156,7 +154,7 @@ public:
 
     // Story 7.2 -- count of conversions queued for offline-sync. UI
     // surfaces this as "N pending sync" or folds it into the effective
-    // used count so the user sees their accept reflected immediately
+    // used count so the user sees their export reflected immediately
     // even when the device is offline. Thread-safe read.
     int GetPendingConversionCount() const;
 

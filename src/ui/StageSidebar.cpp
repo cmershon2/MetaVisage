@@ -1495,7 +1495,7 @@ void StageSidebar::RenderTouchUp(Project& project, Actions& out) {
         // on Stage 4 -- it's the last stage before export, and an export
         // is what counts as a conversion. Goes amber when within 2 of
         // the cap; muted otherwise. Pending offline conversions fold
-        // into the effective used count so an accept-while-offline
+        // into the effective used count so an export-while-offline
         // shows up immediately.
         {
             const auto& lm = MetaVisage::LicenseManager::Instance();

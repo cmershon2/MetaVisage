@@ -92,7 +92,7 @@ Error response body format:
 
 ### 2. Report Conversion — `POST /api/license/conversion`
 
-Called by the desktop app **after each successful conversion** to increment the user's monthly conversion counter.
+Called by the desktop app **after each successful export** to increment the user's monthly conversion counter. Morph processing and Accept Result review actions do not consume conversions.
 
 #### Request
 
@@ -294,7 +294,7 @@ The desktop app should respect the `Retry-After` header and implement exponentia
                     │
                     ▼
           ┌──────────────────┐
-          │  On conversion   │
+          │  On export       │
           │  Call /conversion │
           │  Update local UI │
           └──────────────────┘

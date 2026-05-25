@@ -76,6 +76,22 @@ void GlfwErrorCallback(int error, const char* description) {
     MV_LOG_ERROR(std::format("GLFW error {}: {}", error, description));
 }
 
+bool IsTouchUpBrushAllowedForTier(BrushType brush) {
+    switch (LicenseManager::Instance().GetTouchUpToolset()) {
+        case FeatureFlags::TouchUpToolset::Full:
+            return true;
+        case FeatureFlags::TouchUpToolset::Basic:
+            return brush == BrushType::Smooth || brush == BrushType::Grab;
+        case FeatureFlags::TouchUpToolset::BasicSmooth:
+        default:
+            return brush == BrushType::Smooth;
+    }
+}
+
+BrushType CoerceTouchUpBrushForTier(BrushType brush) {
+    return IsTouchUpBrushAllowedForTier(brush) ? brush : BrushType::Smooth;
+}
+
 // PR #25 review feedback: cross-thread "please bring the OS window to
 // the foreground" signal. Set by AppWindow::RequestForegroundFocus
 // (called from main.cpp's SingleInstance listener thread) and
@@ -1000,8 +1016,13 @@ void AppWindow::TickOnce(int fbWidth, int fbHeight) {
         if (viewportHost_ && project_ &&
             project_->GetCurrentStage() == WorkflowStage::TouchUp) {
             if (Viewport* vp = viewportHost_->GetPrimaryViewport()) {
-                const auto& s = project_->GetSculptState();
-                vp->SetBrushType(s.activeBrush);
+                auto& s = project_->GetSculptState();
+                const BrushType activeBrush =
+                    CoerceTouchUpBrushForTier(s.activeBrush);
+                if (activeBrush != s.activeBrush) {
+                    s.activeBrush = activeBrush;
+                }
+                vp->SetBrushType(activeBrush);
                 vp->SetBrushRadius(s.brushRadius);
                 vp->SetBrushStrength(s.brushStrength);
                 vp->SetBrushFalloff(s.falloff);
@@ -1927,7 +1948,7 @@ void AppWindow::RenderStatusBar() {
         // Sprint 7 Story 7.4 -- conversion-limit warning pill. Triggers
         // within 2 conversions of the limit and stays visible at zero
         // remaining. The "used" value folds in offline-queued
-        // conversions (live-test feedback: an offline accept should be
+        // conversions (live-test feedback: an offline export should be
         // visible immediately, not invisible until the queue drains).
         const int used  = lm.GetEffectiveConversionsUsed();
         const int limit = lm.GetConversionsLimit();
@@ -1951,7 +1972,7 @@ void AppWindow::RenderStatusBar() {
             drawSection(label, MvStyle::MvWarning);
         }
         // Surface offline-queued conversions even when not near the limit
-        // -- the user did an accept-while-offline expecting "their
+        // -- the user did an export-while-offline expecting "their
         // conversion was tracked", so a small "N pending sync" indicator
         // confirms the queue persists across launches.
         if (pending > 0) {
@@ -2281,13 +2302,13 @@ void AppWindow::RenderModals() {
             if (picked) exportModal_.filepath = *picked;
         }
         if (!exportModal_.filepath.empty()) {
-            // Story 7.2 -- conversion-limit pre-check fires here (at the
-            // moment the user commits to an export) rather than at
-            // AcceptMorph. The in-memory counter is the truth; the next
-            // refresh + the most recent conversion POST keep it in sync.
+            // Story 7.2 -- conversion-limit pre-check fires at export time.
+            // Effective usage folds in locally queued offline reports so a
+            // user cannot exceed their monthly cap by exporting repeatedly
+            // while reports are waiting to sync.
             auto& lm = LicenseManager::Instance();
             if (lm.GetConversionsLimit() > 0 &&
-                lm.GetConversionsUsed() >= lm.GetConversionsLimit()) {
+                lm.GetEffectiveConversionsUsed() >= lm.GetConversionsLimit()) {
                 OpenConversionLimitReachedModal(lm.GetConversionsLimit(),
                                                 lm.GetConversionsResetAt());
             } else {

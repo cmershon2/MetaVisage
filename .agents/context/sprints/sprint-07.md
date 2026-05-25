@@ -1,6 +1,6 @@
 # Sprint 7: Licensing Infrastructure — Feature Gating & Conversion Tracking
 
-**Sprint Goal**: Enforce all tier-based feature flags throughout the application, ship conversion reporting (with an offline queue so transient network failure never blocks a user-accepted morph), surface inline upgrade prompts at every gated surface, and warn users approaching their monthly conversion limit. Then close the cottage-cheese-face root-cause spike that has now carried Sprint 5 → Sprint 6 → Sprint 7 — landing the fix or making the explicit "Outcome B stopgap is the answer" decision called out in Sprint 6 retro Action Item #2. End the sprint with the two carryover `smoke_ui` scenarios from Sprint 5 retro AI #1 finally fully closed.
+**Sprint Goal**: Enforce all tier-based feature flags throughout the application, ship conversion reporting (with an offline queue so transient network failure never blocks a user-completed export), surface inline upgrade prompts at every gated surface, and warn users approaching their monthly conversion limit. Then close the cottage-cheese-face root-cause spike that has now carried Sprint 5 → Sprint 6 → Sprint 7 — landing the fix or making the explicit "Outcome B stopgap is the answer" decision called out in Sprint 6 retro Action Item #2. End the sprint with the two carryover `smoke_ui` scenarios from Sprint 5 retro AI #1 finally fully closed.
 **Duration**: 2026-05-05 — 2026-05-18 (2 weeks, 10 working days)
 **Capacity**: 28 points (solo dev, 10 working days, ~6h focused/day @ 0.7 focus factor — same baseline as Sprints 4/5/6; the cottage-cheese spike's open-ended profile is the reason for keeping the buffer at 3 pts rather than committing the full 28)
 **Committed**: 25 points
@@ -87,12 +87,12 @@ Each gate uses the same pattern: `ImGui::BeginDisabled(!licenseManager.GetX())` 
 
 ### Story 7.2: Conversion Tracking (5 pts)
 
-`POST /api/license/conversion` on every successful Accept Result, with an offline queue so a transient network failure never blocks the user.
+`POST /api/license/conversion` after every successful export. Conversion counting deliberately happens at export time, not Accept Result, so users can reprocess and compare morph settings freely before committing a result.
 
 **Endpoint contract** (per [DESKTOP_APP_INTEGRATION.md § Report Conversion](../DESKTOP_APP_INTEGRATION.md#2-report-conversion--post-apilicenseconversion)):
 - `POST {METAVISAGE_API_BASE_URL}/api/license/conversion`, `Authorization: Bearer <access_token>`, no body.
 - 200: response body `{ conversions_used, conversions_limit, conversions_reset_at, limit_reached }` — update `LicenseManager::conversionsUsed_` from this, not from a local increment.
-- 403 `limit_reached`: response carries the same usage/reset fields. Refuse the accept; show a blocking dialog.
+- 403 `limit_reached`: response carries the same usage/reset fields. Show the limit dialog, clear queued reports, and rely on the export pre-check to block future export attempts once effective usage is at the cap.
 - 429: respect `Retry-After` (integer seconds delta per QA Round 2 — `parseInt` is sufficient).
 - 5xx: exponential backoff (1s, 2s, 4s, max 30s), 3 retries.
 
@@ -101,17 +101,17 @@ Each gate uses the same pattern: `ImGui::BeginDisabled(!licenseManager.GetX())` 
 - `LicenseManager::ReportConversion()` spawns a fire-and-forget `std::thread` that runs the POST + retry loop; result lands in a mutex-guarded `pendingConversionResult_`. `DrainPendingConversion()` runs each frame on the main thread inside `AppWindow::TickOnce`, dispatches outcomes (200 → silent counter update, 403 → open block modal, 429/5xx exhausted → enqueue offline).
 - Retry budget constants alongside the existing exchange budget at [LicenseManager.h:170-171](../../../include/licensing/LicenseManager.h#L170): `kConversionMaxAttempts = 4`, `kConversionBudgetSeconds = 30` — match exchange path.
 
-**Trigger site** ([AppWindow.cpp:2643-2648](../../../src/ui/AppWindow.cpp#L2643)):
-- `AppWindow::AcceptMorph()` body currently does only `morphData.isAccepted = true`. Insert `LicenseManager::Get().ReportConversion()` immediately after the accept flag flip — *only* on the success path (Story 3.6 / Sprint 5's three-state morph status guarantees the morph completed cleanly before AcceptMorph runs; a deferred edge case for "accept after parameter edit but before re-run" stays out of scope here — the existing `[Process Wrap]` UX requires a successful run before Accept is even enabled).
+**Trigger site** ([AppWindow.cpp](../../../src/ui/AppWindow.cpp)):
+- Export is the conversion boundary. The export action path performs a local/effective usage pre-check before `DoExport()`, and `DoExport()` calls `LicenseManager::ReportConversion()` only after `MeshExporter::Export(...)` succeeds. `AcceptMorph()` remains a pure review-state flip so users can try multiple morph settings without burning conversions.
 
 **Offline queue** (the core of this story):
 - New `pendingConversionQueue_` — `std::deque<std::chrono::system_clock::time_point>` of timestamps for un-reported conversions. Persisted to `%APPDATA%\MetaVisage\conversion_queue.json` via `nlohmann::ordered_json` (atomic write through `<file>.tmp` + `MoveFileExW`, same pattern as Sprint 6's session caches but no encryption — these are timestamps, not credentials).
-- On `ReportConversion()` failure (transport-level after retry exhaustion *or* the offline branch is already known via `IsOfflineMode()`), append the timestamp to the queue and persist. **The user is unblocked immediately** — accepting a morph never depends on the network.
+- On `ReportConversion()` failure (transport-level after retry exhaustion *or* the offline branch is already known via `IsOfflineMode()`), append the timestamp to the queue and persist. **The user is unblocked immediately** — completing an export never depends on the network.
 - A new `LicenseManager::FlushConversionQueue()` runs after every successful `RefreshLicenseJWT` (the token refresh thread is the natural retry trigger — already wakes every 24h or via `NotifyRefreshNow`). Drain the queue oldest-first; one POST per queued entry. On success, pop. On 403 `limit_reached` mid-queue: drop the remaining queue (the user is over-limit; no point forcing failed POSTs). On any other error: stop, leave the queue intact, retry on next refresh.
 - **Cap the queue at 100 entries** to bound disk usage during prolonged offline sessions. Drop oldest beyond the cap with a single `MV_LOG_WARN`.
 
-**`limit_reached` blocking dialog** (Free-tier 4th conversion of the month):
-- Reuse the existing `Modals::OpenConfirm` infrastructure with custom title "Monthly conversion limit reached", body listing the limit (`conversions_limit`), the reset date (`conversions_reset_at` formatted as a readable date string), and an "Upgrade at metavisage.io" link (left-aligned, `OpenUrl(METAVISAGE_API_BASE_URL "/pricing")`) plus a "Close" button. **Important**: the morph is *not* marked accepted on this path — `morphData.isAccepted` stays false, the user can still tweak parameters and re-run, they just can't *commit* this morph as a conversion. This matches the spec ("do not allow the user to accept the result").
+**`limit_reached` blocking dialog** (Free-tier 4th export of the month):
+- Reuse the existing `Modals::OpenConfirm` infrastructure with custom title "Monthly conversion limit reached", body listing the limit (`conversions_limit`), the reset date (`conversions_reset_at` formatted as a readable date string), and an "Upgrade at metavisage.io" link (left-aligned, `OpenUrl(METAVISAGE_API_BASE_URL "/pricing")`) plus a "Close" button. **Important**: the local pre-check blocks export when effective usage is already at the cap; users can still tweak parameters, re-run, and compare results, they just can't write another export until reset or upgrade.
 
 **Out of scope this story**: status-bar warning at `limit - 2` (Story 7.4); License Status modal usage row update (Story 7.4); the `Help > Account & License` modal redesign (Sprint 8).
 
@@ -182,10 +182,10 @@ Carryover from Sprint 5 retro AI #2 → Sprint 6 deferred deliberately → Sprin
 
 The Sprint 5 retro AI #1 split cleanly: Login Screen portion shipped in Sprint 6 Story 6.7; Stage Stepper portion deferred here because it needs project-state setup that Sprint 7's feature-gating work primes (the `SetTestFeatureFlags` hook from Story 7.1 unlocks hermetic Free / Indie / Pro test fixtures).
 
-- Add `stage_stepper_progression` scenario to [tests/smoke/ui_smoke.cpp](../../../tests/smoke/ui_smoke.cpp). Pattern: same `IM_REGISTER_TEST` shape as the existing four scenarios; null-guard `g_app` per the convention at line 63; register in `main()` at lines 239-242 alongside the other scenarios.
+- Add `stage_stepper_progression` scenario to [tests/smoke/ui_smoke.cpp](../../../tests/smoke/ui_smoke.cpp). Pattern: same `IM_REGISTER_TEST` shape as the existing smoke scenarios; null-guard `g_app` per the local convention; register in `main()` alongside the other scenarios.
 - Walk: pre-condition `LicenseManager::SetTestState(Authenticated)` + `SetTestFeatureFlags(<Pro fixture>)`; load a fixture project (reuse `tests/fixtures/v1.0.0_*` if one already covers a full Stage 1→4 state, otherwise build a minimal stub). Step through the four `StageStepper` pills (Alignment → Point Reference → Morph → Touch Up); assert each transition is reflected in `Project::GetCurrentStage()` and that the corresponding sidebar renders.
 - **Hermetic constraints**: no real network (test mode flag from Sprint 6 already suppresses browser launch + HKCU writes). No real morph compute — Stage 3 progression is asserted by a UI-state check, not by waiting for the worker thread.
-- Add to existing `smoke_ui` CTest target with `LABELS ui`. Runtime budget: under 1 second. Total `smoke_ui` runtime budget after this addition: under 5 seconds (currently ~3s for 4 scenarios).
+- Add to existing `smoke_ui` CTest target with `LABELS ui`. Runtime budget: under 1 second. Total `smoke_ui` runtime budget after this addition and the Sprint 7 brush-gate clamp hardening scenario: under 5 seconds.
 - **Out of scope**: Stage 3 process+Accept and Stage 4 brush+sculpt+undo scenarios from the original Sprint 5.4 spec — those need real worker-thread + sculpt-mesh state which lands cleanly post-v2.0. The Stage Stepper progression scenario is the carryover the retros tracked.
 
 ---
@@ -201,10 +201,10 @@ The Sprint 5 retro AI #1 split cleanly: Login Screen portion shipped in Sprint 6
 **Story 7.2 (Conversion Tracking)**
 - [include/licensing/LicenseManager.h](../../../include/licensing/LicenseManager.h) — `ConversionResult` struct + `ReportConversion()` + `FlushConversionQueue()` + retry budget constants
 - [src/licensing/LicenseManager.cpp](../../../src/licensing/LicenseManager.cpp) — worker thread + `DrainPendingConversion()` + offline-queue persistence
-- [src/ui/AppWindow.cpp:2643-2648](../../../src/ui/AppWindow.cpp#L2643) — `AcceptMorph()` body: insert `ReportConversion()` call after `morphData.isAccepted = true`
+- [src/ui/AppWindow.cpp](../../../src/ui/AppWindow.cpp) — export pre-check uses effective usage; `DoExport()` calls `ReportConversion()` after successful mesh export
 - [src/ui/AppWindow.cpp](../../../src/ui/AppWindow.cpp) (`TickOnce`) — drain hook for `pendingConversionResult_` before any UI render
 - [src/ui/Modals.cpp](../../../src/ui/Modals.cpp) — new "Monthly conversion limit reached" confirm-modal payload
-- New: `%APPDATA%\MetaVisage\conversion_queue.json` (persisted offline queue; created on first offline accept)
+- New: `%APPDATA%\MetaVisage\conversion_queue.json` (persisted offline queue; created on first offline export)
 
 **Story 7.3 (Upgrade Prompts)**
 - New: `include/ui/UpgradePromptWidget.h` / `src/ui/UpgradePromptWidget.cpp` (~80 LoC — `DrawUpgradePrompt` + `DrawUpgradePromptTooltip` + the centralized `kUpgradePromptCopy` table)
@@ -243,23 +243,23 @@ The Sprint 5 retro AI #1 split cleanly: Login Screen portion shipped in Sprint 6
 
 - [ ] All committed stories implemented and merged to the sprint branch (`sprint/Licensing-Infrastructure-Feature-Gating-&-Conversion-Tracking`)
 - [ ] Build clean: `cmake --build . --config Release` succeeds with no new warnings (the three pre-existing C5054 warnings in the dockspace flag-combine code carry over from Sprint 3.6 unchanged — out of scope here, same as Sprints 3.8 / 4 / 5 / 6)
-- [ ] CTest green: `ctest -C Release` passes the existing five lanes (`smoke_load_serialize_export`, `smoke_v1_backward_compat`, `smoke_wrap_parity`, `smoke_ui` with its 4 Sprint 6 scenarios) plus the new `stage_stepper_progression` scenario added to `smoke_ui` — and, conditional on Story 7.5 landing a fix, the new `wrap_parity_cottage_cheese` regression case
+- [ ] CTest green: `ctest -C Release` passes the existing smoke lanes (`smoke_load_serialize_export`, `smoke_v1_backward_compat`, `smoke_wrap_parity`, and `smoke_ui`) with the six current UI scenarios, including `stage_stepper_progression` and `touchup_brush_gate_clamp` — and, conditional on Story 7.5 landing a fix, the new `wrap_parity_cottage_cheese` regression case
 - [ ] `feature_flags` parsing extracts all 7 fields from a fresh-from-portal JWT; missing fields default to Free-tier-restrictive shape with a one-time `MV_LOG_WARN` per missing field
-- [ ] **Free tier** (verified via `SetTestFeatureFlags` fixture): cannot load custom morph or target meshes; texture upload section hidden with upgrade prompt; General + Advanced morphing parameter sections disabled with upgrade prompt above the General header; Vertex Mask section disabled with upgrade prompt; only Smooth brush enabled in Stage 4 (inspector cards + ToolRail)
+- [ ] **Free tier** (verified via `SetTestFeatureFlags` fixture): cannot load a custom source MetaHuman head but can still load a target head; texture upload section hidden with upgrade prompt; General + Advanced morphing parameter sections disabled with upgrade prompt above the General header; Vertex Mask section disabled with upgrade prompt; only Smooth brush enabled in Stage 4 (inspector cards + ToolRail, hotkeys included)
 - [ ] **Indie tier** (verified via fixture): mesh upload enabled; texture upload restricted to Albedo only with upgrade prompt for additional slots; full morphing parameters; masking enabled; Smooth + Grab brushes enabled, Push-Pull + Inflate disabled with upgrade prompts
 - [ ] **Pro tier** (verified via fixture): all features enabled (no regressions from Sprint 6 surface)
 - [ ] `LicenseManager::ReportConversion()` posts to `/api/license/conversion` with the access token; counter updates from the response body, not from a local increment
-- [ ] 403 `limit_reached` blocks the Accept Result path; the morph stays un-accepted (`morphData.isAccepted = false`); the block dialog shows the limit + reset date + an "Upgrade at metavisage.io" link
+- [ ] Conversion-limit pre-check blocks the export path when effective usage is at the cap; 403 `limit_reached` from the server clears queued reports and shows the limit + reset date + an "Upgrade at metavisage.io" link
 - [ ] 429 retries with `Retry-After`; 5xx retries with exponential backoff (1s/2s/4s/30s, 3 retries)
-- [ ] Offline acceptance queues the conversion to `%APPDATA%\MetaVisage\conversion_queue.json` and never blocks the user; queue is drained on the next successful refresh
+- [ ] Offline export queues the conversion to `%APPDATA%\MetaVisage\conversion_queue.json` and never blocks the user; queue is drained on the next successful refresh or after an in-flight online report completes cleanly
 - [ ] Queue cap at 100 entries — overflow drops oldest with a `MV_LOG_WARN`
 - [ ] `UpgradePromptWidget` (inline pill + hover tooltip) renders consistently at all 7 gate sites identified in Story 7.1; copy lives in a single `kUpgradePromptCopy` table
 - [ ] Status bar shows the "X conversions remaining" amber pill when `used >= limit - 2`; shows "0 conversions left — resets <date>" with an upgrade link at `used == limit`
 - [ ] License Status modal shows a "Resets <date>" line beneath the existing `<used> / <limit>` text
 - [ ] Cottage-cheese-face spike closed: either a fix landed with a `smoke_wrap_parity` regression case, **or** the explicit "Outcome B stopgap is the answer" decision is documented in the close-out commit body with residual-dump evidence; either outcome closes Sprint 5 retro AI #2 for good
-- [ ] `stage_stepper_progression` scenario passes under `ctest -L ui` in under 1 second; total `smoke_ui` runtime budget under 5 seconds
+- [ ] `stage_stepper_progression` and `touchup_brush_gate_clamp` scenarios pass under `ctest -L ui`; total `smoke_ui` runtime budget under 5 seconds
 - [ ] PR opened against `development` and `$review-pr` agent run; all blocking findings resolved
-- [ ] Phase D manual UI smoke — all three tier fixtures walked end-to-end (Stage 1 → 2 → 3 → 4 → Export); offline-pill smoke (Wi-Fi off + accept morph + verify queue persistence + Wi-Fi on + verify queue drain); Undo/Redo regression check on point placement / gizmo drag / mask paint / sculpt brush. Done against the **development** profile (staging endpoint deployment is tracked separately per Sprint 6 retro Open Item #1)
+- [ ] Phase D manual UI smoke — all three tier fixtures walked end-to-end (Stage 1 → 2 → 3 → 4 → Export); offline-pill smoke (Wi-Fi off + successful export + verify queue persistence + Wi-Fi on + verify queue drain); Undo/Redo regression check on point placement / gizmo drag / mask paint / sculpt brush. Done against the **development** profile (staging endpoint deployment is tracked separately per Sprint 6 retro Open Item #1)
 - [ ] Sprint outcome notes updated with actual velocity, carryover, retrospective link, and explicit close-outs on Sprint 5 retro AI #1 (Stage Stepper portion) + AI #2 (cottage-cheese spike)
 
 > **Mechanical guard (Sprint 4 Action Item #3 + Sprint 5 Story 5.5):** the

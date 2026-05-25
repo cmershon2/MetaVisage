@@ -787,7 +787,7 @@ This sprint plan covers the v2.0 release of MetaVisage. It addresses all v1.0.0 
 
 **Tasks:**
 - [ ] Expose all feature flag values from `LicenseManager` via typed getters (e.g. `LicenseManager::CanUploadCustomHead()`, `LicenseManager::GetTextureTransferMode()`, `LicenseManager::GetTouchUpToolset()`)
-- [ ] `custom_head_upload = false` (Free): Disable the "Load Morph Mesh" and "Load Target Mesh" file buttons in Stage 1; show an upgrade prompt explaining this feature requires Indie or higher
+- [ ] `custom_head_upload = false` (Free): Disable only the custom source MetaHuman head upload in Stage 1; keep the target mesh upload and default MetaHuman head path available; show an upgrade prompt explaining the source-head feature requires Indie or higher
 - [ ] `texture_transfer = none` (Free): Hide the texture upload section in Stage 1 entirely
 - [ ] `texture_transfer = albedo` (Indie): Allow Albedo texture upload; hide and disable additional texture slot uploads beyond one (Albedo only); show an upgrade prompt for additional slots
 - [ ] `texture_transfer = albedo_normal` (Pro): Allow unlimited texture uploads (existing behavior)
@@ -799,15 +799,15 @@ This sprint plan covers the v2.0 release of MetaVisage. It addresses all v1.0.0 
 - [ ] `touchup_tools = full` (Pro): All brushes available (existing behavior)
 
 #### Story 7.2: Conversion Tracking
-**Background:** Each completed wrap (successful morph in Stage 3 that the user accepts) counts as one conversion against the user's monthly limit. The app must report each conversion to the API.
+**Background:** Each successful export counts as one conversion against the user's monthly limit. Accepting a morph in Stage 3 does not count; users can reprocess and compare settings freely before committing an export.
 
 **Tasks:**
-- [ ] Implement `LicenseManager::ReportConversion()` which calls `POST /api/license/conversion` with `Authorization: Bearer <license_key>`
-- [ ] Call `ReportConversion()` when the user clicks "Accept Result" in Stage 3 — only after the morph has completed successfully
+- [ ] Implement `LicenseManager::ReportConversion()` which calls `POST /api/license/conversion` with `Authorization: Bearer <access_token>`
+- [ ] Call `ReportConversion()` only after a mesh export succeeds
 - [ ] On success (HTTP 200): update the in-memory `conversions_used` counter and refresh the `LicenseStatusDialog` if open
-- [ ] On `403 limit_reached`: do not allow the user to accept the result; show a dialog explaining they have reached their monthly limit, when it resets (`conversions_reset_at`), and a link to upgrade
+- [ ] Before export, block when effective usage is already at the monthly limit; on server-side `403 limit_reached`, show a dialog explaining the limit, when it resets (`conversions_reset_at`), and a link to upgrade
 - [ ] Handle `429 rate_limited` with `Retry-After` backoff; handle `500` with exponential backoff and surface a non-blocking notification if the retry ultimately fails
-- [ ] If the device is offline when accepting: queue the conversion report and send it on next successful network connection; allow the user to proceed (do not block acceptance due to network error)
+- [ ] If the device is offline after a successful export: queue the conversion report and send it on next successful network connection; do not block the completed export due to network error
 
 #### Story 7.3: Upgrade Prompts
 **Background:** Free and Indie users should see clear, non-intrusive upgrade prompts when they encounter a feature gated to a higher tier.
@@ -827,15 +827,15 @@ This sprint plan covers the v2.0 release of MetaVisage. It addresses all v1.0.0 
 - [ ] Display current conversion usage (`conversions_used / conversions_limit`) in the `LicenseStatusDialog`
 
 ### Acceptance Criteria
-- [ ] Free tier users cannot load custom meshes; an upgrade prompt is shown
+- [ ] Free tier users cannot load a custom source MetaHuman head; target mesh upload remains available and an upgrade prompt is shown on the gated source slot
 - [ ] Free tier users cannot access individual morphing parameters; preset cards are the only option
 - [ ] Free tier users cannot use Vertex Masking
 - [ ] Free tier users can only use the Smooth brush in Stage 4
 - [ ] Indie tier users can use Smooth and Grab brushes; Push/Pull and Inflate show upgrade prompts
 - [ ] Pro tier users have access to all features
-- [ ] Each accepted morph reports to `POST /api/license/conversion`
-- [ ] Accepting a morph when the limit is reached is blocked with a clear dialog
-- [ ] Offline acceptance queues the conversion report for later delivery
+- [ ] Each successful export reports to `POST /api/license/conversion`
+- [ ] Exporting when the limit is reached is blocked with a clear dialog
+- [ ] Offline export queues the conversion report for later delivery
 - [ ] Upgrade prompts appear inline at all gated feature locations
 - [ ] A warning appears in the status bar when within 2 conversions of the monthly limit
 
@@ -885,7 +885,7 @@ This sprint plan covers the v2.0 release of MetaVisage. It addresses all v1.0.0 
 - [ ] Test the complete workflow using an Indie tier account — verify Indie features work and Pro-only features are blocked
 - [ ] Test the complete workflow using a Pro tier account — verify all features are accessible
 - [ ] Test offline operation: disconnect from the internet after a valid validation, verify the app functions for the grace period, verify blocking occurs after the JWT expires
-- [ ] Test conversion limit enforcement: exhaust the monthly conversion limit on a Free account, verify the block dialog appears on the next acceptance attempt
+- [ ] Test conversion limit enforcement: exhaust the monthly conversion limit on a Free account, verify the block dialog appears on the next export attempt
 - [ ] Test the Stage 2 save/load regression (from Sprint 1)
 - [ ] Test the installer on a clean Windows 10 VM
 - [ ] Test the installer on a clean Windows 11 VM

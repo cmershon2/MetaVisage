@@ -109,8 +109,9 @@ MetaVisage/
 │                     # fixtures: load → serialize → export round-trip, v1.0.0
 │                     # backward-compat regression, Wrap Engine behavioural-parity
 │                     # over Quick + Fantasy presets, and an imgui_test_engine
-│                     # click-through smoke against the live AppWindow (4 scenarios:
-│                     # welcome modal / dockspace / shading-mode / login cycle)
+│                     # click-through smoke against the live AppWindow (6 scenarios:
+│                     # welcome modal / dockspace / shading-mode / stage stepper
+│                     # / brush-gate clamp / login cycle)
 ├── .agents/          # Codex context, rules, skills, memory, boilerplate baseline
 ├── .codex/           # Codex custom agents, hooks, and local runtime config
 ├── .env.example      # Build-profile template (API URL, Supabase URL, anon key, key file)

@@ -39,6 +39,7 @@
 #include <format>
 #include <fstream>
 #include <string_view>
+#include <system_error>
 #include <thread>
 #include <vector>
 
@@ -208,7 +209,7 @@ void LicenseManager::Initialize() {
     EnsureSchemeRegistered();
 
     // Story 7.2 -- conversion queue persists across launches so an
-    // accept-while-offline-then-quit flow doesn't lose the report.
+    // export-while-offline-then-quit flow doesn't lose the report.
     LoadConversionQueue();
 
     // Story 6.3 -- verify the cached JWT before granting Authenticated.
@@ -1111,6 +1112,23 @@ std::string ConversionQueuePath() {
     return dir + "/conversion_queue.json";
 }
 
+#ifdef _WIN32
+std::wstring Utf8ToWide(std::string_view value) {
+    if (value.empty()) return {};
+    const int wideChars = MultiByteToWideChar(
+        CP_UTF8, 0,
+        value.data(), static_cast<int>(value.size()),
+        nullptr, 0);
+    if (wideChars <= 0) return {};
+    std::wstring out(static_cast<size_t>(wideChars), L'\0');
+    MultiByteToWideChar(
+        CP_UTF8, 0,
+        value.data(), static_cast<int>(value.size()),
+        out.data(), wideChars);
+    return out;
+}
+#endif
+
 }  // namespace
 
 std::optional<LicenseManager::ConversionLimitNotice>
@@ -1196,9 +1214,26 @@ void LicenseManager::PersistConversionQueue() const {
         out << j.dump();
     }
 #ifdef _WIN32
-    std::filesystem::rename(tmp, path);
+    const std::wstring tmpWide = Utf8ToWide(tmp);
+    const std::wstring pathWide = Utf8ToWide(path);
+    if (tmpWide.empty() || pathWide.empty() ||
+        !MoveFileExW(tmpWide.c_str(), pathWide.c_str(),
+                     MOVEFILE_REPLACE_EXISTING | MOVEFILE_WRITE_THROUGH)) {
+        MV_LOG_WARNING(std::format(
+            "LicenseManager: failed to persist conversion queue (Win32 {})",
+            GetLastError()));
+        std::error_code ignored;
+        std::filesystem::remove(tmp, ignored);
+    }
 #else
-    std::filesystem::rename(tmp, path);
+    std::error_code ec;
+    std::filesystem::rename(tmp, path, ec);
+    if (ec) {
+        MV_LOG_WARNING(std::format(
+            "LicenseManager: failed to persist conversion queue: {}",
+            ec.message()));
+        std::filesystem::remove(tmp, ec);
+    }
 #endif
 }
 
@@ -1214,9 +1249,8 @@ void LicenseManager::ReportConversion() {
         return;
     }
 
-    // Already-running worker -- queue and let the worker eventually
-    // pick this up. (FlushConversionQueue is the post-refresh drain
-    // path; in-flight worker collisions are rare.)
+    // Already-running worker -- queue and let DrainPendingConversion()
+    // start a follow-up flush after the active report completes cleanly.
     if (conversionRunning_.load()) {
         EnqueueConversion(now);
         PersistConversionQueue();
@@ -1228,7 +1262,7 @@ void LicenseManager::ReportConversion() {
 }
 
 void LicenseManager::FlushConversionQueue() {
-    if (conversionRunning_.load()) return;  // worker will see new entries
+    if (conversionRunning_.load()) return;  // drain starts a follow-up flush
 
     std::vector<std::chrono::system_clock::time_point> batch;
     {
@@ -1266,7 +1300,7 @@ void LicenseManager::StartConversionWorker(
                 "{}/api/license/conversion", LicenseConfig::kApiBaseUrl);
 
             if (accessTokenCopy.empty()) {
-                // Should never happen on the AcceptMorph path (we are
+                // Should never happen on the export path (we are
                 // Authenticated); guard for completeness.
                 result.errorMessage = "No access token; conversion deferred.";
                 result.remaining = std::move(batch);
@@ -1389,11 +1423,13 @@ void LicenseManager::DrainPendingConversion() {
 
     // Re-queue any leftover timestamps from a transient failure.
     if (!result.remaining.empty()) {
-        std::lock_guard<std::mutex> lock(conversionQueueMutex_);
-        for (const auto& tp : result.remaining) {
-            conversionQueue_.push_back(tp);
-            while (conversionQueue_.size() > kConversionQueueCap) {
-                conversionQueue_.pop_front();
+        {
+            std::lock_guard<std::mutex> lock(conversionQueueMutex_);
+            for (const auto& tp : result.remaining) {
+                conversionQueue_.push_back(tp);
+                while (conversionQueue_.size() > kConversionQueueCap) {
+                    conversionQueue_.pop_front();
+                }
             }
         }
         PersistConversionQueue();
@@ -1406,14 +1442,28 @@ void LicenseManager::DrainPendingConversion() {
         PersistConversionQueue();
     }
 
-    // 403 -> raise a one-shot block-modal notice. The morph itself is
-    // already accepted by the time we get here (AcceptMorph fires
-    // ReportConversion fire-and-forget); the user-visible block is the
-    // "you've hit your limit, future accepts won't count" message.
+    // 403 -> raise a one-shot block-modal notice. If another export
+    // queued while this worker was in flight, drop it too: the server
+    // says this account is at its cap, so additional reports cannot land
+    // until the next reset or upgrade.
     if (result.limitReached) {
+        {
+            std::lock_guard<std::mutex> lock(conversionQueueMutex_);
+            conversionQueue_.clear();
+        }
+        PersistConversionQueue();
         std::lock_guard<std::mutex> lock(conversionLimitNoticeMutex_);
         conversionLimitNotice_ = ConversionLimitNotice{
             result.conversionsLimit, result.conversionsResetAt};
+        return;
+    }
+
+    // If another export happened while this worker was reporting, drain
+    // that online backlog immediately after a clean completion instead of
+    // waiting for the next 24h/manual refresh. Do not immediately retry a
+    // transient failure; that path waits for refresh so it cannot spin.
+    if (result.httpStatus == 200 && result.remaining.empty() && !offlineMode_) {
+        FlushConversionQueue();
     }
 }
 
