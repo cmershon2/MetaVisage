@@ -2,7 +2,6 @@
 #define METAVISAGE_UTILS_CONFIG_H
 
 #include <map>
-#include <optional>
 #include <string>
 #include <vector>
 
@@ -30,26 +29,6 @@ public:
     const std::vector<std::string>& RecentProjects() const { return recentProjects_; }
     void AddRecentProject(const std::string& absolutePath);
     void ClearRecentProjects();
-
-    // Auth tokens cached between launches. std::nullopt means "no token stored".
-    std::optional<std::string> AccessToken() const;
-    std::optional<std::string> RefreshToken() const;
-    void SetTokens(const std::string& access, const std::string& refresh);
-    void ClearTokens();
-
-    // Cached license JWT (7-day offline grace period — see DESKTOP_APP_INTEGRATION.md).
-    std::optional<std::string> LicenseJwt() const;
-    void SetLicenseJwt(const std::string& jwt);
-    void ClearLicenseJwt();
-
-    // Cached user email (Sprint 6 follow-up). Populated from the
-    // /api/desktop/exchange response per QA Round 2 Decision 3 — the JWT
-    // payload doesn't carry it, so persistence here lets the License
-    // Status dialog render the email on cold launch without a network
-    // round trip. Encrypted at rest via DPAPI like the auth tokens.
-    std::optional<std::string> UserEmail() const;
-    void SetUserEmail(const std::string& email);
-    void ClearUserEmail();
 
     // Story 5.1 — UI state persistence for inspector CollapsingHeaders.
     // Keys are dotted scopes ("morph.general", "morph.advanced",
@@ -81,10 +60,6 @@ private:
     int windowHeight_ = 900;
     bool windowMaximized_ = false;
     std::vector<std::string> recentProjects_;
-    std::optional<std::string> accessToken_;
-    std::optional<std::string> refreshToken_;
-    std::optional<std::string> licenseJwt_;
-    std::optional<std::string> userEmail_;
     // Story 5.1 — value is "section is expanded"; absence = use default.
     std::map<std::string, bool> collapsedSections_;
     bool loaded_ = false;

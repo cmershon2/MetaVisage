@@ -46,23 +46,14 @@ find_package(glfw3 CONFIG REQUIRED)
 # Dear ImGui — UI rendering (replaces Qt Widgets; Sprint 3.5.2+)
 find_package(imgui CONFIG REQUIRED)
 
-# nlohmann_json — project serialization + license JWT payloads (Sprint 3.6+)
+# nlohmann_json — project serialization (Sprint 3.6+)
 find_package(nlohmann_json CONFIG REQUIRED)
 
 # Native File Dialog Extended — replaces QFileDialog (Sprint 3.6)
 find_package(nfd CONFIG REQUIRED)
 
-# libcurl — HTTP client for licensing API (Sprint 3.6)
-find_package(CURL REQUIRED)
-
 # Eigen3 — deformation math (unchanged)
 find_package(Eigen3 CONFIG REQUIRED)
-
-# jwt-cpp + OpenSSL — RS256 license JWT verification (Sprint 6 Story 6.3).
-# vcpkg's libcurl on Windows ships Schannel, not OpenSSL, so jwt-cpp's
-# OpenSSL backend pulls in libssl/libcrypto explicitly.
-find_package(jwt-cpp CONFIG REQUIRED)
-find_package(OpenSSL REQUIRED)
 
 # Assimp — mesh I/O (optional, unchanged)
 find_package(assimp CONFIG)
@@ -80,108 +71,6 @@ if(OpenMP_CXX_FOUND)
 else()
     message(WARNING "OpenMP not found - NRICP will run single-threaded")
 endif()
-
-# ---------------------------------------------------------------------------
-# Build profile + licensing configuration (Sprint 6 Story 6.1)
-# ---------------------------------------------------------------------------
-# Compile-time licensing config driven by the active .env.<profile> file. The
-# PowerShell helpers (build-msvc.ps1 / build-mingw.ps1 -Profile <name>) read
-# .env.<profile> from the project root and forward each value as a -D cache
-# variable. Running cmake by hand without the helper falls back to the
-# development profile (localhost) so quick iteration still works; staging
-# and production refuse to configure with empty values.
-set(METAVISAGE_BUILD_PROFILE "development" CACHE STRING
-    "Build profile: development | staging | production")
-set_property(CACHE METAVISAGE_BUILD_PROFILE PROPERTY STRINGS
-    development staging production)
-
-set(METAVISAGE_API_BASE_URL "" CACHE STRING
-    "Base URL for the MetaVisage web portal API")
-set(METAVISAGE_SUPABASE_PROJECT_URL "" CACHE STRING
-    "Supabase project URL — used for the access-token refresh endpoint")
-set(METAVISAGE_SUPABASE_ANON_KEY "" CACHE STRING
-    "Supabase NEXT_PUBLIC_ anon key — safe to embed in the desktop binary")
-set(METAVISAGE_LICENSE_JWT_PUBLIC_KEY_FILE "" CACHE STRING
-    "Path to the RS256 license JWT public key (PEM, SPKI). Relative paths resolve from the project root.")
-
-# Apply development defaults if no helper script ran. Staging / production
-# require explicit values; refusing to configure protects against shipping a
-# binary that points at localhost or has no public key.
-if(METAVISAGE_API_BASE_URL STREQUAL "")
-    if(METAVISAGE_BUILD_PROFILE STREQUAL "development")
-        set(METAVISAGE_API_BASE_URL "http://localhost:3000")
-    else()
-        message(FATAL_ERROR
-            "METAVISAGE_BUILD_PROFILE=${METAVISAGE_BUILD_PROFILE} but "
-            "METAVISAGE_API_BASE_URL is empty. Run the build through "
-            "build-msvc.ps1 -Profile ${METAVISAGE_BUILD_PROFILE} or pass -D "
-            "values explicitly.")
-    endif()
-endif()
-
-# PR #25 review fix: parity guard for the Supabase refresh credentials on
-# non-development profiles. An empty project URL or anon key would silently
-# disable the access-token refresh path (LicenseManager::RefreshThreadFn
-# falls through to AuthInvalid on every 401 instead of refreshing), which
-# would force re-auth every ~hour in production. Cheap to catch at configure
-# time. Development profile leaves them empty-tolerable.
-if(NOT METAVISAGE_BUILD_PROFILE STREQUAL "development")
-    if(METAVISAGE_SUPABASE_PROJECT_URL STREQUAL "")
-        message(FATAL_ERROR
-            "METAVISAGE_BUILD_PROFILE=${METAVISAGE_BUILD_PROFILE} but "
-            "METAVISAGE_SUPABASE_PROJECT_URL is empty. The Supabase "
-            "access-token refresh path needs the project URL.")
-    endif()
-    if(METAVISAGE_SUPABASE_ANON_KEY STREQUAL "")
-        message(FATAL_ERROR
-            "METAVISAGE_BUILD_PROFILE=${METAVISAGE_BUILD_PROFILE} but "
-            "METAVISAGE_SUPABASE_ANON_KEY is empty. The Supabase "
-            "access-token refresh path needs the NEXT_PUBLIC anon key.")
-    endif()
-endif()
-
-# Read the public-key PEM from disk so callers don't wrestle with multi-line
-# CMake string escaping. Empty path is allowed in development; LicenseManager
-# falls back to skipping signature verification when the key is empty.
-set(METAVISAGE_LICENSE_JWT_PUBLIC_KEY "")
-if(NOT METAVISAGE_LICENSE_JWT_PUBLIC_KEY_FILE STREQUAL "")
-    if(IS_ABSOLUTE "${METAVISAGE_LICENSE_JWT_PUBLIC_KEY_FILE}")
-        set(_resolved_key_path "${METAVISAGE_LICENSE_JWT_PUBLIC_KEY_FILE}")
-    else()
-        set(_resolved_key_path
-            "${CMAKE_CURRENT_SOURCE_DIR}/${METAVISAGE_LICENSE_JWT_PUBLIC_KEY_FILE}")
-    endif()
-    if(EXISTS "${_resolved_key_path}")
-        file(READ "${_resolved_key_path}" METAVISAGE_LICENSE_JWT_PUBLIC_KEY)
-    else()
-        message(WARNING
-            "METAVISAGE_LICENSE_JWT_PUBLIC_KEY_FILE points to a non-existent "
-            "file: ${_resolved_key_path}. The build will continue, but JWT "
-            "signature verification will fail at runtime.")
-    endif()
-endif()
-
-if(METAVISAGE_BUILD_PROFILE STREQUAL "production"
-   AND METAVISAGE_LICENSE_JWT_PUBLIC_KEY STREQUAL "")
-    message(FATAL_ERROR
-        "METAVISAGE_BUILD_PROFILE=production but no public key was loaded "
-        "from METAVISAGE_LICENSE_JWT_PUBLIC_KEY_FILE. Refusing to ship a "
-        "production binary that cannot verify license JWTs.")
-endif()
-
-message(STATUS "MetaVisage build profile: ${METAVISAGE_BUILD_PROFILE}")
-message(STATUS "  API base URL:        ${METAVISAGE_API_BASE_URL}")
-message(STATUS "  Supabase project:    ${METAVISAGE_SUPABASE_PROJECT_URL}")
-message(STATUS "  Public key file:     ${METAVISAGE_LICENSE_JWT_PUBLIC_KEY_FILE}")
-
-# Generate the consumer header from cmake/LicenseConfig.h.in. LicenseManager
-# (Sprint 6 Story 6.1) includes "licensing/LicenseConfig.h" without caring
-# whether the file lives in source or build tree.
-configure_file(
-    ${CMAKE_CURRENT_SOURCE_DIR}/cmake/LicenseConfig.h.in
-    ${CMAKE_BINARY_DIR}/generated/licensing/LicenseConfig.h
-    @ONLY
-)
 
 # ---------------------------------------------------------------------------
 # Include paths
@@ -217,24 +106,19 @@ set(CORE_SOURCES
     src/ui/Viewport.cpp
     src/ui/ViewportHost.cpp
     src/ui/FileDialogs.cpp
-    src/ui/LoginScreen.cpp
     src/ui/Modals.cpp
     src/ui/MvInspectorPrimitives.cpp
     src/ui/MvStyle.cpp
     src/ui/StageSidebar.cpp
     src/ui/StageStepper.cpp
     src/ui/ToolRail.cpp
-    src/ui/UpgradePromptWidget.cpp
     src/utils/RayCaster.cpp
     src/utils/Logger.cpp
     src/utils/BVH.cpp
     src/utils/SpatialHash.cpp
     src/utils/Paths.cpp
     src/utils/Config.cpp
-    src/utils/OpenUrl.cpp
     src/utils/SingleInstance.cpp
-    src/utils/HttpClient.cpp
-    src/utils/SecureStorage.cpp
     src/deformation/MeshDeformer.cpp
     src/deformation/NRICPDeformer.cpp
     src/sculpting/SculptBrush.cpp
@@ -248,7 +132,6 @@ set(CORE_SOURCES
     src/io/PresetStore.cpp
     src/baking/TextureBaker.cpp
     src/baking/TextureWriter.cpp
-    src/licensing/LicenseManager.cpp
 )
 
 set(CORE_HEADERS
@@ -256,14 +139,12 @@ set(CORE_HEADERS
     include/ui/Viewport.h
     include/ui/ViewportHost.h
     include/ui/FileDialogs.h
-    include/ui/LoginScreen.h
     include/ui/Modals.h
     include/ui/MvInspectorPrimitives.h
     include/ui/MvStyle.h
     include/ui/StageSidebar.h
     include/ui/StageStepper.h
     include/ui/ToolRail.h
-    include/ui/UpgradePromptWidget.h
     include/core/Mesh.h
     include/core/Transform.h
     include/core/Project.h
@@ -285,10 +166,7 @@ set(CORE_HEADERS
     include/utils/SpatialHash.h
     include/utils/Paths.h
     include/utils/Config.h
-    include/utils/OpenUrl.h
     include/utils/SingleInstance.h
-    include/utils/HttpClient.h
-    include/utils/SecureStorage.h
     include/deformation/MeshDeformer.h
     include/deformation/NRICPDeformer.h
     include/sculpting/SculptBrush.h
@@ -303,7 +181,6 @@ set(CORE_HEADERS
     include/io/PresetStore.h
     include/baking/TextureBaker.h
     include/baking/TextureWriter.h
-    include/licensing/LicenseManager.h
 )
 
 # NOTE: Sprint 3.6 retired the Qt-era UI files (MainWindow / ViewportWidget /
@@ -340,11 +217,7 @@ target_link_libraries(${PROJECT_NAME}Core
         imgui::imgui
         nlohmann_json::nlohmann_json
         nfd::nfd
-        CURL::libcurl
         Eigen3::Eigen
-        jwt-cpp::jwt-cpp
-        OpenSSL::SSL
-        OpenSSL::Crypto
 )
 
 if(OpenMP_CXX_FOUND)
@@ -475,8 +348,8 @@ set_tests_properties(smoke_wrap_parity PROPERTIES TIMEOUT 120)
 # ---------------------------------------------------------------------------
 # imgui_test_engine smoke-UI lane (Story 5.4)
 # ---------------------------------------------------------------------------
-# Drives the live AppWindow through three click-through scenarios via
-# imgui_test_engine — stage stepper, login screen toggle cycle, viewport
+# Drives the live AppWindow through five smoke scenarios via
+# imgui_test_engine — stage stepper, standalone startup, viewport
 # toolbar shading-mode toggles. Catches the click-through and modal-toggle
 # bug classes the Sprint 3.6 / 3.7 / 3.8 retros all flagged. Real GLFW
 # window pops up briefly during ctest (no headless mode); deps inherit
@@ -502,7 +375,7 @@ endif()
 
 add_test(NAME smoke_ui
          COMMAND metavisage_smoke_ui
-         WORKING_DIRECTORY ${CMAKE_RUNTIME_OUTPUT_DIRECTORY})
+         WORKING_DIRECTORY $<TARGET_FILE_DIR:metavisage_smoke_ui>)
 # 90 s CTest budget = 60 s harness deadline + 30 s init/teardown buffer.
 # Filterable via `ctest -L ui` for local iteration.
 set_tests_properties(smoke_ui PROPERTIES

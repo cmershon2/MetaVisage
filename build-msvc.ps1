@@ -2,9 +2,7 @@ param(
     [switch]$Clean,
     [switch]$Deploy,
     [string]$VcpkgToolchain = "",
-    [string]$BuildType = "Release",
-    [ValidateSet("development", "staging", "production")]
-    [string]$Profile = "development"
+    [string]$BuildType = "Release"
 )
 
 Write-Host "MetaVisage MSVC Build Script" -ForegroundColor Cyan
@@ -15,52 +13,14 @@ Write-Host ""
 $ProjectRoot = Split-Path -Parent $MyInvocation.MyCommand.Path
 $BuildDir = Join-Path $ProjectRoot "build"
 
-# ---------------------------------------------------------------------------
-# Build profile + .env.<profile> resolution (Sprint 6 Story 6.1)
-# ---------------------------------------------------------------------------
-# Read .env.<profile> for licensing config (API URL, Supabase project URL,
-# anon key, public-key file). Each KEY=VALUE pair becomes a -D flag on the
-# CMake configure step. Lines starting with `#` and blank lines are skipped;
-# surrounding single or double quotes are stripped.
-function Read-EnvFile {
-    param([Parameter(Mandatory)] [string]$Path)
-    $values = @{}
-    if (-not (Test-Path $Path)) { return $values }
-    foreach ($rawLine in Get-Content -LiteralPath $Path) {
-        $line = $rawLine.Trim()
-        if ($line -eq "" -or $line.StartsWith("#")) { continue }
-        $idx = $line.IndexOf("=")
-        if ($idx -lt 1) { continue }
-        $key = $line.Substring(0, $idx).Trim()
-        $value = $line.Substring($idx + 1).Trim()
-        if ($value.Length -ge 2) {
-            $first = $value[0]
-            $last  = $value[$value.Length - 1]
-            if (($first -eq '"' -and $last -eq '"') -or
-                ($first -eq "'" -and $last -eq "'")) {
-                $value = $value.Substring(1, $value.Length - 2)
-            }
-        }
-        $values[$key] = $value
-    }
-    return $values
-}
-
-$EnvFile = Join-Path $ProjectRoot ".env.$Profile"
-Write-Host "Build profile: $Profile" -ForegroundColor Cyan
-if (Test-Path $EnvFile) {
-    Write-Host "Reading config: $EnvFile" -ForegroundColor Gray
-    $EnvValues = Read-EnvFile -Path $EnvFile
-} else {
-    if ($Profile -eq "development") {
-        Write-Host "No .env.development found -- falling back to CMake defaults (localhost:3000)." -ForegroundColor Yellow
-        Write-Host "Copy .env.example to .env.development to customize." -ForegroundColor Yellow
-        $EnvValues = @{}
-    } else {
-        Write-Host "ERROR: .env.$Profile not found at $EnvFile" -ForegroundColor Red
-        Write-Host "Copy .env.example to .env.$Profile and populate it from the web team's 1Password drop." -ForegroundColor Red
+# Validate before cleaning so an invalid toolchain leaves the existing build intact.
+if ($VcpkgToolchain -ne "") {
+    if (-not (Test-Path -LiteralPath $VcpkgToolchain -PathType Leaf)) {
+        Write-Host "ERROR: vcpkg toolchain file not found: $VcpkgToolchain" -ForegroundColor Red
+        Write-Host "Pass the path to an existing scripts/buildsystems/vcpkg.cmake file." -ForegroundColor Red
         exit 1
     }
+    $VcpkgToolchain = (Resolve-Path -LiteralPath $VcpkgToolchain).Path.Replace('\', '/')
 }
 
 # Clean build directory if requested
@@ -90,18 +50,12 @@ $CMakeArgs = @(
     ".."
     "-G", "Visual Studio 17 2022"
     "-A", "x64"
-    "-DMETAVISAGE_BUILD_PROFILE=$Profile"
 )
-
-# Forward each .env.<profile> key as a -D flag. Cache var names match the
-# CMake side exactly (METAVISAGE_API_BASE_URL, METAVISAGE_SUPABASE_*, etc.)
-foreach ($key in $EnvValues.Keys) {
-    $CMakeArgs += "-D$key=$($EnvValues[$key])"
-}
 
 if ($VcpkgToolchain -ne "") {
     Write-Host "Using vcpkg toolchain: $VcpkgToolchain" -ForegroundColor Cyan
-    $CMakeArgs += "-DCMAKE_TOOLCHAIN_FILE=`"$VcpkgToolchain`""
+    # PowerShell passes each array element as one argument, including paths with spaces.
+    $CMakeArgs += "-DCMAKE_TOOLCHAIN_FILE=$VcpkgToolchain"
 }
 
 Write-Host "Running: cmake $($CMakeArgs -join ' ')" -ForegroundColor Gray
@@ -126,7 +80,7 @@ Write-Host ""
 Write-Host "Build completed successfully!" -ForegroundColor Green
 
 # Deploy runtime dependencies if requested. Qt was removed in Sprint 3.7,
-# so the only DLLs the .exe needs are the GLFW / GLEW / ImGui / libcurl /
+# so the only DLLs the .exe needs are the GLFW / GLEW / ImGui /
 # Eigen / Assimp set staged by vcpkg's applocal post-build step (which runs
 # automatically when configuring with -DCMAKE_TOOLCHAIN_FILE=<vcpkg.cmake>).
 if ($Deploy) {

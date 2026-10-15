@@ -72,7 +72,7 @@ void DrawStageHeader(const char* eyebrow,
 // =============================================================================
 // 2. Section label
 // =============================================================================
-void DrawSectionLabel(const char* title, bool gated) {
+void DrawSectionLabel(const char* title) {
     if (!title || !title[0]) return;
 
     ImDrawList* dl = ImGui::GetWindowDrawList();
@@ -105,17 +105,6 @@ void DrawSectionLabel(const char* title, bool gated) {
         ImGui::PopStyleColor();
     }
 
-    // Sprint 7 round-7 -- zap glyph trailing the title marks a tier-gated
-    // section. Drawn in MvWarning (the same amber used elsewhere for
-    // premium-feature markers) so it reads as the brand-consistent gate
-    // indicator at a glance.
-    if (gated) {
-        ImGui::SameLine(0.0f, 6.0f);
-        MvStyle::ScopedFont fi(MvStyle::Font.IconSm);
-        ImGui::PushStyleColor(ImGuiCol_Text, MvStyle::MvWarning);
-        ImGui::TextUnformatted(MV_ICON_ZAP);
-        ImGui::PopStyleColor();
-    }
 
     ImGui::Dummy(ImVec2(0.0f, 4.0f));
 }

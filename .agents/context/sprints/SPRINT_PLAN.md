@@ -1,9 +1,13 @@
 # Sprint Plan: MetaVisage v2.0
 
+**Current direction (2026-10-15)**: [Sprint 8 - Standalone Open-Source Transition](sprint-08.md)
+supersedes the commercial distribution/auto-update roadmap below. Sprints 1-7
+remain historical records. The current application is MIT licensed and offline.
+
 **Version:** 2.0  
 **Date:** April 19, 2026  
 **Total Duration:** 20 weeks (10 sprints @ 2 weeks each)  
-**License:** Proprietary (Closed Source)
+**Historical roadmap license:** Proprietary (superseded; current license is MIT)
 
 ---
 
@@ -29,7 +33,7 @@ This sprint plan covers the v2.0 release of MetaVisage. It addresses all v1.0.0 
 - Sprint 5: Stage 3 — Advanced Parameters, Masking & Stage 4 Polish
 - Sprint 6: Licensing Infrastructure — Core Integration
 - Sprint 7: Licensing Infrastructure — Feature Gating & Tier Enforcement
-- Sprint 8: Distribution, Auto-Update & Release
+- Sprint 8: [Standalone Open-Source Transition](sprint-08.md) (replaces Distribution, Auto-Update & Release)
 
 ---
 

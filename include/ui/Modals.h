@@ -161,26 +161,6 @@ struct ShortcutsModalState {
 };
 void RenderShortcutsModal(ShortcutsModalState& state);
 
-// ---------------------------------------------------------------------------
-// License status -- Sprint 6 Story 6.6.
-// Reads LicenseManager directly each frame for tier / conversions / email /
-// online status. Action requests (Manage Subscription / Sign Out) are
-// reported via the Result flags so AppWindow can wire them through to
-// OpenUrl + ConfirmModalState without RenderLicenseModal needing direct
-// access to those subsystems.
-// ---------------------------------------------------------------------------
-
-struct LicenseModalState {
-    bool pendingOpen = false;
-
-    // Action requests, polled and cleared by AppWindow each frame.
-    bool manageSubscriptionRequested = false;
-    bool signOutRequested = false;
-
-    void Open();
-};
-void RenderLicenseModal(LicenseModalState& state);
-
 } // namespace MetaVisage
 
 #endif

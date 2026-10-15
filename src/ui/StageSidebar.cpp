@@ -3,11 +3,9 @@
 #include "core/Project.h"
 #include "core/TextureData.h"
 #include "core/WrapPreset.h"
-#include "licensing/LicenseManager.h"
 #include "ui/MvIcons.h"
 #include "ui/MvInspectorPrimitives.h"
 #include "ui/MvStyle.h"
-#include "ui/UpgradePromptWidget.h"
 #include "utils/Config.h"
 
 #include <imgui.h>
@@ -180,24 +178,7 @@ void StageSidebar::RenderAlignment(Project& project, Actions& out) {
                           false,
                           ImGuiWindowFlags_NoBackground)) {
 
-        // Story 7.1 -- tier-derived feature flags. Read once at the top of
-        // the body so every section below sees a consistent snapshot.
-        const auto& lm = MetaVisage::LicenseManager::Instance();
-        const bool canUploadHead       = lm.CanUploadCustomHead();
-        const auto textureTransferMode = lm.GetTextureTransferMode();
-
-        // ---- Source mesh ------------------------------------------------
-        // Custom MetaHuman head upload is a paid feature. Free users keep
-        // the bundled default head visible as a quiet locked row; hovering
-        // the row reveals the compact upgrade card.
         I::DrawSectionLabel("SOURCE MESH");
-
-        ui::UpgradePromptCopy customHeadCopy{
-            "Custom MetaHuman head upload",
-            "Indie",
-            "Upload your own head mesh instead of the bundled default.",
-            MV_ICON_UPLOAD,
-        };
 
         {
             MvStyle::ScopedFont f(MvStyle::Font.BodySm);
@@ -207,7 +188,7 @@ void StageSidebar::RenderAlignment(Project& project, Actions& out) {
         }
         ImGui::Dummy(ImVec2(0.0f, 6.0f));
         const std::string srcName = FileNameOrEmpty(morph.filepath);
-        if (canUploadHead) {
+        {
             const auto srcSlot = I::DrawFileSlot(
                 srcName.c_str(),
                 "No source mesh",
@@ -215,10 +196,6 @@ void StageSidebar::RenderAlignment(Project& project, Actions& out) {
                 /*isPrimary=*/true,
                 morph.isLoaded ? "Source mesh loaded" : nullptr);
             if (srcSlot.importClicked) out.importMorphMeshRequested = true;
-        } else {
-            ui::DrawLockedFeatureField("Custom head",
-                                       "Default MetaHuman",
-                                       customHeadCopy);
         }
 
         ImGui::Dummy(ImVec2(0.0f, 4.0f));
@@ -227,9 +204,7 @@ void StageSidebar::RenderAlignment(Project& project, Actions& out) {
         }
 
         // ---- Target mesh ------------------------------------------------
-        // Target mesh is the head the user is morphing TO -- not gated by
-        // custom_head_upload. Free users still need a way to morph the
-        // default MetaHuman against something.
+        // Target mesh is the head the source will be morphed to.
         I::DrawSectionLabel("TARGET MESH");
         {
             MvStyle::ScopedFont f(MvStyle::Font.BodySm);
@@ -248,21 +223,7 @@ void StageSidebar::RenderAlignment(Project& project, Actions& out) {
         if (tgtSlot.importClicked) out.importTargetMeshRequested = true;
 
         // ---- Target textures --------------------------------------------
-        // Story 7.1 gate -- texture_transfer mode controls availability:
-        //   None         (Free)  -- hide section + show single upgrade prompt
-        //   Albedo       (Indie) -- only Albedo slot offered
-        //   AlbedoNormal (Pro)   -- existing behaviour (all six slots)
-        if (textureTransferMode == FeatureFlags::TextureTransfer::None) {
-            // Free tier -- texture transfer is presented as a locked row.
-            ui::UpgradePromptCopy textureCopy{
-                "Texture transfer",
-                "Indie",
-                "Attach target textures so surface color survives the wrap.",
-                MV_ICON_IMAGE,
-            };
-            I::DrawSectionLabel("TARGET TEXTURES");
-            ui::DrawLockedFeatureField("Textures", "None", textureCopy);
-        } else {
+        {
             I::DrawSectionLabel("TARGET TEXTURES");
             auto& textures = project.GetTargetTextures();
             if (textures.textures.empty()) {
@@ -284,17 +245,11 @@ void StageSidebar::RenderAlignment(Project& project, Actions& out) {
             }
 
             ImGui::Dummy(ImVec2(0.0f, 6.0f));
-            static const char* kSlotNamesPro[] = {
+            static const char* kSlotNamesAll[] = {
                 "Albedo", "Normal Map", "Roughness", "AO", "Emissive", "Metallic"
             };
-            static const char* kSlotNamesIndie[] = { "Albedo" };
-            const bool indieOnly =
-                (textureTransferMode == FeatureFlags::TextureTransfer::Albedo);
-            const char* const* kSlotNames =
-                indieOnly ? kSlotNamesIndie : kSlotNamesPro;
-            const int kSlotCount =
-                indieOnly ? IM_ARRAYSIZE(kSlotNamesIndie)
-                          : IM_ARRAYSIZE(kSlotNamesPro);
+            const char* const* kSlotNames = kSlotNamesAll;
+            const int kSlotCount = IM_ARRAYSIZE(kSlotNamesAll);
             static int sSelectedSlot = 0;
             if (sSelectedSlot >= kSlotCount) sSelectedSlot = 0;
             ImGui::PushItemWidth(ImGui::GetContentRegionAvail().x * 0.55f);
@@ -304,22 +259,7 @@ void StageSidebar::RenderAlignment(Project& project, Actions& out) {
             if (ImGui::Button("+ Texture", ImVec2(-FLT_MIN, 0.0f))) {
                 out.importTextureSlot = kSlotNames[sSelectedSlot];
             }
-            // Indie-tier lock for the missing five PBR slots. The Albedo
-            // slot above stays interactive; the rest of the PBR stack gets
-            // the same quiet locked-row treatment as other standard gates.
-            if (indieOnly) {
-                ui::UpgradePromptCopy fullPbrCopy{
-                    "Full PBR texture transfer",
-                    "Pro",
-                    "Unlock Normal, Roughness, AO, Emissive, and Metallic maps "
-                    "alongside Albedo.",
-                    MV_ICON_IMAGE,
-                };
-                ImGui::Dummy(ImVec2(0.0f, 8.0f));
-                ui::DrawLockedFeatureField("PBR stack",
-                                           "Albedo only",
-                                           fullPbrCopy);
-            }
+
         }
 
         // ---- Target transform -------------------------------------------
@@ -888,23 +828,6 @@ ImU32 UiCol(const ImVec4& c) {
     return ImGui::ColorConvertFloat4ToU32(c);
 }
 
-ImVec4 WithAlpha(const ImVec4& c, float a) {
-    return ImVec4(c.x, c.y, c.z, a);
-}
-
-void DrawDiagonalHatch(ImDrawList* dl,
-                       ImVec2 min,
-                       ImVec2 max,
-                       ImU32 color,
-                       float spacing = 7.0f) {
-    const float h = max.y - min.y;
-    dl->PushClipRect(min, max, true);
-    for (float x = min.x - h; x < max.x + h; x += spacing) {
-        dl->AddLine(ImVec2(x, max.y), ImVec2(x + h, min.y), color, 1.0f);
-    }
-    dl->PopClipRect();
-}
-
 // Returns true on click. Caller decides whether to apply the preset; the
 // helper just paints the card and dispatches the hit-test.
 //
@@ -1025,7 +948,6 @@ bool DrawBrushPaletteTile(const char* idStr,
                           const char* glyph,
                           const char* hotkey,
                           bool active,
-                          bool disabled,
                           ImTextureID thumbnail = 0) {
     constexpr float TileSize = 52.0f;
     constexpr float Radius = 4.0f;
@@ -1039,10 +961,7 @@ bool DrawBrushPaletteTile(const char* idStr,
     ImGui::PopID();
 
     ImDrawList* dl = ImGui::GetWindowDrawList();
-    if (disabled) {
-        dl->AddRectFilled(min, max, UiCol(hovered ? MvStyle::MvBg2
-                                                  : MvStyle::MvBg1), Radius);
-    } else if (active && thumbnail) {
+    if (active && thumbnail) {
         dl->AddRectFilled(min, max, UiCol(MvStyle::MvBg2), Radius);
         dl->AddRect(min, max, UiCol(MvStyle::MvBlue500), Radius, 0, 1.5f);
     } else if (active) {
@@ -1060,19 +979,16 @@ bool DrawBrushPaletteTile(const char* idStr,
         const ImVec2 imgMin(center.x - ThumbSize * 0.5f,
                             center.y - ThumbSize * 0.5f);
         const ImVec2 imgMax(imgMin.x + ThumbSize, imgMin.y + ThumbSize);
-        const ImU32 tint = disabled
-            ? IM_COL32(255, 255, 255, 128)
-            : IM_COL32_WHITE;
+        const ImU32 tint = IM_COL32_WHITE;
         dl->AddImage(thumbnail, imgMin, imgMax,
                      ImVec2(0, 0), ImVec2(1, 1), tint);
     } else if (glyph && MvStyle::Font.Icon) {
         ImFont* icon = MvStyle::Font.Icon;
         constexpr float IconSize = 21.0f;
         const ImVec2 ts = icon->CalcTextSizeA(IconSize, FLT_MAX, 0.0f, glyph);
-        const ImVec4 iconColor = active && !disabled
+        const ImVec4 iconColor = active
             ? MvStyle::MvBg0
-            : disabled ? MvStyle::MvFg4
-                       : MvStyle::MvFg2;
+            : MvStyle::MvFg2;
         dl->AddText(icon, IconSize,
                     ImVec2(min.x + (TileSize - ts.x) * 0.5f,
                            min.y + (TileSize - ts.y) * 0.5f),
@@ -1080,29 +996,10 @@ bool DrawBrushPaletteTile(const char* idStr,
                     glyph);
     }
 
-    if (disabled) {
-        DrawDiagonalHatch(dl, min, max,
-                          UiCol(WithAlpha(MvStyle::MvLine2,
-                                          hovered ? 0.45f : 0.28f)));
-        dl->AddRect(min, max,
-                    UiCol(hovered ? MvStyle::MvBlue500 : MvStyle::MvLine2),
-                    Radius, 0, hovered ? 1.2f : 1.0f);
-    }
-
-    if (disabled && MvStyle::Font.IconSm) {
-        ImFont* icon = MvStyle::Font.IconSm;
-        constexpr float LockSize = 13.0f;
-        const ImVec2 ts = icon->CalcTextSizeA(LockSize, FLT_MAX, 0.0f, MV_ICON_LOCK);
-        dl->AddText(icon, LockSize,
-                    ImVec2(max.x - ts.x - 4.0f, min.y + 4.0f),
-                    UiCol(MvStyle::MvFg4),
-                    MV_ICON_LOCK);
-    }
-
     if (hotkey && hotkey[0]) {
         MvStyle::ScopedFont f(MvStyle::Font.MonoSm);
         const ImVec2 ts = ImGui::CalcTextSize(hotkey);
-        const ImVec4 keyColor = active && !disabled
+        const ImVec4 keyColor = active
             ? MvStyle::MvBg0
             : MvStyle::MvFg4;
         dl->AddText(ImVec2(max.x - ts.x - 5.0f,
@@ -1111,11 +1008,11 @@ bool DrawBrushPaletteTile(const char* idStr,
                     hotkey);
     }
 
-    if (hovered && !disabled && name && name[0]) {
+    if (hovered && name && name[0]) {
         ImGui::SetTooltip("%s", name);
     }
 
-    return clicked && !disabled;
+    return clicked;
 }
 } // namespace
 
@@ -1237,32 +1134,13 @@ void StageSidebar::RenderMorph(Project& project, bool processing, float progress
             ImGui::EndTable();
         }
 
-        // Story 7.1 -- tier-derived feature flags. Read once at the top of
-        // the body so every section below sees a consistent snapshot.
-        const auto& lm = MetaVisage::LicenseManager::Instance();
-        const bool canUseMasking = lm.CanUseMasking();
-        const bool morphParamsFull =
-            (lm.GetMorphingParametersMode() == FeatureFlags::MorphingParameters::Full);
-
         // ---- Vertex mask (Story 5.1 — promoted to top of body) --------
         // Masking is the most-used Stage 3 control once a morph is in
         // flight, so it deserves first slot per the master plan layout.
         // Existing mesh-ready guard preserved (no mesh = nothing to mask).
-        // Story 7.1 gate -- Free tier loses masking; section renders
-        // disabled with an upgrade prompt above when the user has a mesh
-        // loaded.
         const bool morphMeshReady = project.GetMorphMesh().isLoaded || morph.isProcessed;
         if (morphMeshReady) {
             I::DrawSectionLabel("VERTEX MASK");
-
-            ui::UpgradePromptCopy maskCopy{
-                "Vertex masking",
-                "Indie",
-                "Paint regions the wrap should leave untouched.",
-                MV_ICON_BRUSH,
-            };
-            ui::GatedSectionScope maskScope;
-            if (!canUseMasking) maskScope = ui::BeginGatedSectionHover(maskCopy);
 
             {
                 MvStyle::ScopedFont f(MvStyle::Font.BodySm);
@@ -1273,8 +1151,6 @@ void StageSidebar::RenderMorph(Project& project, bool processing, float progress
                 ImGui::PopStyleColor();
             }
             ImGui::Dummy(ImVec2(0.0f, 4.0f));
-
-            ImGui::BeginDisabled(!canUseMasking);
 
             ImGui::Checkbox("Paint mask", &maskPaintingActive_);
             ImGui::SameLine();
@@ -1306,18 +1182,9 @@ void StageSidebar::RenderMorph(Project& project, bool processing, float progress
             }
             ImGui::EndDisabled();
 
-            ImGui::EndDisabled();  // canUseMasking guard
-
-            if (!canUseMasking) {
-                ui::EndGatedSectionHover(maskScope);
-            }
-
-            // Push current mask UI state through Actions so AppWindow can
-            // mirror onto the primary viewport each frame. Force-off when
-            // the tier has masking gated so the viewport never treats LMB
-            // as mask painting for a Free user.
-            out.maskPaintingActive = canUseMasking ? maskPaintingActive_ : false;
-            out.maskShow           = canUseMasking ? (maskShowMask_ || maskPaintingActive_) : false;
+            // Mirror the current mask controls onto the primary viewport.
+            out.maskPaintingActive = maskPaintingActive_;
+            out.maskShow           = maskShowMask_ || maskPaintingActive_;
             out.maskEraseMode      = maskEraseMode_;
             out.maskBrushRadius    = maskBrushRadius_;
         } else {
@@ -1353,34 +1220,6 @@ void StageSidebar::RenderMorph(Project& project, bool processing, float progress
             }
             return isOpen;
         };
-
-        // Story 7.1 gate -- Free tier (morphing_parameters = presets)
-        // gets both parameter collapsibles wrapped in BeginDisabled, with
-        // the compact hover card spanning the whole locked block.
-        ui::UpgradePromptCopy morphParamsCopy{
-            "Manual parameter tuning",
-            "Indie",
-            "Open the General and Advanced panels to dial in stiffness, "
-            "rigidity, landmark weight, and control-node sampling directly. "
-            "Every parameter behind the Wrap Engine presets becomes yours "
-            "to tune for your character.",
-            MV_ICON_SLIDERS,
-        };
-
-        ui::GatedSectionScope morphParamsScope;
-        if (!morphParamsFull) {
-            I::DrawSectionLabel("MANUAL PARAMETERS");
-            morphParamsScope = ui::BeginGatedSectionHover(morphParamsCopy);
-        }
-
-        // BeginDisabled scope wraps BOTH collapsibles so the
-        // CollapsingHeader expand toggles themselves are disabled for
-        // Free users -- previously a Free user could still expand them
-        // and see the disabled slider list, which the team reported as
-        // visually noisy. Now the headers stay closed (or in whatever
-        // state Config last persisted while the user was Pro) and the
-        // user can't toggle them.
-        ImGui::BeginDisabled(!morphParamsFull);
 
         // ---- General (Story 5.1 — collapsible, default expanded) ------
         if (DrawCollapsibleSection("morph.general", "General",
@@ -1432,12 +1271,6 @@ void StageSidebar::RenderMorph(Project& project, bool processing, float progress
             if (ImGui::SliderFloat("Control density (end)",   &morph.nricpSamplingFinal,   0.0f, 1.0f, "%.3f")) paramEdited = true;
             if (ImGui::Checkbox("Normalize sampling",         &morph.nricpNormalizeSampling)) paramEdited = true;
             ImGui::PopItemWidth();
-        }
-
-        ImGui::EndDisabled();  // morphParamsFull guard around both collapsibles
-
-        if (!morphParamsFull) {
-            ui::EndGatedSectionHover(morphParamsScope);
         }
 
         // ---- Reset to Defaults (Story 5.1 — relocated outside Advanced) -
@@ -1565,46 +1398,7 @@ void StageSidebar::RenderTouchUp(Project& project, Actions& out) {
                           false,
                           ImGuiWindowFlags_NoBackground)) {
 
-        // Story 7.4 (revised live-test feedback): show conversions left
-        // on Stage 4 -- it's the last stage before export, and an export
-        // is what counts as a conversion. Goes amber when within 2 of
-        // the cap; muted otherwise. Pending offline conversions fold
-        // into the effective used count so an export-while-offline
-        // shows up immediately.
-        {
-            const auto& lm = MetaVisage::LicenseManager::Instance();
-            const int used    = lm.GetEffectiveConversionsUsed();
-            const int limit   = lm.GetConversionsLimit();
-            const int pending = lm.GetPendingConversionCount();
-            if (limit > 0) {
-                const int remaining = std::max(0, limit - used);
-                const bool nearCap  = (remaining <= 2);
-                const ImVec4 color  = nearCap ? MvStyle::MvWarning : MvStyle::MvFg2;
-                MvStyle::ScopedFont f(MvStyle::Font.BodySm);
-                ImGui::PushStyleColor(ImGuiCol_Text, color);
-                ImGui::TextUnformatted(MV_ICON_REFRESH);
-                ImGui::SameLine(0.0f, MvStyle::Spacing::S2);
-                if (remaining == 0) {
-                    std::string resetIso = lm.GetConversionsResetAt();
-                    if (resetIso.size() >= 10) resetIso = resetIso.substr(0, 10);
-                    ImGui::TextWrapped(
-                        "0 conversions left this month -- resets %s. "
-                        "Export is blocked until then or after an upgrade.",
-                        resetIso.empty() ? "soon" : resetIso.c_str());
-                } else {
-                    ImGui::TextWrapped(
-                        "%d / %d conversions used this month%s. "
-                        "Each successful export counts as one conversion.",
-                        used, limit,
-                        pending > 0 ? std::format(" ({} pending sync)", pending).c_str() : "");
-                }
-                ImGui::PopStyleColor();
-                ImGui::Dummy(ImVec2(0.0f, MvStyle::Spacing::S2));
-            }
-        }
-
         // ---- BRUSHES ----------------------------------------------------
-        // Paid brushes carry their lock state directly on the tile.
         I::DrawSectionLabel("SCULPT BRUSHES");
 
         struct BrushDef {
@@ -1627,31 +1421,6 @@ void StageSidebar::RenderTouchUp(Project& project, Actions& out) {
               "Expand vertices radially to add volume without rebuilding the morph." },
         };
 
-        // Story 7.1 gate -- touchup_tools tier mapping:
-        //   BasicSmooth (Free)  -- Smooth only; Grab / Push-Pull / Inflate disabled
-        //   Basic       (Indie) -- Smooth + Grab; Push-Pull / Inflate disabled
-        //   Full        (Pro)   -- all four enabled (existing behaviour)
-        const auto touchUpToolset =
-            MetaVisage::LicenseManager::Instance().GetTouchUpToolset();
-        auto isBrushAllowed = [&](BrushType b) {
-            switch (touchUpToolset) {
-                case FeatureFlags::TouchUpToolset::Full:
-                    return true;
-                case FeatureFlags::TouchUpToolset::Basic:
-                    return b == BrushType::Smooth || b == BrushType::Grab;
-                case FeatureFlags::TouchUpToolset::BasicSmooth:
-                default:
-                    return b == BrushType::Smooth;
-            }
-        };
-        auto brushUpgradeTier = [&](BrushType b) -> std::string_view {
-            // Smooth is always allowed; Grab is unlocked at Indie; Push-Pull
-            // and Inflate require Pro. The tooltip targets the *next* tier
-            // that grants the feature so the upgrade path is unambiguous.
-            if (b == BrushType::Grab) return "Indie";
-            return "Pro";  // PushPull, Inflate
-        };
-
         if (ImGui::BeginTable("##brushGrid", 4,
                               ImGuiTableFlags_SizingStretchSame |
                               ImGuiTableFlags_NoPadOuterX)) {
@@ -1659,7 +1428,6 @@ void StageSidebar::RenderTouchUp(Project& project, Actions& out) {
                 if (i % 4 == 0) ImGui::TableNextRow();
                 ImGui::TableNextColumn();
                 const bool active = (sculpt.activeBrush == kBrushes[i].kind);
-                const bool allowed = isBrushAllowed(kBrushes[i].kind);
                 const ImTextureID thumb =
                     (ImTextureID)(intptr_t)MvStyle::Asset.BrushPreviewTextureIds[i];
                 if (DrawBrushPaletteTile(kBrushes[i].name,
@@ -1667,21 +1435,8 @@ void StageSidebar::RenderTouchUp(Project& project, Actions& out) {
                                          kBrushes[i].glyph,
                                          kBrushes[i].hotkey,
                                          active,
-                                         /*disabled=*/!allowed,
-                                         thumb)
-                    && allowed) {
+                                         thumb)) {
                     sculpt.activeBrush = kBrushes[i].kind;
-                }
-                // Hover-on-disabled tooltip via AllowWhenDisabled. Tier in
-                // the copy is the *next* tier that unlocks the brush.
-                if (!allowed) {
-                    ui::DrawUpgradePromptTooltip({
-                        kBrushes[i].name,
-                        brushUpgradeTier(kBrushes[i].kind),
-                        kBrushes[i].description,
-                        kBrushes[i].glyph,
-                        ui::UpgradePromptKind::Brush,
-                    });
                 }
             }
             ImGui::EndTable();
