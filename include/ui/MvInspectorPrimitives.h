@@ -37,12 +37,7 @@ void DrawStageHeader(const char* eyebrow,
 // 2. Section label — hairline rule above + 6 px MvBlue500 square dot +
 //    10 px MonoSm uppercase title in MvFg3.
 // ---------------------------------------------------------------------------
-// Sprint 7 round-7 -- `gated` appends a small amber zap glyph after the
-// title to mark sections that are locked behind a higher tier. The body
-// content of the section should still be rendered (the caller wraps it
-// in ImGui::BeginDisabled) so users can see what's locked; the zap is
-// the visual cue that this section needs an upgrade.
-void DrawSectionLabel(const char* title, bool gated = false);
+void DrawSectionLabel(const char* title);
 
 // ---------------------------------------------------------------------------
 // 2b. Sub-section label — Story 5.1. Smaller, indented variant for nested

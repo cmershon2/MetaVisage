@@ -6,15 +6,17 @@
     "glfw3",
     {
       "name": "imgui",
-      "features": ["glfw-binding", "opengl3-binding", "docking-experimental", "test-engine"]
+      "features": [
+        "glfw-binding",
+        "opengl3-binding",
+        "docking-experimental",
+        "test-engine"
+      ]
     },
     "glew",
     "eigen3",
     "assimp",
     "nlohmann-json",
-    "nativefiledialog-extended",
-    "curl",
-    "jwt-cpp",
-    "openssl"
+    "nativefiledialog-extended"
   ]
 }

@@ -2,8 +2,8 @@
 //
 // Drives the live AppWindow through focused smoke scenarios that catch
 // the bug classes flagged across the Sprint 3.6-7 retros: modal/window
-// toggling, viewport-toolbar click-through, auth gating, stage progression,
-// and tier-gated brush clamping. Each scenario exits on first failure with a screenshot
+// toggling, viewport-toolbar click-through, standalone startup, stage progression,
+// and unrestricted brush selection. Each scenario exits on first failure with a screenshot
 // available via ImGuiTestEngineIO::ScreenCaptureFunc — currently nullptr
 // so failures only surface in stdout, but the hook is wired so we can
 // add screenshot-on-failure later.
@@ -17,8 +17,7 @@
 // Limitations vs. the Sprint 5 plan's original 5-scenario spec:
 //   - The original three pragmatic substitutes remain: welcome modal
 //     dismiss, dockspace window-existence smoke, and viewport-toolbar
-//     shading modes. Sprint 6 added login_screen_cycle; Sprint 7 added
-//     stage_stepper_progression and touchup_brush_gate_clamp.
+//     shading modes, stage progression, and standalone brush selection.
 //   - Scenarios 3 (Stage 3 process+Accept) and 4 (Stage 4 brush+sculpt
 //     +undo) are NOT implemented — both require loading a mesh,
 //     running a multi-second worker, or synthesising mouse strokes
@@ -31,7 +30,6 @@
 
 #include "core/Project.h"
 #include "core/Types.h"
-#include "licensing/LicenseManager.h"
 #include "ui/AppWindow.h"
 #include "ui/Viewport.h"
 #include "ui/ViewportHost.h"
@@ -160,15 +158,13 @@ void RegisterScenario_ViewportShadingModes(ImGuiTestEngine* engine) {
 
 void RegisterScenario_StageStepperProgression(ImGuiTestEngine* engine) {
     // Sprint 7 Story 7.6 -- carryover from Sprint 5 retro AI #1 (Stage
-    // Stepper portion; the Login Screen portion shipped in Sprint 6.7).
+    // Stepper portion).
     // Verifies the StageStepper window mounts and tracks Project::
     // SetCurrentStage transitions across the four-stage workflow. Forward-
     // gating logic (CanProceedToNextStage) requires per-stage prereqs --
     // mesh loaded, points placed, morph processed -- that a hermetic
-    // harness can't satisfy without a fixture; the spec calls for a UI-
-    // state check, not exercising the gate itself. SetTestFeatureFlags
-    // (Story 7.1) injects a Pro fixture so feature gating doesn't
-    // suppress any sidebar section during the walk.
+    // harness cannot satisfy without a fixture. This tests UI state
+    // transitions directly.
     ImGuiTest* t = IM_REGISTER_TEST(engine, "smoke", "stage_stepper_progression");
     t->TestFunc = [](ImGuiTestContext* ctx) {
         ctx->SetRef("");
@@ -179,21 +175,6 @@ void RegisterScenario_StageStepperProgression(ImGuiTestEngine* engine) {
             return;
         }
         Project* project = g_app->GetProject();
-
-        // Pro-tier fixture so feature gating doesn't suppress the
-        // sidebar sections we're verifying render through transitions.
-        // SetTestFeatureFlags is gated on test-mode, which the harness
-        // entered via SetTestState in main() before AppWindow::Initialize.
-        auto& lm = LicenseManager::Instance();
-        FeatureFlags pro;
-        pro.conversionsLimit   = 60;
-        pro.customHeadUpload   = true;
-        pro.textureTransfer    = FeatureFlags::TextureTransfer::AlbedoNormal;
-        pro.morphingParameters = FeatureFlags::MorphingParameters::Full;
-        pro.masking            = true;
-        pro.touchUpToolset     = FeatureFlags::TouchUpToolset::Full;
-        lm.SetTestFeatureFlags(pro);
-        ctx->Yield();
 
         // ImGui's BeginChild adds a synthetic hash suffix to the child
         // window's stored name (parent_path/child_name_<id-hex>), so a
@@ -229,104 +210,30 @@ void RegisterScenario_StageStepperProgression(ImGuiTestEngine* engine) {
     };
 }
 
-void RegisterScenario_TouchUpBrushGateClamp(ImGuiTestEngine* engine) {
-    // Sprint 7 review fix -- paid Touch Up brushes must be gated below the
-    // visible sidebar/ToolRail controls too. This scenario forces the project
-    // state to a disallowed brush and verifies the per-frame AppWindow mirror
-    // clamps it back to an allowed brush for the active tier.
-    ImGuiTest* t = IM_REGISTER_TEST(engine, "smoke", "touchup_brush_gate_clamp");
+void RegisterScenario_StandaloneBrushes(ImGuiTestEngine* engine) {
+    ImGuiTest* t = IM_REGISTER_TEST(engine, "smoke", "standalone_brushes");
     t->TestFunc = [](ImGuiTestContext* ctx) {
         ctx->SetRef("");
         DismissWelcomeModalIfOpen(ctx);
-
-        if (!g_app || !g_app->GetProject()) {
-            IM_CHECK(false);
-            return;
-        }
-
+        IM_CHECK(g_app != nullptr && g_app->GetProject() != nullptr);
+        ImGuiWindow* host = ImGui::FindWindowByName("##AppHostWindow");
+        IM_CHECK(host != nullptr && host->WasActive);
         Project* project = g_app->GetProject();
-        auto& lm = LicenseManager::Instance();
-
-        FeatureFlags freeTier;
-        freeTier.conversionsLimit = 3;
-        freeTier.touchUpToolset = FeatureFlags::TouchUpToolset::BasicSmooth;
-        lm.SetTestFeatureFlags(freeTier);
-
         project->SetCurrentStage(WorkflowStage::TouchUp);
-        project->GetSculptState().activeBrush = BrushType::Inflate;
-        ctx->Yield();
-        ctx->Yield();
-        IM_CHECK(project->GetSculptState().activeBrush == BrushType::Smooth);
-
-        FeatureFlags indieTier = freeTier;
-        indieTier.conversionsLimit = 20;
-        indieTier.touchUpToolset = FeatureFlags::TouchUpToolset::Basic;
-        lm.SetTestFeatureFlags(indieTier);
-
-        project->GetSculptState().activeBrush = BrushType::Grab;
-        ctx->Yield();
-        ctx->Yield();
-        IM_CHECK(project->GetSculptState().activeBrush == BrushType::Grab);
-
-        project->GetSculptState().activeBrush = BrushType::PushPull;
-        ctx->Yield();
-        ctx->Yield();
-        IM_CHECK(project->GetSculptState().activeBrush == BrushType::Smooth);
-
-        FeatureFlags proTier = indieTier;
-        proTier.conversionsLimit = 60;
-        proTier.customHeadUpload = true;
-        proTier.textureTransfer = FeatureFlags::TextureTransfer::AlbedoNormal;
-        proTier.morphingParameters = FeatureFlags::MorphingParameters::Full;
-        proTier.masking = true;
-        proTier.touchUpToolset = FeatureFlags::TouchUpToolset::Full;
-        lm.SetTestFeatureFlags(proTier);
+        Viewport* viewport = g_app->GetViewportHost()->GetPrimaryViewport();
+        IM_CHECK(viewport != nullptr);
+        int brushKey = GLFW_KEY_1;
+        for (BrushType brush : {BrushType::Smooth, BrushType::Grab,
+                                BrushType::PushPull, BrushType::Inflate}) {
+            viewport->SetBrushType(brush);
+            IM_CHECK(viewport->GetBrushType() == brush);
+            viewport->OnKey(brushKey++, 0, GLFW_PRESS, 0);
+            ctx->Yield();
+            ctx->Yield();
+            IM_CHECK(project->GetSculptState().activeBrush == brush);
+            IM_CHECK(viewport->GetBrushType() == brush);
+        }
         project->SetCurrentStage(WorkflowStage::Alignment);
-        ctx->Yield();
-    };
-}
-
-void RegisterScenario_LoginScreenCycle(ImGuiTestEngine* engine) {
-    // Sprint 6 Story 6.7 -- exercise the LoginScreen Sign in / Cancel
-    // cycle. Pre-condition: flip LicenseManager into Unauthenticated so
-    // AppWindow::TickOnce takes the LoginScreen gate branch instead of
-    // rendering the dockspace. Test mode (set by SetTestState) suppresses
-    // the BeginAuthFlow browser launch so this scenario is hermetic.
-    //
-    // After the cycle we restore Authenticated so any post-test manual
-    // exploration of the harness window doesn't dead-end on the gate.
-    ImGuiTest* t = IM_REGISTER_TEST(engine, "smoke", "login_screen_cycle");
-    t->TestFunc = [](ImGuiTestContext* ctx) {
-        ctx->SetRef("");
-        auto& lm = LicenseManager::Instance();
-
-        // Enter Unauthenticated and let the LoginScreen render.
-        lm.SetTestState(LicenseManager::AuthState::Unauthenticated);
-        ctx->Yield();
-        ctx->Yield();
-
-        IM_CHECK(lm.GetState() ==
-                 LicenseManager::AuthState::Unauthenticated);
-        IM_CHECK(ImGui::FindWindowByName("##MvLoginScreen") != nullptr);
-
-        // Click Sign In -> AppWindow calls BeginAuthFlow, which in test
-        // mode skips OpenUrl but still transitions to Authenticating so
-        // the spinner is visible.
-        ctx->ItemClick("//##MvLoginScreen/Sign in with browser");
-        ctx->Yield();
-        ctx->Yield();
-        IM_CHECK(lm.GetState() ==
-                 LicenseManager::AuthState::Authenticating);
-
-        // Click Cancel -> CancelAuthFlow -> Unauthenticated.
-        ctx->ItemClick("//##MvLoginScreen/Cancel");
-        ctx->Yield();
-        ctx->Yield();
-        IM_CHECK(lm.GetState() ==
-                 LicenseManager::AuthState::Unauthenticated);
-
-        // Restore Authenticated for any subsequent manual inspection.
-        lm.SetTestState(LicenseManager::AuthState::Authenticated);
         ctx->Yield();
     };
 }
@@ -335,14 +242,6 @@ void RegisterScenario_LoginScreenCycle(ImGuiTestEngine* engine) {
 
 int main(int /*argc*/, char** /*argv*/) {
     Logger::Instance().SetFileLogging(false);
-
-    // Sprint 6 Story 6.1 -- bypass the LoginScreen gate. The harness
-    // exercises the app shell + viewport + modals, not the auth flow
-    // itself; pinning state to Authenticated before AppWindow::Initialize
-    // keeps the existing scenarios green. Story 6.7 adds dedicated Login
-    // Screen scenarios that flip this back to Unauthenticated.
-    LicenseManager::Instance().SetTestState(
-        LicenseManager::AuthState::Authenticated);
 
     AppWindow app;
     g_app = &app;
@@ -365,8 +264,7 @@ int main(int /*argc*/, char** /*argv*/) {
     RegisterScenario_DockspaceWindowSmoke(engine);
     RegisterScenario_ViewportShadingModes(engine);
     RegisterScenario_StageStepperProgression(engine);
-    RegisterScenario_TouchUpBrushGateClamp(engine);
-    RegisterScenario_LoginScreenCycle(engine);
+    RegisterScenario_StandaloneBrushes(engine);
 
     ImGuiTestEngine_Start(engine, ImGui::GetCurrentContext());
     ImGuiTestEngine_QueueTests(engine, ImGuiTestGroup_Tests, /*filter=*/nullptr,

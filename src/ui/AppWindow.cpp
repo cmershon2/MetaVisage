@@ -10,7 +10,6 @@
 
 #include "ui/AppWindow.h"
 #include "ui/FileDialogs.h"
-#include "ui/LoginScreen.h"
 #include "ui/MvStyle.h"
 #include "ui/StageStepper.h"
 #include "ui/ToolRail.h"
@@ -28,13 +27,10 @@
 #include "io/ProjectSerializer.h"
 #include "io/MeshExporter.h"
 #include "io/PresetStore.h"
-#include "licensing/LicenseConfig.h"
-#include "licensing/LicenseManager.h"
 #include "baking/TextureBaker.h"
 #include "baking/TextureWriter.h"
 #include "utils/Config.h"
 #include "utils/Logger.h"
-#include "utils/OpenUrl.h"
 #include "utils/Paths.h"
 #include "utils/RayCaster.h"
 
@@ -74,22 +70,6 @@ namespace {
 void GlfwErrorCallback(int error, const char* description) {
     std::fprintf(stderr, "GLFW error %d: %s\n", error, description);
     MV_LOG_ERROR(std::format("GLFW error {}: {}", error, description));
-}
-
-bool IsTouchUpBrushAllowedForTier(BrushType brush) {
-    switch (LicenseManager::Instance().GetTouchUpToolset()) {
-        case FeatureFlags::TouchUpToolset::Full:
-            return true;
-        case FeatureFlags::TouchUpToolset::Basic:
-            return brush == BrushType::Smooth || brush == BrushType::Grab;
-        case FeatureFlags::TouchUpToolset::BasicSmooth:
-        default:
-            return brush == BrushType::Smooth;
-    }
-}
-
-BrushType CoerceTouchUpBrushForTier(BrushType brush) {
-    return IsTouchUpBrushAllowedForTier(brush) ? brush : BrushType::Smooth;
 }
 
 // PR #25 review feedback: cross-thread "please bring the OS window to
@@ -377,13 +357,6 @@ bool AppWindow::Initialize(int width, int height, const char* title) {
     WrapPreset::QuickWrap().ApplyTo(project_->GetMorphData());
     undoStack_ = std::make_unique<UndoStack>();
     viewportHost_->SetProject(project_.get());
-
-    // Sprint 6 Story 6.1 -- bootstrap the auth state machine off the
-    // encrypted token cache. Runs after Config is loaded (main.cpp:13)
-    // and before the LoginScreen first renders, so the cached-session
-    // fast path can skip straight into Authenticated and the user never
-    // sees the sign-in surface flash.
-    LicenseManager::Instance().Initialize();
 
     userPresets_ = PresetStore::LoadAll();
     statusMessage_ = "Ready";
@@ -706,41 +679,8 @@ void AppWindow::TickOnce(int fbWidth, int fbHeight) {
     ImGui_ImplGlfw_NewFrame();
     ImGui::NewFrame();
 
-    // Sprint 6 Story 6.1 -- LoginScreen is the mandatory gate whenever
-    // LicenseManager reports Unauthenticated or Authenticating. It must
-    // fully replace every other UI surface: otherwise the foreground-
-    // drawlist primitives in Viewport::DrawOverlays (orientation gizmo,
-    // point labels, active-pane border) bleed through, and the GL 3D
-    // pass keeps writing pixels behind the login card. Short-circuit the
-    // entire frame body -- render only the login surface and skip the
-    // app shell, viewports, sidebar, and modals.
-    auto& licenseMgr = LicenseManager::Instance();
-    // Sprint 6 Story 6.2 -- drain the deep-link queue (main.cpp argv or
-    // SingleInstance onRaise). Story 6.3 -- drain the exchange-worker
-    // result if the POST has finished. TickTimeout fires the 5-minute
-    // auth watchdog. Order matters: deep-link can spawn the exchange,
-    // exchange can transition to Authenticated/Unauthenticated, so all
-    // three run before we read the auth state.
-    licenseMgr.DrainPendingDeepLink();
-    licenseMgr.DrainPendingExchange();
-    licenseMgr.DrainPendingRefresh();
-    // Story 7.2 -- conversion-report worker drain. Sequenced after
-    // DrainPendingRefresh so a refresh that flushes the queue spawns
-    // a worker we'll see next frame; sequenced before TickTimeout for
-    // consistency with the rest of the auth-state drains.
-    licenseMgr.DrainPendingConversion();
-    licenseMgr.TickTimeout();
-
-    // Story 7.2 -- limit-reached block modal. ConsumeConversionLimitNotice
-    // is a single-shot read (returns nullopt after the first call), so
-    // we open the modal here and the next frame's poll is silent.
-    if (auto notice = licenseMgr.ConsumeConversionLimitNotice()) {
-        OpenConversionLimitReachedModal(notice->limit, notice->resetAtIso);
-    }
-
     // PR #25 review feedback fix: bring the already-running first
-    // instance to the foreground when SingleInstance forwards a deep
-    // link (or any other raise signal). main.cpp's listener-thread
+    // instance to the foreground after a second launch. main.cpp's listener-thread
     // callback can't call GLFW directly, so it sets the atomic and we
     // drain it here. On Windows we also restore from minimized and use
     // SetForegroundWindow to bypass the foreground-lock rules that
@@ -754,71 +694,6 @@ void AppWindow::TickOnce(int fbWidth, int fbHeight) {
 #endif
         glfwFocusWindow(window_);
     }
-    if (auto err = licenseMgr.ConsumeLastError(); err && !err->empty()) {
-        errorModal_.Open(*err);
-    }
-    const auto authState = licenseMgr.GetState();
-    const bool gateLogin =
-        authState == LicenseManager::AuthState::Unauthenticated ||
-        authState == LicenseManager::AuthState::Authenticating ||
-        authState == LicenseManager::AuthState::Verifying;
-    if (gateLogin) {
-        // Map auth state to the LoginScreen UI sub-state. The screen
-        // itself is a pure render fn and reports clicks via Result;
-        // AppWindow translates those into LicenseManager transitions.
-        // Verifying is a dedicated loading view that hides Retry --
-        // see Story 6.7 follow-up for the rationale.
-        LoginScreen::State loginUi = LoginScreen::State::Idle;
-        if (authState == LicenseManager::AuthState::Authenticating) {
-            loginUi = LoginScreen::State::Waiting;
-        } else if (authState == LicenseManager::AuthState::Verifying) {
-            loginUi = LoginScreen::State::Verifying;
-        }
-
-        // Render login first so the title bar (Begin'd second below)
-        // sits on top of it in ImGui's draw order -- drag, minimize,
-        // maximize, close need to work even while the user hasn't
-        // signed in. The title bar's breadcrumb collapses to
-        // "MetaVisage / Sign in" since no project is loaded yet
-        // (RenderTitleBar branches on the same auth-state check).
-        const auto loginResult = LoginScreen::Render(loginUi);
-
-        SyncOSWindowTitle();
-        RenderTitleBar();
-        if (loginResult.signInRequested) {
-            licenseMgr.BeginAuthFlow();
-        }
-        if (loginResult.retryRequested) {
-            // PR #25 UI feedback fix: Retry is only clickable from the
-            // Waiting state, where state_ == Authenticating, but
-            // BeginAuthFlow early-returns in that case. So a plain
-            // re-call did nothing -- the browser was never re-opened.
-            // Cancel-then-Begin clears the in-flight state token + start
-            // time, then runs a fresh auth flow with a new CSPRNG state.
-            licenseMgr.CancelAuthFlow();
-            licenseMgr.BeginAuthFlow();
-        }
-        if (loginResult.cancelRequested) {
-            licenseMgr.CancelAuthFlow();
-        }
-
-        // Still poll worker thread state in case a morph started
-        // pre-login. Doesn't render anything; cleans up the thread
-        // when it finishes so closing the login resumes a coherent app.
-        PollMorphCompletion();
-
-        ImGui::Render();
-        // Solid MvBg0 fill for the OS-window letterbox area outside the
-        // login card. The login screen itself is opaque and covers
-        // every pixel inside the viewport.
-        glViewport(0, 0, fbWidth, fbHeight);
-        glClearColor(MvStyle::MvBg0.x, MvStyle::MvBg0.y, MvStyle::MvBg0.z, 1.0f);
-        glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT);
-        ImGui_ImplOpenGL3_RenderDrawData(ImGui::GetDrawData());
-        glfwSwapBuffers(window_);
-        return;
-    }
-
     // App shell (dockspace + menu bar + status bar) goes first so that
     // docked windows — the future sidebar and the viewport — can reserve
     // their dock slots before BuildLayout runs.
@@ -1017,12 +892,7 @@ void AppWindow::TickOnce(int fbWidth, int fbHeight) {
             project_->GetCurrentStage() == WorkflowStage::TouchUp) {
             if (Viewport* vp = viewportHost_->GetPrimaryViewport()) {
                 auto& s = project_->GetSculptState();
-                const BrushType activeBrush =
-                    CoerceTouchUpBrushForTier(s.activeBrush);
-                if (activeBrush != s.activeBrush) {
-                    s.activeBrush = activeBrush;
-                }
-                vp->SetBrushType(activeBrush);
+                vp->SetBrushType(s.activeBrush);
                 vp->SetBrushRadius(s.brushRadius);
                 vp->SetBrushStrength(s.brushStrength);
                 vp->SetBrushFalloff(s.falloff);
@@ -1069,10 +939,6 @@ void AppWindow::TickOnce(int fbWidth, int fbHeight) {
 
     DispatchPendingAction();
     RenderModals();
-
-    // Story 3.8.12 — login screen takes over the entire frame at the
-    // top of TickOnce (see early-return branch above). When that branch
-    // fires we never reach this point.
 
     ImGui::Render();
 
@@ -1489,24 +1355,6 @@ void AppWindow::RenderTitleBar() {
     drawSegment("\xC2\xB7", MvStyle::Font.Body, MvStyle::MvLine3);   // U+00B7 middot
     cx += 10.0f;
 
-    // Sprint 6 Story 6.1 -- during login the breadcrumb is just
-    // "MetaVisage / Sign in". No project is loaded yet and there's no
-    // active stage to surface, so we mirror the design's login.jsx
-    // title bar shorthand. The drag/close/min/max plumbing in
-    // RenderTitleBar (caption buttons + WM_NCHITTEST hook) keeps
-    // working unchanged.
-    {
-        const auto authState = LicenseManager::Instance().GetState();
-        if (authState == LicenseManager::AuthState::Unauthenticated ||
-            authState == LicenseManager::AuthState::Authenticating ||
-            authState == LicenseManager::AuthState::Verifying) {
-            drawSegment("Sign in", MvStyle::Font.Body, MvStyle::MvFg2);
-            // Caption buttons drawn below; skip the rest of the breadcrumb.
-            ImGui::End();
-            return;
-        }
-    }
-
     const WorkflowStage stage = project_ ? project_->GetCurrentStage() : WorkflowStage::Alignment;
 
     drawSegment(ProjectFileLabel(projectPath_), MvStyle::Font.Body, MvStyle::MvFg2);
@@ -1581,10 +1429,6 @@ void AppWindow::RenderMainMenuBar() {
     }
 
     if (ImGui::BeginMenu("Help")) {
-        if (ImGui::MenuItem("Documentation")) pendingAction_ = PendingAction::OpenDocumentation;
-        if (ImGui::MenuItem("Account & License")) pendingAction_ = PendingAction::OpenAccountLicense;
-        if (ImGui::MenuItem("Check for Updates...")) pendingAction_ = PendingAction::CheckForUpdates;
-        ImGui::Separator();
         if (ImGui::MenuItem("Keyboard Shortcuts")) pendingAction_ = PendingAction::ShowKeyboardShortcuts;
         if (ImGui::MenuItem("About MetaVisage")) pendingAction_ = PendingAction::ShowAbout;
         ImGui::Separator();
@@ -1592,248 +1436,19 @@ void AppWindow::RenderMainMenuBar() {
         // and copy codepoints into MvIcons.h. Will move behind a debug build
         // flag once the icon constants are stable.
         ImGui::MenuItem("Icon Glyph Explorer (Dev)", nullptr, &showIconExplorer_);
-        // Sprint 6.1 retired the dev-only "Login Screen" toggle that
-        // lived here pre-auth-backend. The login surface is now driven
-        // by LicenseManager::GetState() == Unauthenticated.
         ImGui::EndMenu();
     }
 
-    // ---- Right-side cluster ---------------------------------------------
-    // Save indicator (mono, MvFg3) + account chip (Sprint 7 / Sprint 6
-    // deferred AI #3). The Story 3.8.2 "UE 5.4 · LIVE LINK" pill that
-    // previously sat to the right of the save label has been dropped --
-    // Live Link is far-future scope and the green pill confused users
-    // into thinking the connection was real. The previous stage-
-    // indicator from Sprint 3.6 already moved into the title bar.
+    // Keep the save indicator aligned to the right when space permits.
     const std::string savedLabel = SavedAgoLabel(lastSavedAt_);
-
-    // Account chip layout -- pre-measure so we can right-align the whole
-    // right cluster as one unit. Chip is `TIER PILL` + email (mono,
-    // truncated) + 24 px initials avatar; clicking anywhere on the chip
-    // opens the License Status modal.
-    const auto& licenseMgrRO = LicenseManager::Instance();
-    const bool chipVisible =
-        licenseMgrRO.GetState() == LicenseManager::AuthState::Authenticated;
-
-    auto upperOf = [](const std::string& s) {
-        std::string u = s;
-        for (auto& c : u) c = static_cast<char>(
-            std::toupper(static_cast<unsigned char>(c)));
-        return u;
-    };
-    auto initialsOf = [](const std::string& email) {
-        if (email.empty()) return std::string("??");
-        const auto at = email.find('@');
-        std::string local = (at != std::string::npos) ? email.substr(0, at) : email;
-        if (local.empty()) return std::string("??");
-        char first = static_cast<char>(std::toupper(
-            static_cast<unsigned char>(local[0])));
-        char second = '\0';
-        for (size_t i = 1; i < local.size(); ++i) {
-            if (local[i] == '.' || local[i] == '_' || local[i] == '-') {
-                if (i + 1 < local.size()) {
-                    second = static_cast<char>(std::toupper(
-                        static_cast<unsigned char>(local[i + 1])));
-                    break;
-                }
-            }
-        }
-        if (second == '\0' && local.size() >= 2) {
-            second = static_cast<char>(std::toupper(
-                static_cast<unsigned char>(local[1])));
-        }
-        std::string out(1, first);
-        if (second != '\0') out.push_back(second);
-        return out;
-    };
-
-    const std::string tierUpper = chipVisible ? upperOf(licenseMgrRO.GetTier())
-                                              : std::string{};
-    std::string emailDisplay = chipVisible ? licenseMgrRO.GetUserEmail()
-                                           : std::string{};
-    // Truncate long emails so the chip doesn't dominate the title bar.
-    constexpr size_t kEmailMaxChars = 24;
-    if (emailDisplay.size() > kEmailMaxChars) {
-        emailDisplay = emailDisplay.substr(0, kEmailMaxChars - 1) + "\xE2\x80\xA6";  // ellipsis
-    }
-    const std::string initials = chipVisible ? initialsOf(licenseMgrRO.GetUserEmail())
-                                             : std::string{};
-
-    // ----- Measure --------------------------------------------------------
-    // Sized to sit cleanly alongside the save-indicator text in the menu
-    // bar -- pill height matches the text line height so the whole chip
-    // visually centers on the same baseline as "Unsaved" / "Saved ago".
-    constexpr float kAvatarSize  = 18.0f;
-    constexpr float kPillPadX    = 8.0f;
-    constexpr float kPillHeight  = 16.0f;
-    constexpr float kChipGap     = 8.0f;
-    constexpr float kRightPad    = 10.0f;
-    constexpr float kClusterGap  = 12.0f;
-
-    float tierW = 0.0f;
-    float emailW = 0.0f;
-    {
-        MvStyle::ScopedFont f(MvStyle::Font.MonoSm);
-        if (!tierUpper.empty()) tierW = ImGui::CalcTextSize(tierUpper.c_str()).x;
-    }
-    {
-        MvStyle::ScopedFont f(MvStyle::Font.Mono);
-        if (!emailDisplay.empty()) emailW = ImGui::CalcTextSize(emailDisplay.c_str()).x;
-    }
-    const float pillW = chipVisible ? (tierW + kPillPadX * 2.0f) : 0.0f;
-    const float chipW = chipVisible
-        ? (pillW + kChipGap + emailW + kChipGap + kAvatarSize)
-        : 0.0f;
-
-    float savedW = 0.0f;
-    {
-        MvStyle::ScopedFont f(MvStyle::Font.Mono);
-        savedW = ImGui::CalcTextSize(savedLabel.c_str()).x;
-    }
-
-    // ----- Layout decision -----------------------------------------------
+    MvStyle::ScopedFont font(MvStyle::Font.Mono);
+    const float savedWidth = ImGui::CalcTextSize(savedLabel.c_str()).x;
     const float available = ImGui::GetContentRegionAvail().x;
-    const float wantBoth  = savedW + kClusterGap + chipW + kRightPad;
-    const float wantChip  = chipW + kRightPad;
-    const float wantSaved = savedW + kRightPad;
-
-    float startX = 0.0f;
-    bool showSaved = false;
-    bool showChip  = false;
-    if (chipVisible && available >= wantBoth) {
-        showSaved = true;
-        showChip  = true;
-        startX = ImGui::GetCursorPosX() + (available - wantBoth);
-    } else if (chipVisible && available >= wantChip) {
-        showChip = true;
-        startX = ImGui::GetCursorPosX() + (available - wantChip);
-    } else if (available >= wantSaved) {
-        showSaved = true;
-        startX = ImGui::GetCursorPosX() + (available - wantSaved);
-    } else {
-        ImGui::EndMenuBar();
-        return;
-    }
-
-    ImGui::SameLine(startX);
-
-    // Capture the menu bar's actual rendered text-baseline so the chip
-    // can be anchored to where text *actually* draws -- not to where the
-    // cursor reports it should draw. Live-test rounds 2-4 all showed
-    // the chip floating below the save text because the menu bar's
-    // internal layout applies offsets that GetCursorScreenPos doesn't
-    // reflect. Reading the rendered item rect after-the-fact gets us
-    // the truth.
-    float baselineY = 0.0f;
-    bool  baselineCaptured = false;
-
-    // ----- Save indicator -------------------------------------------------
-    if (showSaved) {
-        MvStyle::ScopedFont f(MvStyle::Font.Mono);
+    if (available >= savedWidth + MvStyle::Spacing::S4) {
+        ImGui::SameLine(ImGui::GetCursorPosX() + available - savedWidth - MvStyle::Spacing::S4);
         ImGui::PushStyleColor(ImGuiCol_Text, MvStyle::MvFg3);
         ImGui::TextUnformatted(savedLabel.c_str());
         ImGui::PopStyleColor();
-        const ImVec2 savedMin = ImGui::GetItemRectMin();
-        const ImVec2 savedMax = ImGui::GetItemRectMax();
-        baselineY = (savedMin.y + savedMax.y) * 0.5f;
-        baselineCaptured = true;
-        if (showChip) ImGui::SameLine(0.0f, kClusterGap);
-    }
-
-    // ----- Account chip ---------------------------------------------------
-    if (showChip) {
-        const ImVec2 chipMin = ImGui::GetCursorScreenPos();
-        const float chipH     = std::max(kPillHeight, kAvatarSize);
-
-        // Fall back to a Mono-font textLineH calculation when the chip is
-        // the only thing on the right cluster (no save indicator to read).
-        if (!baselineCaptured) {
-            MvStyle::ScopedFont monoF(MvStyle::Font.Mono);
-            baselineY = chipMin.y + ImGui::GetTextLineHeight() * 0.5f;
-        }
-
-        const float chipBaseY = baselineY - chipH * 0.5f;
-        const ImVec2 chipMax(chipMin.x + chipW, chipBaseY + chipH);
-
-        // Make the whole chip a click target. InvisibleButton must lay
-        // out at the same x position the visual content paints at; do
-        // it FIRST so subsequent draws sit on top via dl->...
-        ImGui::SetCursorScreenPos(ImVec2(chipMin.x, chipBaseY));
-        if (ImGui::InvisibleButton("##acctChip", ImVec2(chipW, chipH))) {
-            licenseModal_.Open();
-        }
-        const bool chipHovered = ImGui::IsItemHovered();
-        if (chipHovered) ImGui::SetMouseCursor(ImGuiMouseCursor_Hand);
-
-        ImDrawList* dl = ImGui::GetWindowDrawList();
-        const ImU32 hoverTint = ImGui::ColorConvertFloat4ToU32(MvStyle::MvBg3);
-        if (chipHovered) {
-            dl->AddRectFilled(ImVec2(chipMin.x - 4.0f, chipBaseY - 2.0f),
-                              ImVec2(chipMax.x + 4.0f, chipBaseY + chipH + 2.0f),
-                              hoverTint, 6.0f);
-        }
-
-        // Tier pill (small rounded box, colour-coded by tier)
-        float cursorX = chipMin.x;
-        {
-            const ImVec4 pillCol = (tierUpper == "PRO")   ? MvStyle::MvWarning
-                                 : (tierUpper == "INDIE") ? MvStyle::MvBlue500
-                                                          : MvStyle::MvFg4;
-            const ImVec2 pillMin(cursorX,
-                                 chipBaseY + (chipH - kPillHeight) * 0.5f);
-            const ImVec2 pillMax(pillMin.x + pillW, pillMin.y + kPillHeight);
-            dl->AddRectFilled(pillMin, pillMax,
-                              ImGui::ColorConvertFloat4ToU32(pillCol),
-                              kPillHeight * 0.5f);
-            if (MvStyle::Font.MonoSm) {
-                const float tx = pillMin.x + kPillPadX;
-                const float ty = pillMin.y +
-                    (kPillHeight - MvStyle::TypeSize::MonoSm) * 0.5f;
-                dl->AddText(MvStyle::Font.MonoSm,
-                            MvStyle::TypeSize::MonoSm,
-                            ImVec2(tx, ty),
-                            ImGui::ColorConvertFloat4ToU32(MvStyle::MvFg1),
-                            tierUpper.c_str());
-            }
-            cursorX = pillMax.x + kChipGap;
-        }
-
-        // Email (mono, muted)
-        if (!emailDisplay.empty() && MvStyle::Font.Mono) {
-            const float ty = chipBaseY + (chipH - MvStyle::TypeSize::Mono) * 0.5f;
-            dl->AddText(MvStyle::Font.Mono,
-                        MvStyle::TypeSize::Mono,
-                        ImVec2(cursorX, ty),
-                        ImGui::ColorConvertFloat4ToU32(MvStyle::MvFg2),
-                        emailDisplay.c_str());
-            cursorX += emailW + kChipGap;
-        }
-
-        // Initials avatar -- filled circle with two-letter caption
-        {
-            const ImVec2 center(cursorX + kAvatarSize * 0.5f,
-                                chipBaseY + chipH * 0.5f);
-            // Tier-coloured outline ring for visual identity.
-            const ImVec4 ringCol = (tierUpper == "PRO")   ? MvStyle::MvWarning
-                                 : (tierUpper == "INDIE") ? MvStyle::MvBlue500
-                                                          : MvStyle::MvFg3;
-            dl->AddCircleFilled(center, kAvatarSize * 0.5f,
-                                ImGui::ColorConvertFloat4ToU32(MvStyle::MvBg3));
-            dl->AddCircle(center, kAvatarSize * 0.5f,
-                          ImGui::ColorConvertFloat4ToU32(ringCol),
-                          0, 1.5f);
-            if (MvStyle::Font.MonoSm && !initials.empty()) {
-                const ImVec2 ts = MvStyle::Font.MonoSm->CalcTextSizeA(
-                    MvStyle::TypeSize::MonoSm, FLT_MAX, 0.0f,
-                    initials.c_str());
-                dl->AddText(MvStyle::Font.MonoSm,
-                            MvStyle::TypeSize::MonoSm,
-                            ImVec2(center.x - ts.x * 0.5f,
-                                   center.y - ts.y * 0.5f),
-                            ImGui::ColorConvertFloat4ToU32(MvStyle::MvFg1),
-                            initials.c_str());
-            }
-        }
     }
 
     ImGui::EndMenuBar();
@@ -1887,15 +1502,6 @@ void AppWindow::RenderStatusBar() {
     drawSection(statusMessage_.empty() ? "Ready" : statusMessage_, MvStyle::MvFg2);
     drawSep();
 
-    // Sprint 6 Story 6.5 -- amber Offline pill when the most recent
-    // /api/desktop/token refresh hit a transport failure but the cached
-    // JWT is still valid. Cleared silently on the next successful refresh.
-    if (LicenseManager::Instance().IsOfflineMode()) {
-        drawSection("\xE2\x97\x8F ", MvStyle::MvWarning);
-        drawSection("Offline", MvStyle::MvWarning);
-        drawSep();
-    }
-
     // Stage 0N STAGENAME
     drawSection("Stage ", MvStyle::MvFg3);
     {
@@ -1923,63 +1529,6 @@ void AppWindow::RenderStatusBar() {
             ? std::filesystem::path(project_->GetTargetMesh().filepath).filename().string()
             : "\xE2\x80\x94";
         drawSection(tgt, MvStyle::MvFg1);
-    }
-
-    // Sprint 6 Story 6.6 -- persistent tier badge so the user always
-    // knows which tier they're on. Only renders when LicenseManager is
-    // in a state where the tier is meaningful (post-auth); the gate at
-    // the top of TickOnce hides the status bar entirely while
-    // Unauthenticated/Authenticating, so we don't need to defend that
-    // here.
-    {
-        const auto& lm = LicenseManager::Instance();
-        std::string tier = lm.GetTier();
-        if (!tier.empty()) {
-            drawSep();
-            drawSection("Tier ", MvStyle::MvFg3);
-            std::string upper = tier;
-            std::transform(upper.begin(), upper.end(), upper.begin(),
-                           [](unsigned char c) {
-                               return static_cast<char>(std::toupper(c));
-                           });
-            drawSection(upper, MvStyle::MvBlue400);
-        }
-
-        // Sprint 7 Story 7.4 -- conversion-limit warning pill. Triggers
-        // within 2 conversions of the limit and stays visible at zero
-        // remaining. The "used" value folds in offline-queued
-        // conversions (live-test feedback: an offline export should be
-        // visible immediately, not invisible until the queue drains).
-        const int used  = lm.GetEffectiveConversionsUsed();
-        const int limit = lm.GetConversionsLimit();
-        const int pending = lm.GetPendingConversionCount();
-        if (limit > 0 && used >= limit - 2) {
-            drawSep();
-            const int remaining = std::max(0, limit - used);
-            std::string label;
-            if (remaining == 0) {
-                // ISO 8601 reset date trimmed to YYYY-MM-DD for the bar.
-                std::string resetIso = lm.GetConversionsResetAt();
-                if (resetIso.size() >= 10) resetIso = resetIso.substr(0, 10);
-                label = std::format("0 conversions left -- resets {}",
-                                    resetIso.empty() ? "soon" : resetIso);
-            } else {
-                label = std::format(
-                    "{} conversion{} left this month",
-                    remaining, remaining == 1 ? "" : "s");
-            }
-            drawSection("\xE2\x97\x8F ", MvStyle::MvWarning);
-            drawSection(label, MvStyle::MvWarning);
-        }
-        // Surface offline-queued conversions even when not near the limit
-        // -- the user did an export-while-offline expecting "their
-        // conversion was tracked", so a small "N pending sync" indicator
-        // confirms the queue persists across launches.
-        if (pending > 0) {
-            drawSep();
-            drawSection("\xE2\x86\xBB ", MvStyle::MvFg3);  // U+21BB recycle-ish arrow
-            drawSection(std::format("{} pending sync", pending), MvStyle::MvFg3);
-        }
     }
 
     // ---- Right-aligned cluster: GPU readout ------------------------------
@@ -2067,23 +1616,6 @@ void AppWindow::DispatchPendingAction() {
             break;
         case PendingAction::ShowAbout:
             showAbout_ = true;
-            break;
-        case PendingAction::OpenDocumentation:
-            if (!OpenUrl("https://metavisage.io/docs")) {
-                errorModal_.Open("Could not open the documentation link in your browser.");
-            }
-            break;
-        case PendingAction::OpenAccountLicense:
-            // Sprint 6 Story 6.6 -- replaces the placeholder browser open
-            // with the in-app License Status dialog.
-            licenseModal_.Open();
-            break;
-        case PendingAction::CheckForUpdates:
-            // WinSparkle integration is scheduled for the Sprint 3.6 close-out;
-            // for now, direct the user to the releases page.
-            if (!OpenUrl("https://metavisage.io/releases")) {
-                errorModal_.Open("Could not open the releases page.");
-            }
             break;
     }
 }
@@ -2241,30 +1773,6 @@ void AppWindow::RenderModals() {
     RenderErrorModal(errorModal_);
     RenderShortcutsModal(shortcutsModal_);
 
-    // Sprint 6 Story 6.6 -- License Status modal. Action requests are
-    // polled here so RenderLicenseModal stays a pure render fn (matches
-    // the per-frame state-passing convention from AGENTS.md).
-    RenderLicenseModal(licenseModal_);
-    if (licenseModal_.manageSubscriptionRequested) {
-        licenseModal_.manageSubscriptionRequested = false;
-        const std::string url = std::string(LicenseConfig::kApiBaseUrl) +
-                                "/manage-subscription";
-        if (!OpenUrl(url)) {
-            errorModal_.Open(
-                "Could not open the subscription management page in your "
-                "browser.");
-        }
-    }
-    if (licenseModal_.signOutRequested) {
-        licenseModal_.signOutRequested = false;
-        confirmModal_.Open(
-            "Sign Out",
-            "Signing out will require you to sign in again to use "
-            "MetaVisage. Continue?",
-            []() { LicenseManager::Instance().SignOut(); },
-            "Sign Out", "Cancel");
-    }
-
     RenderWelcomeModal(welcomeModal_);
     if (welcomeModal_.action != WelcomeAction::None) {
         switch (welcomeModal_.action) {
@@ -2302,18 +1810,7 @@ void AppWindow::RenderModals() {
             if (picked) exportModal_.filepath = *picked;
         }
         if (!exportModal_.filepath.empty()) {
-            // Story 7.2 -- conversion-limit pre-check fires at export time.
-            // Effective usage folds in locally queued offline reports so a
-            // user cannot exceed their monthly cap by exporting repeatedly
-            // while reports are waiting to sync.
-            auto& lm = LicenseManager::Instance();
-            if (lm.GetConversionsLimit() > 0 &&
-                lm.GetEffectiveConversionsUsed() >= lm.GetConversionsLimit()) {
-                OpenConversionLimitReachedModal(lm.GetConversionsLimit(),
-                                                lm.GetConversionsResetAt());
-            } else {
-                DoExport();
-            }
+            DoExport();
         }
     }
 
@@ -2693,12 +2190,6 @@ void AppWindow::DoExport() {
     statusMessage_ = std::format("Exported to {}", FileName(exportModal_.filepath));
     MV_LOG_INFO(std::format("Exported mesh to {}", exportModal_.filepath));
 
-    // Story 7.2 -- a successful export is the conversion. Fire-and-forget:
-    // the LicenseManager worker handles offline queueing, 429/5xx retries,
-    // and 403 surfacing via ConsumeConversionLimitNotice on the next
-    // TickOnce. The in-memory used/limit counters refresh from the server
-    // response on the 200 path so the Stage 4 readout updates this frame.
-    LicenseManager::Instance().ReportConversion();
     // Visible confirmation matching v1.0 behaviour — the QMessageBox::information
     // toast in the Qt era turned into nothing on the ImGui port until now.
     errorModal_.OpenInfo(
@@ -2743,14 +2234,6 @@ void AppWindow::RenderFrame(int /*fbWidth*/, int /*fbHeight*/) {
 }
 
 void AppWindow::Shutdown() {
-    // Unwind in reverse init order, consulting each flag so a partial
-    // Initialize() failure still produces a clean teardown.
-
-    // Sprint 6 Story 6.3 -- join the licensing exchange worker so the
-    // process doesn't exit while the POST is mid-flight. HttpClient has
-    // a 30s ceiling; in practice the join is instant on a normal exit
-    // because the user has already authenticated by the time they quit.
-    LicenseManager::Instance().Shutdown();
 
     // Join the morph worker before tearing anything down — it holds raw
     // pointers into the deformer and captures `this` by reference.
@@ -2943,40 +2426,7 @@ void AppWindow::AcceptMorph() {
     if (!project_) return;
     MorphData& morphData = project_->GetMorphData();
     if (!morphData.isProcessed) return;
-    // Story 7.2 (revised, live-test feedback): a "conversion" counts at
-    // export time, not accept time -- users may re-wrap several times
-    // before they're satisfied with the result. AcceptMorph remains a
-    // pure state flip; the conversion-limit pre-check + ReportConversion
-    // fire from the Export action path (DoExport) instead.
     morphData.isAccepted = true;
-}
-
-void AppWindow::OpenConversionLimitReachedModal(
-        int limit, const std::string& resetAtIso) {
-    // Reset date arrives as ISO 8601 (e.g. "2026-04-15T00:00:00.000Z").
-    // For the dialog body we want the YYYY-MM-DD prefix; if the string
-    // is malformed or empty we fall back to "later this month".
-    std::string readableDate = "later this month";
-    if (resetAtIso.size() >= 10) {
-        readableDate = resetAtIso.substr(0, 10);
-    }
-
-    const std::string title = "Monthly conversion limit reached";
-    const std::string message = std::format(
-        "You've reached your monthly conversion limit of {}. "
-        "Resets on {}.\n\n"
-        "Upgrade at metavisage.io to unlock more conversions.",
-        limit, readableDate);
-
-    confirmModal_.Open(
-        title, message,
-        [] {
-            const std::string url =
-                std::string(LicenseConfig::kApiBaseUrl) + "/pricing";
-            MetaVisage::OpenUrl(url);
-        },
-        /*confirmLbl=*/"Upgrade",
-        /*cancelLbl=*/"Close");
 }
 
 } // namespace MetaVisage

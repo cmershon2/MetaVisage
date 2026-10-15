@@ -38,10 +38,7 @@ public:
         ImportTargetMesh,
         ExportMesh,
         ShowKeyboardShortcuts,
-        ShowAbout,
-        OpenDocumentation,
-        OpenAccountLicense,
-        CheckForUpdates
+        ShowAbout
     };
 
     AppWindow();
@@ -71,13 +68,7 @@ public:
     // owner.
     GLFWwindow* GetWindow() { return window_; }
 
-    // PR #25 review feedback fix: thread-safe request that the main
-    // app window be brought to the foreground on the next TickOnce.
-    // Wired from main.cpp's SingleInstance onRaise callback (runs on
-    // the listener thread) so a metavisage:// deep link from a second
-    // instance brings the already-running first instance forward
-    // instead of leaving it buried. Static so the callback doesn't
-    // need to capture an AppWindow pointer.
+    // Thread-safe request to focus the running app after a second launch.
     static void RequestForegroundFocus();
 
 private:
@@ -121,12 +112,6 @@ private:
     void CancelMorph();
     void PollMorphCompletion();
     void AcceptMorph();
-
-    // Story 7.2 -- reuses confirmModal_ to surface the conversion-limit
-    // block dialog. Called proactively from the export pre-check and
-    // reactively after a 403 limit_reached result lands on the next TickOnce.
-    void OpenConversionLimitReachedModal(int limit,
-                                         const std::string& resetAtIso);
 
     GLFWwindow* window_ = nullptr;
     bool imguiContextCreated_ = false;
@@ -172,7 +157,6 @@ private:
     WelcomeModalState welcomeModal_;
     ExportModalState exportModal_;
     ShortcutsModalState shortcutsModal_;
-    LicenseModalState licenseModal_;
 
     // Story 4.4 — Save / Rename Wrap preset modal. Single state struct
     // covers both flows; editingPresetId distinguishes new (empty) from
