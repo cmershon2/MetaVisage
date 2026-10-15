@@ -65,6 +65,16 @@ if (Test-Path $EnvFile) {
     }
 }
 
+# Validate before cleaning so an invalid toolchain leaves the existing build intact.
+if ($VcpkgToolchain -ne "") {
+    if (-not (Test-Path -LiteralPath $VcpkgToolchain -PathType Leaf)) {
+        Write-Host "ERROR: vcpkg toolchain file not found: $VcpkgToolchain" -ForegroundColor Red
+        Write-Host "Pass the path to an existing scripts/buildsystems/vcpkg.cmake file." -ForegroundColor Red
+        exit 1
+    }
+    $VcpkgToolchain = (Resolve-Path -LiteralPath $VcpkgToolchain).Path.Replace('\', '/')
+}
+
 # Clean build directory if requested
 if ($Clean) {
     Write-Host "Cleaning build directory..." -ForegroundColor Yellow
@@ -101,9 +111,9 @@ $CMakeArgs = @(
     "..",
     "-G", "MinGW Makefiles",
     "-DCMAKE_BUILD_TYPE=$BuildType",
-    "-DCMAKE_C_COMPILER=`"$MinGWPath/bin/gcc.exe`"",
-    "-DCMAKE_CXX_COMPILER=`"$MinGWPath/bin/g++.exe`"",
-    "-DCMAKE_MAKE_PROGRAM=`"$MinGWPath/bin/mingw32-make.exe`"",
+    "-DCMAKE_C_COMPILER=$MinGWPath/bin/gcc.exe",
+    "-DCMAKE_CXX_COMPILER=$MinGWPath/bin/g++.exe",
+    "-DCMAKE_MAKE_PROGRAM=$MinGWPath/bin/mingw32-make.exe",
     "-DMETAVISAGE_BUILD_PROFILE=$Profile"
 )
 
@@ -122,7 +132,8 @@ foreach ($key in $EnvValues.Keys) {
 # future cross-toolchain experimentation via custom triplets.
 if ($VcpkgToolchain -ne "") {
     Write-Host "Using vcpkg toolchain: $VcpkgToolchain" -ForegroundColor Cyan
-    $CMakeArgs += "-DCMAKE_TOOLCHAIN_FILE=`"$VcpkgToolchain`""
+    # PowerShell passes each array element as one argument, including paths with spaces.
+    $CMakeArgs += "-DCMAKE_TOOLCHAIN_FILE=$VcpkgToolchain"
 }
 
 # Run CMake
