@@ -1,5 +1,11 @@
 # Desktop Update Flow (WinSparkle)
 
+> **Historical — retired integration.** This is an archived web update contract,
+> not a description of current desktop behavior. The standalone application
+> does not poll an appcast or use a runtime web update service.
+> See [current direction](product-vision.md) and the
+> [standalone transition](open-source-transition.md).
+
 ## Overview
 
 MetaVisage desktop ships updates via [WinSparkle](https://github.com/vslavik/winsparkle). The desktop client polls a public **appcast** URL hosted by this web portal. When a new active release exists, WinSparkle handles the prompt, download, signature check (optional), and relaunch — no manual intervention is required from the user.

@@ -1,148 +1,102 @@
-﻿![MetaVisage Banner](https://github.com/cmershon2/MetaVisage/blob/master/docs/MetaVisage_Banner.png?raw=true)
+![MetaVisage Banner](docs/MetaVisage_Banner.png)
 
-An open-source desktop application for automated MetaHuman mesh morphing. Wrap MetaHuman head meshes to custom head models for use in Unreal Engine.
+MetaVisage is an open-source Windows desktop application for wrapping MetaHuman
+head meshes to custom head models for use in Unreal Engine. All implemented
+tools run locally without accounts, subscriptions, or usage limits.
 
 ## Features
 
-- **Four-stage workflow**: Alignment, Point Reference, Morph, Touch Up
-- **Non-rigid surface registration** for high-quality mesh wrapping
-- **Wrap presets**: Quick Wrap (rigid, for human-like targets) and Fantasy Wrap (looser, for dramatic features) ship as built-ins; users can save their own tuned parameter sets as named presets with a 12-glyph picker, then rename / replace / delete via right-click on the preset card
-- **Hierarchical Stage 3 inspector**: collapsible General + Advanced parameter sections with sub-sections (Interior Geometry, Optimization, Rigidity, Control Node Sampling); collapsed/expanded state persists across sessions
-- **Sculpting tools**: Smooth, Grab, Push/Pull, and Inflate brushes for manual refinement, with visual brush-effect previews and `1`/`2`/`3`/`4` hotkeys
-- **Symmetry support**: Mirrored point placement and sculpting
-- **Blender-style controls**: Familiar orbit/pan/zoom camera and G/R/S transform shortcuts
-- **Multiple formats**: Import/export FBX, OBJ, and GLTF meshes
-- **Unreal Engine ready**: Exports preserve topology, UVs, normals, and material slots — quad topology is preserved end-to-end for UE5 MetaHuman Conform compatibility
-- **Project management**: Save/load workflow state with full undo/redo support; v1.0.0 `.mmproj` files load without modification
-- **Included assets**: Ships with a MetaHuman head mesh (LOD0) ready to use
-- **Standalone and offline**: All tools are available without login, subscriptions, usage limits, or web services.
+- **Four-stage workflow**: Alignment, Point Reference, Morph, and Touch Up.
+- **Wrap Engine**: Quick Wrap and Fantasy Wrap presets, advanced parameter
+  controls, and user presets that can be saved, renamed, replaced, and deleted.
+- **Sculpting**: Smooth, Grab, Push/Pull, and Inflate brushes, with symmetry,
+  masking, and brush previews.
+- **Blender-style controls**: MMB orbit, Shift+MMB pan, scroll zoom, numpad
+  views, G/R/S transforms, X/Y/Z constraints, and `[` / `]` brush sizing.
+- **Mesh I/O**: FBX, OBJ, and GLTF import/export through Assimp. FBX is the
+  default export format; triangulation is off by default to preserve quads.
+- **Mesh preservation**: The morph workflow preserves topology, vertex order,
+  UVs, normals, and material slots for MetaHuman workflows.
+- **Local projects**: Save/load `.mmproj` files, undo/redo, and compatibility
+  with v1.0.0 project files.
+- **Texture tools**: Six texture slots and local texture baking.
 
 ## Requirements
 
-### Runtime
-- Windows 10/11 (64-bit)
-- Intel i5 / AMD Ryzen 5 or better
-- 8 GB RAM minimum (16 GB recommended)
-- DirectX 11 compatible GPU with 2 GB VRAM
-- 1920x1080 minimum display resolution
+- Windows 10/11 (64-bit).
+- GPU and driver supporting **OpenGL 4.3 or newer**.
+- 8 GB RAM minimum; 16 GB recommended. Larger meshes require more memory.
+- 1920x1080 display recommended.
 
-### Build
-- CMake 3.16+
-- **C++20** compiler — MSVC 2019+ (19.30+) or MinGW with C++20 support
-- OpenGL 4.3+
-- vcpkg for dependencies (manifest pinned in [vcpkg.json](vcpkg.json)):
-  - GLFW3, Dear ImGui (with `glfw-binding` + `opengl3-binding` + `docking-experimental` + `test-engine`), GLEW
-  - nlohmann/json, native-file-dialog-extended (NFD)
-  - Assimp, Eigen3
-- **No Qt dependency.** Earlier versions linked `Qt6::Core` transitionally; Sprint 3.7 removed it entirely. The CMake configure-time guard fails the build if any Qt target is reintroduced.
+To build, install Visual Studio 2022 with **Desktop development with C++** and
+a Windows SDK, CMake 3.16+, Git, and vcpkg. The application uses C++20, Dear
+ImGui, GLFW, GLEW, Eigen, Assimp, nlohmann/json, and Native File Dialog Extended.
+Dependencies are listed in [vcpkg.json](vcpkg.json); Qt is not required.
 
-## Quick Start
+## Build and run
 
-### Building from Source
-
-```bash
-git clone https://github.com/cmershon2/MetaVisage.git
-cd MetaVisage
-mkdir build && cd build
-
-# MSVC
-cmake .. -DCMAKE_TOOLCHAIN_FILE="%VCPKG_ROOT%/scripts/buildsystems/vcpkg.cmake" -G "Visual Studio 17 2022" -A x64
-cmake --build . --config Release
-
-# Run the full smoke suite (load → serialize → reload → export round-trip,
-# v1.0.0 backward-compat regression, Wrap Engine behavioural-parity, and
-# imgui_test_engine click-through smoke against the live AppWindow)
-ctest -C Release --output-on-failure
-
-# Or filter to just the imgui_test_engine UI lane
-ctest -C Release -L ui --output-on-failure
-
-# Launch
-./bin/Release/MetaVisage.exe
-```
-
-See [BUILD.md](BUILD.md) for detailed instructions (MinGW, vcpkg setup, troubleshooting).
-
-### Using the Build Scripts
+The standalone changes are on `development`. Run these commands in PowerShell;
+replace the toolchain path with your vcpkg installation:
 
 ```powershell
-# MSVC build (recommended)
+git clone --branch development https://github.com/cmershon2/MetaVisage.git
+cd MetaVisage
 .\build-msvc.ps1 -Deploy -VcpkgToolchain "C:/vcpkg/scripts/buildsystems/vcpkg.cmake"
-
-# MinGW requires dependencies built with a matching MinGW triplet
-.\build-mingw.ps1 -VcpkgToolchain "C:/vcpkg/scripts/buildsystems/vcpkg.cmake"
+Push-Location build/bin/Release
+.\MetaVisage.exe
+Pop-Location
 ```
 
-No environment files, API endpoints, account, or license keys are required.
-The web-integrated version is archived; this branch restores the standalone
-open-source application. Earlier sprint and integration specifications in
-`.agents/context/` are historical references.
+Keep the executable, runtime DLLs, and staged `assets/` directory together.
+See [BUILD.md](BUILD.md) for vcpkg setup, tests, and troubleshooting. MSVC is
+the validated toolchain; the retained MinGW helper requires a compatible vcpkg
+triplet and has not been validated for the standalone release.
 
 ## Workflow
 
-1. **Alignment** - Load your MetaHuman head mesh and custom target mesh, then align them using move (G), rotate (R), and scale (S) tools
-2. **Point Reference** - Place corresponding landmark points on both meshes in synchronized dual viewports
-3. **Morph** - Run the deformation algorithm to automatically wrap the MetaHuman mesh to your target shape
-4. **Touch Up** - Refine the result with sculpting brushes (smooth, grab, push/pull, inflate)
-5. **Export** - Save the morphed mesh as FBX or OBJ, ready for Unreal Engine (quad topology preserved for MetaHuman Conform)
+1. **Alignment**: Load a source MetaHuman head and your target head, then align
+   them with move (`G`), rotate (`R`), and scale (`S`).
+2. **Point Reference**: Place corresponding landmarks on both meshes in the
+   dual viewports. Use symmetry for matching features.
+3. **Morph**: Choose a wrap preset, process the mesh, inspect the result, and
+   accept it before continuing.
+4. **Touch Up**: Refine the result with sculpting brushes and texture tools.
+5. **Export**: Use FBX for the Unreal workflow. Keep triangulation disabled
+   when preserving the source quad topology for MetaHuman Conform.
 
-## Included Assets
+Save frequently with `Ctrl+S`; auto-save and crash recovery are not implemented.
+Settings, recent projects, presets, and logs are stored under
+`%APPDATA%/MetaVisage`. Projects are saved to the location you choose.
 
-A MetaHuman head mesh (LOD0) is included in `assets/models/MetaHumanHeadLod0.obj` for immediate use as the morph source mesh.
+## Repository layout
 
-## Project Structure
+| Path | Contents |
+|------|----------|
+| `assets/` | Fonts, icons, shaders, gizmos, brush previews, and a reference head mesh |
+| `include/`, `src/` | C++ headers and implementation, organized by subsystem |
+| `tests/` | Four CTest smoke targets and project/mesh fixtures |
+| `docs/` | Known issues and public documentation assets |
+| `.agents/`, `.codex/` | Maintainer context and optional agent tooling |
+| `build-msvc.ps1`, `build-mingw.ps1` | Build helpers |
 
-```
-MetaVisage/
-├── assets/           # Fonts (Inter / JetBrains Mono / Saira / Lucide), shaders,
-│                     # gizmo models, default MetaHuman head, app icons, logo mark,
-│                     # Stage 4 brush-effect preview PNGs (assets/brushes/)
-├── cmake/            # configure_file templates (LicenseConfig.h.in)
-├── docs/             # Banner, KNOWN_ISSUES.md
-├── include/          # Public headers — baking/, core/, deformation/, io/,
-│                     # rendering/, sculpting/, thirdparty/, ui/, utils/
-│                     # (development/staging/production; PEMs gitignored)
-├── src/              # Implementation (mirrors include/ structure) + main.cpp
-├── tests/            # CTest suite — four smoke executables plus pinned v1.0.0
-│                     # fixtures: load → serialize → export round-trip, v1.0.0
-│                     # backward-compat regression, Wrap Engine behavioural-parity
-│                     # over Quick + Fantasy presets, and an imgui_test_engine
-│                     # click-through smoke against the live AppWindow (5 scenarios:
-│                     # welcome modal / dockspace / shading-mode / stage stepper
-│                     # / brush-gate clamp / login cycle)
-├── .agents/          # Codex context, rules, skills, memory, boilerplate baseline
-├── .codex/           # Codex custom agents, hooks, and local runtime config
-├── CMakeLists.txt    # Build configuration
-├── vcpkg.json        # Pinned dependency manifest (ImGui test engine enabled)
-├── build-msvc.ps1    # MSVC build helper (-Deploy flag)
-├── build-mingw.ps1   # MinGW build helper
-├── BUILD.md          # Detailed build instructions
-├── CONTRIBUTING.md   # Contribution guidelines
-└── LICENSE           # MIT License
-```
+Historical sprint and integration documents under `.agents/context/` describe
+earlier work. Current scope is the standalone desktop application; the retired
+web, account, and paid-feature specifications do not describe current behavior.
 
-The UI lives under `include/ui/` & `src/ui/`: shell hosts (`AppWindow`, `Viewport`, `ViewportHost`, `StageSidebar`, `StageStepper`, `ToolRail`, `Modals`, `FileDialogs`) plus the design-system primitives (`MvStyle` for tokens + brand asset texture handles, `MvIcons` for the Lucide icon font, `MvInspectorPrimitives` for shared section / sub-section / row helpers).
+## Contributing and support
 
-## Contributing
+See [CONTRIBUTING.md](CONTRIBUTING.md) for development and pull request guidance.
+Report bugs through [GitHub Issues](https://github.com/cmershon2/MetaVisage/issues).
+See [known issues](docs/KNOWN_ISSUES.md) and [release notes](RELEASE_NOTES.md)
+before reporting a problem.
 
-Contributions are welcome! See [CONTRIBUTING.md](CONTRIBUTING.md) for guidelines.
+## License and credits
 
-## Known Issues
+MetaVisage code is licensed under the [MIT License](LICENSE). Third-party code
+and assets have their own terms. A reference head is present at
+`assets/models/MetaHumanHeadLod0.obj`; its source and redistribution terms still
+need to be documented before release packaging.
 
-See [docs/KNOWN_ISSUES.md](docs/KNOWN_ISSUES.md) for a list of known issues and platform limitations.
-
-## License
-
-MIT License - see [LICENSE](LICENSE) for details.
-
-## Author
-
-Casey Mershon
-
-## Acknowledgments
-
-- Epic Games for MetaHuman Creator
-- Dear ImGui, GLFW, and GLEW for the UI/windowing/GL stack
-- Eigen for linear algebra
-- Assimp for mesh I/O
-- nlohmann/json, native-file-dialog-extended
+Created by Casey Mershon. Thanks to Epic Games for MetaHuman Creator and to
+the maintainers of Dear ImGui, GLFW, GLEW, Eigen, Assimp, nlohmann/json, Native
+File Dialog Extended, stb, Inter, JetBrains Mono, Saira, and Lucide.

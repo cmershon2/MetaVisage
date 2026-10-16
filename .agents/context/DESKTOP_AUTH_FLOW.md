@@ -1,5 +1,11 @@
 # Desktop Authentication Flow
 
+> **Historical — retired integration.** This flow describes the archived web
+> version. The standalone application has no login, token exchange, or browser
+> URL handler. Do not follow the registration or credential setup below.
+> See [current direction](product-vision.md) and the
+> [standalone transition](open-source-transition.md).
+
 ## Overview
 
 This document describes the browser-based OAuth-style authentication flow that allows the MetaVisage desktop application to authenticate users through the web portal and receive a session token and license JWT via a secure exchange code pattern using the `metavisage://` custom URL scheme.

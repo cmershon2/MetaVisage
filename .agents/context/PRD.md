@@ -1,4 +1,11 @@
 # Product Requirements Document (PRD)
+
+> **Scope note (2026-10-16):** This v1.0 document remains the workflow authority.
+> Its original technology alternatives, estimates, competitor comparisons, and
+> future ideas are historical planning context, not current setup guidance or
+> committed features. The current implementation uses C++20 and Dear ImGui;
+> Qt and runtime web integrations are retired. Use [product vision](product-vision.md)
+> for current scope and [BUILD.md](../../BUILD.md) for development setup.
 ## MetaVisage - MetaHuman Mesh Morphing Tool
 
 **Version:** 1.0  

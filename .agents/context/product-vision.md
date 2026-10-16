@@ -5,7 +5,7 @@ description: Current strategic direction for the standalone open-source applicat
 
 # Product Vision
 
-**Last Updated**: 2026-10-15
+**Last Updated**: 2026-10-16
 
 MetaVisage is a standalone, MIT-licensed Windows desktop application for wrapping
 MetaHuman head meshes to custom models. The owner has retired the commercial web
@@ -37,3 +37,11 @@ CTest targets pass, including five live UI scenarios with staged assets loaded.
 The review has no material outstanding findings. Future validation priorities
 are a loaded-mesh UI fixture and clean-machine package smoke checks; commercial
 follow-ups from Sprint 7 are retired. See `retrospectives/retro-sprint-08.md`.
+
+Public setup, contribution, release, and known-issue documentation now describes
+the standalone build. Before release packaging, document the provenance and
+redistribution terms of the reference head, bundled fonts/icons, and other
+third-party assets, and collect dependency notices. The dependency manifest
+does not pin a vcpkg baseline. See
+`reviews/open-source-documentation.md` for the documentation review and remaining
+release-readiness findings; these were not resolved by the functional transition.

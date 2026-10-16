@@ -1,41 +1,44 @@
-# Known Issues - MetaVisage v1.0.0
+# Known issues and validation limits
 
-## Minor Issues
+These notes apply to the standalone `development` branch. Historical v1.0.0
+implementation notes are not a list of current defects.
 
-### Rendering
+## Workflow limitations
 
-- **No OpenGL error reporting**: OpenGL operations do not check `glGetError()` after critical calls. Silent failures may occur on some GPU configurations.
+- **No auto-save or crash recovery**: Save frequently with `Ctrl+S`. Unsaved
+  work can be lost if the application exits unexpectedly.
+- **Manual landmarks**: Automated landmark placement is not implemented.
+- **Morph artifacts with aggressive parameters**: High landmark weighting
+  relative to final stiffness can cause local geometry artifacts. The Morph
+  inspector displays a warning for this combination. Lower landmark weight or
+  increase final stiffness, then inspect the processed result before accepting.
 
-### File I/O
+## Platform and validation
 
-- **No try-catch for file operations**: File I/O operations do not use exception handling. Corrupt or inaccessible files may cause unexpected behavior rather than graceful error messages.
+- **Windows 10/11 x64 only**: macOS and Linux are not currently supported.
+- **OpenGL 4.3+ required**: The application and live UI smoke test require a
+  compatible GPU and driver.
+- **MSVC is the validated toolchain**: The retained MinGW helper needs
+  compatible dependencies and has not been validated for the standalone release.
+- **Clean-machine package smoke pending**: A fresh Windows installation still
+  needs validation of the extracted package, runtime DLLs, assets, and local
+  export before the next binary release.
+- **UI automation coverage is limited**: Startup, stage navigation, shading,
+  and brush selection are covered. Mesh-dependent Process/Accept and sculpt/undo
+  UI automation remain follow-up work; mesh/export behavior has separate smoke
+  coverage.
 
-### UI
+## Unreal workflow
 
-- **Layout rebuild uses manual deletion**: The sidebar widget clears its layout using manual `delete` calls rather than `deleteLater()`. This is functionally correct but not ideal Qt practice.
+FBX is the default export format, with Y-up conversion and materials enabled.
+Triangulation is disabled by default to preserve quad topology for MetaHuman
+Conform. Keep the original source topology and verify the exported result in
+your Unreal Engine version; the automated smoke suite does not run Unreal Editor.
 
-### Deformation
+## Reporting issues
 
-- **RBF solver edge case**: For very small control point sets (< 4 points) with zero stiffness, the augmented linear system may become under-determined. The solver will add minimal regularization automatically, but results may be less precise.
-
-## Platform Limitations
-
-- **Windows only**: Currently only Windows 10/11 (64-bit) is supported. macOS and Linux support is planned for a future release.
-- **No auto-save**: Project auto-save is not implemented. Save frequently using Ctrl+S.
-- **No crash recovery**: If the application crashes, unsaved work is lost.
-
-## Unreal Engine Compatibility Notes
-
-- Tested with Unreal Engine 5.6
-- Exported meshes use Y-up coordinate system
-- Material slot names are preserved from the original MetaHuman mesh
-- UV seam vertices are properly handled during export via vertex splitting
-
-## Reporting New Issues
-
-Please report issues on the [GitHub Issues page](https://github.com/cmershon2/MetaVisage/issues) with:
-
-- OS version and GPU model
-- Steps to reproduce
-- Mesh details (format, vertex count)
-- Log file contents (if available)
+Report bugs through [GitHub Issues](https://github.com/cmershon2/MetaVisage/issues).
+Include the version or commit, Windows/GPU/driver details, reproduction steps,
+mesh format and counts, and relevant log excerpts. Logs are stored at
+`%APPDATA%/MetaVisage/logs/metavisage.log`. Remove private paths and share only
+assets you have permission to redistribute.

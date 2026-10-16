@@ -1,5 +1,10 @@
 # Desktop Integration Q&A — Web Portal Responses
 
+> **Historical - retired integration.** These answers apply to the archived
+> commercial web version. They do not define credentials, services, or setup
+> requirements for the standalone application. See [current direction](product-vision.md)
+> and the [standalone transition](open-source-transition.md).
+
 Responses to the desktop team's questions ahead of Sprint 6/7 implementation. Each answer cites the relevant file in the web portal repo so the desktop team can verify against source.
 
 ---

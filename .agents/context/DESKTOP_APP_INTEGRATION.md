@@ -1,5 +1,11 @@
 # Desktop App Integration Guide
 
+> **Historical — retired integration.** This contract describes the archived
+> commercial web version. It does not apply to the standalone application and
+> must not be used as setup instructions or an active implementation requirement.
+> See [current direction](product-vision.md) and the
+> [standalone transition](open-source-transition.md).
+
 ## MetaVisage License Validation API
 
 This document describes how the MetaVisage desktop application should integrate with the web portal's license validation and conversion tracking APIs.
