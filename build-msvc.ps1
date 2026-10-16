@@ -1,7 +1,6 @@
 param(
     [switch]$Clean,
     [switch]$Deploy,
-    [string]$QtPath = "C:/Qt/6.10.1/msvc2022_64",
     [string]$VcpkgToolchain = "",
     [string]$BuildType = "Release"
 )
@@ -13,6 +12,16 @@ Write-Host ""
 # Set paths
 $ProjectRoot = Split-Path -Parent $MyInvocation.MyCommand.Path
 $BuildDir = Join-Path $ProjectRoot "build"
+
+# Validate before cleaning so an invalid toolchain leaves the existing build intact.
+if ($VcpkgToolchain -ne "") {
+    if (-not (Test-Path -LiteralPath $VcpkgToolchain -PathType Leaf)) {
+        Write-Host "ERROR: vcpkg toolchain file not found: $VcpkgToolchain" -ForegroundColor Red
+        Write-Host "Pass the path to an existing scripts/buildsystems/vcpkg.cmake file." -ForegroundColor Red
+        exit 1
+    }
+    $VcpkgToolchain = (Resolve-Path -LiteralPath $VcpkgToolchain).Path.Replace('\', '/')
+}
 
 # Clean build directory if requested
 if ($Clean -and (Test-Path $BuildDir)) {
@@ -39,14 +48,14 @@ Write-Host "Configuring CMake..." -ForegroundColor Green
 
 $CMakeArgs = @(
     ".."
-    "-DCMAKE_PREFIX_PATH=`"$QtPath`""
     "-G", "Visual Studio 17 2022"
     "-A", "x64"
 )
 
 if ($VcpkgToolchain -ne "") {
     Write-Host "Using vcpkg toolchain: $VcpkgToolchain" -ForegroundColor Cyan
-    $CMakeArgs += "-DCMAKE_TOOLCHAIN_FILE=`"$VcpkgToolchain`""
+    # PowerShell passes each array element as one argument, including paths with spaces.
+    $CMakeArgs += "-DCMAKE_TOOLCHAIN_FILE=$VcpkgToolchain"
 }
 
 Write-Host "Running: cmake $($CMakeArgs -join ' ')" -ForegroundColor Gray
@@ -70,31 +79,19 @@ if ($LASTEXITCODE -ne 0) {
 Write-Host ""
 Write-Host "Build completed successfully!" -ForegroundColor Green
 
-# Deploy Qt dependencies if requested
+# Deploy runtime dependencies if requested. Qt was removed in Sprint 3.7,
+# so the only DLLs the .exe needs are the GLFW / GLEW / ImGui /
+# Eigen / Assimp set staged by vcpkg's applocal post-build step (which runs
+# automatically when configuring with -DCMAKE_TOOLCHAIN_FILE=<vcpkg.cmake>).
 if ($Deploy) {
-    Write-Host ""
-    Write-Host "Deploying Qt dependencies..." -ForegroundColor Green
-
     $ExePath = Join-Path $BuildDir "bin\$BuildType\MetaVisage.exe"
-    $BinDir = Split-Path -Parent $ExePath
 
     if (Test-Path $ExePath) {
-        $WinDeployQt = Join-Path $QtPath "bin\windeployqt.exe"
-
-        if (Test-Path $WinDeployQt) {
-            Set-Location $BinDir
-            & $WinDeployQt MetaVisage.exe
-
-            if ($LASTEXITCODE -eq 0) {
-                Write-Host "Qt dependencies deployed successfully!" -ForegroundColor Green
-            } else {
-                Write-Host "WARNING: windeployqt failed" -ForegroundColor Yellow
-            }
-        } else {
-            Write-Host "WARNING: windeployqt not found at $WinDeployQt" -ForegroundColor Yellow
-        }
+        Write-Host ""
+        Write-Host "Runtime dependencies staged by vcpkg applocal." -ForegroundColor Green
     } else {
-        Write-Host "WARNING: Executable not found at $ExePath" -ForegroundColor Yellow
+        Write-Host ""
+        Write-Host "Skipping deploy: no executable was produced." -ForegroundColor Yellow
     }
 }
 
@@ -102,9 +99,15 @@ if ($Deploy) {
 Set-Location $ProjectRoot
 
 Write-Host ""
-Write-Host "Done! Executable location:" -ForegroundColor Cyan
-Write-Host "  build\bin\$BuildType\MetaVisage.exe" -ForegroundColor White
-Write-Host ""
-Write-Host "To run the application:" -ForegroundColor Cyan
-Write-Host "  cd build\bin\$BuildType" -ForegroundColor White
-Write-Host "  .\MetaVisage.exe" -ForegroundColor White
+$DoneExePath = Join-Path $BuildDir "bin\$BuildType\MetaVisage.exe"
+if (Test-Path $DoneExePath) {
+    Write-Host "Done! Executable location:" -ForegroundColor Cyan
+    Write-Host "  build\bin\$BuildType\MetaVisage.exe" -ForegroundColor White
+    Write-Host ""
+    Write-Host "To run the application:" -ForegroundColor Cyan
+    Write-Host "  cd build\bin\$BuildType" -ForegroundColor White
+    Write-Host "  .\MetaVisage.exe" -ForegroundColor White
+} else {
+    Write-Host "Built MetaVisageCore static library (Sprint 3.5.1 transitional target)." -ForegroundColor Cyan
+    Write-Host "Executable target returns in Story 3.5.2." -ForegroundColor Cyan
+}

@@ -1,7 +1,7 @@
 #ifndef POINTRENDERER_H
 #define POINTRENDERER_H
 
-#include <QOpenGLFunctions_4_3_Core>
+#include <GL/glew.h>
 #include <vector>
 #include "core/Types.h"
 
@@ -12,7 +12,7 @@ struct PointMarkerData {
     Vector3 color;
 };
 
-class PointRenderer : protected QOpenGLFunctions_4_3_Core {
+class PointRenderer {
 public:
     PointRenderer();
     ~PointRenderer();

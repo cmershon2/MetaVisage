@@ -1,112 +1,94 @@
 # Contributing to MetaVisage
 
-Thank you for your interest in contributing to MetaVisage! This document provides guidelines for contributing to the project.
+Contributions to the standalone Windows desktop application are welcome.
+Discuss substantial features or new dependencies in an issue before implementing
+them so the scope can be agreed with the maintainer.
 
-## Getting Started
+## Getting started
 
-1. Fork the repository
-2. Clone your fork locally
-3. Set up the development environment (see [BUILD.md](BUILD.md))
-4. Create a feature branch from `master`
+1. Fork and clone the repository.
+2. Create a focused branch from `development`, which contains the standalone
+   application changes.
+3. Follow [BUILD.md](BUILD.md) to build with Visual Studio 2022, C++20, CMake,
+   and vcpkg. The UI uses Dear ImGui, GLFW, and GLEW.
+4. Run the smoke tests before and after changes that affect application behavior.
 
-## Development Setup
+Agent tooling under `.agents/` and `.codex/` is optional for contributors.
+Historical web integration plans do not authorize new accounts, licensing,
+payment gates, usage limits, or runtime web integrations.
 
-### Prerequisites
+## Code and architecture
 
-- Qt 6.x (6.5+)
-- CMake 3.16+
-- C++17 compiler (MSVC 2019+ or MinGW)
-- Assimp library (via vcpkg recommended)
-- OpenGL 4.3+ capable GPU
+- Follow existing naming and formatting conventions and use C++20.
+- Use smart pointers for ownership; avoid raw `new` and `delete` in new code.
+- Preserve the layers: presentation (ImGui UI), application (`Project`,
+  `StageManager`, `UndoStack`), domain (mesh/deformation/sculpting), and
+  infrastructure (I/O, rendering, configuration, storage).
+- `Project` is the per-frame source of UI state. Sidebars emit action requests
+  that `AppWindow` consumes; avoid introducing a signal/slot bus.
+- Keep loading, deformation, and export off the UI thread.
+- Route mutating user actions through undoable commands.
+- Preserve topology, vertex order, face indices, UVs, normals, and material
+  slots. Morphing changes vertex positions only. Keep export triangulation
+  disabled by default and retain Unreal-compatible FBX defaults.
+- Keep the forced dark theme and Blender-style viewport controls.
+- Use `MvStyle`, `MvIcons`, and `MvInspectorPrimitives` for UI tokens, icons,
+  inspector layout, and one undo step per gesture.
+- Use **Wrap Engine** in user-facing text for the wrapping implementation.
 
-See [BUILD.md](BUILD.md) for detailed build instructions.
+Headers in `include/` are mirrored by implementation in `src/`, with `core/`,
+`deformation/`, `sculpting/`, `rendering/`, `io/`, `baking/`, `ui/`, and `utils/`
+subsystems. Qt must not be reintroduced.
 
-## Making Changes
+## Validation
 
-### Branch Naming
+Build through the helper script, closing any running instance before relinking:
 
-- `feature/description` - New features
-- `bugfix/description` - Bug fixes
-- `refactor/description` - Code refactoring
-- `docs/description` - Documentation changes
+```powershell
+.\build-msvc.ps1 -Deploy -VcpkgToolchain "C:/vcpkg/scripts/buildsystems/vcpkg.cmake"
+ctest --test-dir build -C Release --output-on-failure
+ctest --test-dir build -C Release -L ui --output-on-failure
+git diff --check
+```
 
-### Code Style
+The UI test opens a real window and needs OpenGL 4.3+. The full suite contains
+four targets; wrap parity has a 120-second timeout. For mesh changes, check
+round-trip topology and UV preservation. For UI changes, exercise the affected
+workflow and include screenshots when useful. Documentation-only changes need
+link and content checks rather than a full application rebuild.
 
-- Use C++17 features where appropriate
-- Follow the existing naming conventions:
-  - `PascalCase` for class names and public methods
-  - `camelCase_` with trailing underscore for private member variables
-  - `UPPER_CASE` for constants and macros
-- Use smart pointers (`std::unique_ptr`, `std::shared_ptr`) for heap allocations
-- Prefer `const` references for function parameters where possible
-- Keep functions focused and reasonably sized
+## Pull requests
 
-### Architecture
+- Target `development` and keep each PR focused on one change.
+- Describe the problem, resulting behavior, and validation performed. Identify
+  checks you could not run and any compatibility changes.
+- Add meaningful regression coverage for behavior changes where appropriate.
+- List new dependencies and document the source and redistribution terms of
+  any contributed third-party code or assets.
+- Use Conventional Commits, such as `fix(export): preserve quad face order` or
+  `docs(build): update Windows setup`. Explain the change, reason, and validation
+  in the commit body. A sprint identifier is needed only for sprint work.
 
-MetaVisage follows a layered architecture. When adding code, place it in the appropriate layer:
+Never include credentials, private keys, account data, or proprietary mesh files
+in commits, fixtures, logs, or screenshots.
 
-- **`include/core/` and `src/core/`** - Core data models (Mesh, Project, Transform)
-- **`include/deformation/` and `src/deformation/`** - Deformation algorithms
-- **`include/rendering/` and `src/rendering/`** - OpenGL rendering
-- **`include/sculpting/` and `src/sculpting/`** - Sculpting brush tools
-- **`include/ui/` and `src/ui/`** - Qt UI components
-- **`include/io/` and `src/io/`** - File I/O (import/export)
-- **`include/utils/` and `src/utils/`** - Utility classes
+## Reporting issues
 
-### Commit Messages
+Use [GitHub Issues](https://github.com/cmershon2/MetaVisage/issues) and include:
 
-- Use clear, descriptive commit messages
-- Start with a verb in present tense: "Add", "Fix", "Update", "Remove"
-- Reference issue numbers where applicable: "Fix #42: Resolve UV seam artifacts"
+- Application version or commit, Windows version, GPU model, and driver version.
+- Steps to reproduce, expected behavior, and actual behavior.
+- Mesh format, vertex/face counts, and relevant export settings.
+- Relevant excerpts from `%APPDATA%/MetaVisage/logs/metavisage.log`, with personal
+  paths or other private information removed.
+- A small reproducible project or mesh when you have permission to share it.
 
-## Submitting Changes
-
-1. Ensure your code builds without warnings
-2. Test your changes with various mesh types and polygon counts
-3. Verify UV preservation if your changes touch mesh processing
-4. Push your branch to your fork
-5. Open a Pull Request against `master`
-
-### Pull Request Guidelines
-
-- Provide a clear description of what changed and why
-- Include screenshots for UI changes
-- List any new dependencies
-- Note any breaking changes
-
-## Reporting Issues
-
-When reporting bugs, please include:
-
-- Operating system and version
-- Qt version
-- GPU model and driver version
-- Steps to reproduce the issue
-- Expected vs actual behavior
-- Mesh file details (format, vertex count) if relevant
-
-## Areas for Contribution
-
-### High Impact
-
-- macOS and Linux platform support
-- Automated landmark detection (ML-based)
-- Additional deformation algorithms
-- Performance optimizations for high-poly meshes
-
-### Medium Impact
-
-- Advanced sculpting tools (crease, pinch, masking)
-- Hair and body mesh support
-- Plugin architecture
-- Batch processing
-
-### Documentation
-
-- Tutorials and workflow guides
-- Video walkthroughs
-- Translation/localization
+See [known issues](docs/KNOWN_ISSUES.md) first. Current contribution priorities
+include morph quality, topology preservation, loaded-mesh UI test coverage,
+standalone packaging validation, and user workflow documentation. Broader ideas
+are tracked in the [backlog](.agents/context/development/product_backlog.md).
 
 ## License
 
-By contributing to MetaVisage, you agree that your contributions will be licensed under the [MIT License](LICENSE).
+Contributions to MetaVisage code are accepted under the [MIT License](LICENSE).
+Keep third-party notices intact and identify assets with separate terms.

@@ -1,13 +1,53 @@
 #include "io/ProjectSerializer.h"
 #include "core/TextureData.h"
 #include "utils/Logger.h"
-#include <QFile>
-#include <QJsonDocument>
-#include <QDir>
-#include <QFileInfo>
+
+#include <chrono>
 #include <cstdlib>
+#include <ctime>
+#include <filesystem>
+#include <format>
+#include <fstream>
+#include <sstream>
 
 namespace MetaVisage {
+
+namespace {
+
+// Helpers for nlohmann::ordered_json reads with defaults — mirror QJsonValue::toX(default)
+template <typename T>
+T GetOr(const ProjectSerializer::Json& obj, const char* key, T fallback) {
+    auto it = obj.find(key);
+    if (it == obj.end()) return fallback;
+    try { return it->get<T>(); } catch (...) { return fallback; }
+}
+
+std::string GetStr(const ProjectSerializer::Json& obj, const char* key, const std::string& fallback = {}) {
+    auto it = obj.find(key);
+    if (it == obj.end() || !it->is_string()) return fallback;
+    return it->get<std::string>();
+}
+
+bool Has(const ProjectSerializer::Json& obj, const char* key) {
+    return obj.find(key) != obj.end();
+}
+
+std::string IsoNow() {
+    using namespace std::chrono;
+    const auto now = system_clock::now();
+    const std::time_t tt = system_clock::to_time_t(now);
+    std::tm tm{};
+#ifdef _WIN32
+    localtime_s(&tm, &tt);
+#else
+    localtime_r(&tt, &tm);
+#endif
+    return std::format("{:04}-{:02}-{:02}T{:02}:{:02}:{:02}",
+                       tm.tm_year + 1900, tm.tm_mon + 1, tm.tm_mday,
+                       tm.tm_hour, tm.tm_min, tm.tm_sec);
+}
+
+} // namespace
 
 ProjectSerializer::ProjectSerializer() {
 }
@@ -17,15 +57,29 @@ ProjectSerializer::~ProjectSerializer() {
 
 // --- Save ---
 
-SerializationResult ProjectSerializer::Save(const Project& project, const QString& filepath) {
+SerializationResult ProjectSerializer::Save(const Project& project, const std::string& filepath) {
     SerializationResult result;
-    QString projectDir = QFileInfo(filepath).absolutePath();
+    const std::string projectDir = std::filesystem::path(filepath).parent_path().string();
 
-    QJsonObject root;
+    Json root;
     root["formatVersion"] = FORMAT_VERSION;
     root["projectName"] = project.GetName();
-    root["created"] = project.GetCreated().toString(Qt::ISODate);
-    root["lastModified"] = QDateTime::currentDateTime().toString(Qt::ISODate);
+    // For "created" we serialize the current time when this is a fresh save —
+    // the original Qt code used GetCreated() which mirrors what the project
+    // tracks internally; we keep parity by mirroring that getter.
+    {
+        const std::time_t tt = std::chrono::system_clock::to_time_t(project.GetCreated());
+        std::tm tm{};
+#ifdef _WIN32
+        localtime_s(&tm, &tt);
+#else
+        localtime_r(&tt, &tm);
+#endif
+        root["created"] = std::format("{:04}-{:02}-{:02}T{:02}:{:02}:{:02}",
+                                       tm.tm_year + 1900, tm.tm_mon + 1, tm.tm_mday,
+                                       tm.tm_hour, tm.tm_min, tm.tm_sec);
+    }
+    root["lastModified"] = IsoNow();
     root["currentStage"] = static_cast<int>(project.GetCurrentStage());
 
     // Mesh references
@@ -40,80 +94,90 @@ SerializationResult ProjectSerializer::Save(const Project& project, const QStrin
     // Texture data (v2+)
     root["targetTextures"] = SerializeTextureSet(project.GetTargetTextures(), projectDir);
 
-    // Write to file
-    QJsonDocument doc(root);
-    QFile file(filepath);
-    if (!file.open(QIODevice::WriteOnly)) {
-        result.errorMessage = QString("Cannot open file for writing: %1").arg(filepath);
+    std::ofstream out(filepath);
+    if (!out.is_open()) {
+        result.errorMessage = std::format("Cannot open file for writing: {}", filepath);
+        return result;
+    }
+    out << root.dump(2);
+    out.flush();
+    if (out.fail()) {
+        // Disk full / I/O error mid-write would otherwise leave a truncated
+        // .mmproj on disk and report success. Surface the failure to the
+        // user via SerializationResult so the caller can show an error
+        // dialog instead of silently corrupting their project.
+        result.errorMessage = std::format("Write failed for {} (disk full or I/O error)", filepath);
         return result;
     }
 
-    file.write(doc.toJson(QJsonDocument::Indented));
-    file.close();
-
     result.success = true;
-    MV_LOG_INFO(QString("Project saved to: %1").arg(filepath));
+    MV_LOG_INFO(std::format("Project saved to: {}", filepath));
     return result;
 }
 
 // --- Load ---
 
-SerializationResult ProjectSerializer::Load(Project& project, const QString& filepath) {
+SerializationResult ProjectSerializer::Load(Project& project, const std::string& filepath) {
     SerializationResult result;
 
-    QFile file(filepath);
-    if (!file.open(QIODevice::ReadOnly)) {
-        result.errorMessage = QString("Cannot open file for reading: %1").arg(filepath);
+    std::ifstream in(filepath);
+    if (!in.is_open()) {
+        result.errorMessage = std::format("Cannot open file for reading: {}", filepath);
         return result;
     }
 
-    QByteArray data = file.readAll();
-    file.close();
+    std::stringstream buf;
+    buf << in.rdbuf();
+    in.close();
 
-    QJsonParseError parseError;
-    QJsonDocument doc = QJsonDocument::fromJson(data, &parseError);
-    if (parseError.error != QJsonParseError::NoError) {
-        result.errorMessage = QString("JSON parse error: %1").arg(parseError.errorString());
+    Json root;
+    try {
+        root = Json::parse(buf.str());
+    } catch (const std::exception& e) {
+        result.errorMessage = std::format("JSON parse error: {}", e.what());
         return result;
     }
 
-    QJsonObject root = doc.object();
+    if (!root.is_object()) {
+        result.errorMessage = "Project root is not a JSON object";
+        return result;
+    }
 
     // Check format version
-    int version = root["formatVersion"].toInt(0);
+    int version = GetOr<int>(root, "formatVersion", 0);
     if (version < 1 || version > FORMAT_VERSION) {
-        result.errorMessage = QString("Unsupported project format version: %1").arg(version);
+        result.errorMessage = std::format("Unsupported project format version: {}", version);
         return result;
     }
 
-    QString projectDir = QFileInfo(filepath).absolutePath();
+    const std::string projectDir = std::filesystem::path(filepath).parent_path().string();
 
     // Project metadata
-    project.SetName(root["projectName"].toString("Untitled Project"));
-    project.SetCurrentStage(static_cast<WorkflowStage>(root["currentStage"].toInt(0)));
+    project.SetName(GetStr(root, "projectName", "Untitled Project"));
+    project.SetCurrentStage(static_cast<WorkflowStage>(GetOr<int>(root, "currentStage", 0)));
 
     // Mesh references
-    if (root.contains("morphMesh")) {
+    if (Has(root, "morphMesh")) {
         MeshReference& morphRef = project.GetMorphMesh();
-        morphRef = DeserializeMeshReference(root["morphMesh"].toObject(), projectDir, result.warnings);
+        morphRef = DeserializeMeshReference(root["morphMesh"], projectDir, result.warnings);
     }
 
-    if (root.contains("targetMesh")) {
+    if (Has(root, "targetMesh")) {
         MeshReference& targetRef = project.GetTargetMesh();
-        targetRef = DeserializeMeshReference(root["targetMesh"].toObject(), projectDir, result.warnings);
+        targetRef = DeserializeMeshReference(root["targetMesh"], projectDir, result.warnings);
     }
 
     // Stage data
-    if (root.contains("alignment")) {
-        project.GetAlignmentData() = DeserializeAlignmentData(root["alignment"].toObject());
+    if (Has(root, "alignment")) {
+        project.GetAlignmentData() = DeserializeAlignmentData(root["alignment"]);
     }
 
-    if (root.contains("pointReference")) {
-        project.GetPointReferenceData() = DeserializePointReferenceData(root["pointReference"].toObject());
+    if (Has(root, "pointReference")) {
+        project.GetPointReferenceData() = DeserializePointReferenceData(root["pointReference"]);
     }
 
-    if (root.contains("morph")) {
-        MorphData loaded = DeserializeMorphData(root["morph"].toObject());
+    if (Has(root, "morph")) {
+        MorphData loaded = DeserializeMorphData(root["morph"]);
         MorphData& morphData = project.GetMorphData();
         morphData.algorithm = loaded.algorithm;
         morphData.stiffness = loaded.stiffness;
@@ -138,31 +202,36 @@ SerializationResult ProjectSerializer::Load(Project& project, const QString& fil
     }
 
     // Texture data (v2+, backward compatible)
-    if (root.contains("targetTextures")) {
-        project.GetTargetTextures() = DeserializeTextureSet(root["targetTextures"].toObject(),
+    if (Has(root, "targetTextures")) {
+        project.GetTargetTextures() = DeserializeTextureSet(root["targetTextures"],
                                                               projectDir, result.warnings);
     }
 
     result.success = true;
-    MV_LOG_INFO(QString("Project loaded from: %1").arg(filepath));
-    if (!result.warnings.isEmpty()) {
-        MV_LOG_WARNING(QString("Project load warnings: %1").arg(result.warnings.join("; ")));
+    MV_LOG_INFO(std::format("Project loaded from: {}", filepath));
+    if (!result.warnings.empty()) {
+        std::ostringstream joined;
+        for (size_t i = 0; i < result.warnings.size(); ++i) {
+            if (i > 0) joined << "; ";
+            joined << result.warnings[i];
+        }
+        MV_LOG_WARNING(std::format("Project load warnings: {}", joined.str()));
     }
     return result;
 }
 
 // --- Serialization helpers ---
 
-QJsonObject ProjectSerializer::SerializeVector3(const Vector3& v) const {
-    QJsonObject obj;
+ProjectSerializer::Json ProjectSerializer::SerializeVector3(const Vector3& v) const {
+    Json obj;
     obj["x"] = static_cast<double>(v.x);
     obj["y"] = static_cast<double>(v.y);
     obj["z"] = static_cast<double>(v.z);
     return obj;
 }
 
-QJsonObject ProjectSerializer::SerializeQuaternion(const Quaternion& q) const {
-    QJsonObject obj;
+ProjectSerializer::Json ProjectSerializer::SerializeQuaternion(const Quaternion& q) const {
+    Json obj;
     obj["x"] = static_cast<double>(q.x);
     obj["y"] = static_cast<double>(q.y);
     obj["z"] = static_cast<double>(q.z);
@@ -170,30 +239,30 @@ QJsonObject ProjectSerializer::SerializeQuaternion(const Quaternion& q) const {
     return obj;
 }
 
-QJsonObject ProjectSerializer::SerializeTransform(const Transform& t) const {
-    QJsonObject obj;
+ProjectSerializer::Json ProjectSerializer::SerializeTransform(const Transform& t) const {
+    Json obj;
     obj["position"] = SerializeVector3(t.GetPosition());
     obj["rotation"] = SerializeQuaternion(t.GetRotation());
     obj["scale"] = SerializeVector3(t.GetScale());
     return obj;
 }
 
-QJsonObject ProjectSerializer::SerializeMeshReference(const MeshReference& ref, const QString& projectDir) const {
-    QJsonObject obj;
+ProjectSerializer::Json ProjectSerializer::SerializeMeshReference(const MeshReference& ref, const std::string& projectDir) const {
+    Json obj;
     obj["filepath"] = MakeRelativePath(ref.filepath, projectDir);
     obj["isLoaded"] = ref.isLoaded;
     obj["transform"] = SerializeTransform(ref.transform);
     return obj;
 }
 
-QJsonObject ProjectSerializer::SerializeAlignmentData(const AlignmentData& data) const {
-    QJsonObject obj;
+ProjectSerializer::Json ProjectSerializer::SerializeAlignmentData(const AlignmentData& data) const {
+    Json obj;
     obj["targetMeshTransform"] = SerializeTransform(data.targetMeshTransform);
     return obj;
 }
 
-QJsonObject ProjectSerializer::SerializePointCorrespondence(const PointCorrespondence& corr) const {
-    QJsonObject obj;
+ProjectSerializer::Json ProjectSerializer::SerializePointCorrespondence(const PointCorrespondence& corr) const {
+    Json obj;
     obj["pointID"] = corr.pointID;
     obj["morphMeshPosition"] = SerializeVector3(corr.morphMeshPosition);
     obj["morphMeshVertexIndex"] = corr.morphMeshVertexIndex;
@@ -204,23 +273,23 @@ QJsonObject ProjectSerializer::SerializePointCorrespondence(const PointCorrespon
     return obj;
 }
 
-QJsonObject ProjectSerializer::SerializePointReferenceData(const PointReferenceData& data) const {
-    QJsonObject obj;
+ProjectSerializer::Json ProjectSerializer::SerializePointReferenceData(const PointReferenceData& data) const {
+    Json obj;
     obj["symmetryEnabled"] = data.symmetryEnabled;
     obj["symmetryAxis"] = static_cast<int>(data.symmetryAxis);
     obj["symmetryPlaneOffset"] = static_cast<double>(data.symmetryPlaneOffset);
 
-    QJsonArray correspondences;
+    Json correspondences = Json::array();
     for (const auto& corr : data.correspondences) {
-        correspondences.append(SerializePointCorrespondence(corr));
+        correspondences.push_back(SerializePointCorrespondence(corr));
     }
-    obj["correspondences"] = correspondences;
+    obj["correspondences"] = std::move(correspondences);
 
     return obj;
 }
 
-QJsonObject ProjectSerializer::SerializeMorphData(const MorphData& data) const {
-    QJsonObject obj;
+ProjectSerializer::Json ProjectSerializer::SerializeMorphData(const MorphData& data) const {
+    Json obj;
     obj["algorithm"] = static_cast<int>(data.algorithm);
     obj["stiffness"] = static_cast<double>(data.stiffness);
     obj["smoothness"] = static_cast<double>(data.smoothness);
@@ -251,20 +320,20 @@ QJsonObject ProjectSerializer::SerializeMorphData(const MorphData& data) const {
 
     // Save vertex mask (run-length encoded for compactness)
     if (!data.vertexMask.empty()) {
-        QJsonArray maskRLE;
+        Json maskRLE = Json::array();
         bool current = data.vertexMask[0];
         int count = 1;
         for (size_t i = 1; i < data.vertexMask.size(); ++i) {
             if (data.vertexMask[i] == current) {
                 count++;
             } else {
-                maskRLE.append(current ? count : -count);
+                maskRLE.push_back(current ? count : -count);
                 current = data.vertexMask[i];
                 count = 1;
             }
         }
-        maskRLE.append(current ? count : -count);
-        obj["vertexMaskRLE"] = maskRLE;
+        maskRLE.push_back(current ? count : -count);
+        obj["vertexMaskRLE"] = std::move(maskRLE);
         obj["vertexMaskSize"] = static_cast<int>(data.vertexMask.size());
     }
 
@@ -273,21 +342,21 @@ QJsonObject ProjectSerializer::SerializeMorphData(const MorphData& data) const {
         const auto& vertices = data.deformedMorphMesh->GetVertices();
         const auto& normals = data.deformedMorphMesh->GetNormals();
 
-        QJsonArray vertexArray;
+        Json vertexArray = Json::array();
         for (const auto& v : vertices) {
-            vertexArray.append(static_cast<double>(v.x));
-            vertexArray.append(static_cast<double>(v.y));
-            vertexArray.append(static_cast<double>(v.z));
+            vertexArray.push_back(static_cast<double>(v.x));
+            vertexArray.push_back(static_cast<double>(v.y));
+            vertexArray.push_back(static_cast<double>(v.z));
         }
-        obj["deformedVertices"] = vertexArray;
+        obj["deformedVertices"] = std::move(vertexArray);
 
-        QJsonArray normalArray;
+        Json normalArray = Json::array();
         for (const auto& n : normals) {
-            normalArray.append(static_cast<double>(n.x));
-            normalArray.append(static_cast<double>(n.y));
-            normalArray.append(static_cast<double>(n.z));
+            normalArray.push_back(static_cast<double>(n.x));
+            normalArray.push_back(static_cast<double>(n.y));
+            normalArray.push_back(static_cast<double>(n.z));
         }
-        obj["deformedNormals"] = normalArray;
+        obj["deformedNormals"] = std::move(normalArray);
 
         obj["maxDisplacement"] = static_cast<double>(data.maxDisplacement);
         obj["avgDisplacement"] = static_cast<double>(data.avgDisplacement);
@@ -298,169 +367,185 @@ QJsonObject ProjectSerializer::SerializeMorphData(const MorphData& data) const {
 
 // --- Deserialization helpers ---
 
-Vector3 ProjectSerializer::DeserializeVector3(const QJsonObject& obj) const {
+Vector3 ProjectSerializer::DeserializeVector3(const Json& obj) const {
     return Vector3(
-        static_cast<float>(obj["x"].toDouble(0.0)),
-        static_cast<float>(obj["y"].toDouble(0.0)),
-        static_cast<float>(obj["z"].toDouble(0.0))
+        static_cast<float>(GetOr<double>(obj, "x", 0.0)),
+        static_cast<float>(GetOr<double>(obj, "y", 0.0)),
+        static_cast<float>(GetOr<double>(obj, "z", 0.0))
     );
 }
 
-Quaternion ProjectSerializer::DeserializeQuaternion(const QJsonObject& obj) const {
+Quaternion ProjectSerializer::DeserializeQuaternion(const Json& obj) const {
     return Quaternion(
-        static_cast<float>(obj["x"].toDouble(0.0)),
-        static_cast<float>(obj["y"].toDouble(0.0)),
-        static_cast<float>(obj["z"].toDouble(0.0)),
-        static_cast<float>(obj["w"].toDouble(1.0))
+        static_cast<float>(GetOr<double>(obj, "x", 0.0)),
+        static_cast<float>(GetOr<double>(obj, "y", 0.0)),
+        static_cast<float>(GetOr<double>(obj, "z", 0.0)),
+        static_cast<float>(GetOr<double>(obj, "w", 1.0))
     );
 }
 
-Transform ProjectSerializer::DeserializeTransform(const QJsonObject& obj) const {
+Transform ProjectSerializer::DeserializeTransform(const Json& obj) const {
     Transform t;
-    if (obj.contains("position")) {
-        t.SetPosition(DeserializeVector3(obj["position"].toObject()));
+    if (Has(obj, "position")) {
+        t.SetPosition(DeserializeVector3(obj["position"]));
     }
-    if (obj.contains("rotation")) {
-        t.SetRotation(DeserializeQuaternion(obj["rotation"].toObject()));
+    if (Has(obj, "rotation")) {
+        t.SetRotation(DeserializeQuaternion(obj["rotation"]));
     }
-    if (obj.contains("scale")) {
-        t.SetScale(DeserializeVector3(obj["scale"].toObject()));
+    if (Has(obj, "scale")) {
+        t.SetScale(DeserializeVector3(obj["scale"]));
     }
     return t;
 }
 
-MeshReference ProjectSerializer::DeserializeMeshReference(const QJsonObject& obj, const QString& projectDir,
-                                                            QStringList& warnings) const {
+MeshReference ProjectSerializer::DeserializeMeshReference(const Json& obj, const std::string& projectDir,
+                                                            std::vector<std::string>& warnings) const {
     MeshReference ref;
-    QString relativePath = obj["filepath"].toString();
+    const std::string relativePath = GetStr(obj, "filepath");
     ref.filepath = ResolveRelativePath(relativePath, projectDir);
-    ref.transform = DeserializeTransform(obj["transform"].toObject());
+    if (Has(obj, "transform")) {
+        ref.transform = DeserializeTransform(obj["transform"]);
+    }
 
     // Try to load the mesh
-    if (!ref.filepath.isEmpty() && QFile::exists(ref.filepath)) {
+    if (!ref.filepath.empty() && std::filesystem::exists(ref.filepath)) {
         ref.mesh = std::make_shared<Mesh>();
         if (ref.mesh->Load(ref.filepath)) {
             ref.isLoaded = true;
         } else {
-            warnings.append(QString("Failed to load mesh: %1").arg(ref.filepath));
+            warnings.push_back(std::format("Failed to load mesh: {}", ref.filepath));
             ref.mesh.reset();
             ref.isLoaded = false;
         }
-    } else if (!relativePath.isEmpty()) {
-        warnings.append(QString("Mesh file not found: %1 (resolved to: %2)")
-                        .arg(relativePath, ref.filepath));
+    } else if (!relativePath.empty()) {
+        warnings.push_back(std::format("Mesh file not found: {} (resolved to: {})",
+                                        relativePath, ref.filepath));
         ref.isLoaded = false;
     }
 
     return ref;
 }
 
-AlignmentData ProjectSerializer::DeserializeAlignmentData(const QJsonObject& obj) const {
+AlignmentData ProjectSerializer::DeserializeAlignmentData(const Json& obj) const {
     AlignmentData data;
-    if (obj.contains("targetMeshTransform")) {
-        data.targetMeshTransform = DeserializeTransform(obj["targetMeshTransform"].toObject());
+    if (Has(obj, "targetMeshTransform")) {
+        data.targetMeshTransform = DeserializeTransform(obj["targetMeshTransform"]);
     }
     return data;
 }
 
-PointCorrespondence ProjectSerializer::DeserializePointCorrespondence(const QJsonObject& obj) const {
+PointCorrespondence ProjectSerializer::DeserializePointCorrespondence(const Json& obj) const {
     PointCorrespondence corr;
-    corr.pointID = obj["pointID"].toInt(-1);
-    corr.morphMeshPosition = DeserializeVector3(obj["morphMeshPosition"].toObject());
-    corr.morphMeshVertexIndex = obj["morphMeshVertexIndex"].toInt(-1);
-    corr.targetMeshPosition = DeserializeVector3(obj["targetMeshPosition"].toObject());
-    corr.targetMeshVertexIndex = obj["targetMeshVertexIndex"].toInt(-1);
-    corr.isSymmetric = obj["isSymmetric"].toBool(false);
-    corr.symmetricPairID = obj["symmetricPairID"].toInt(-1);
+    corr.pointID = GetOr<int>(obj, "pointID", -1);
+    if (Has(obj, "morphMeshPosition"))
+        corr.morphMeshPosition = DeserializeVector3(obj["morphMeshPosition"]);
+    corr.morphMeshVertexIndex = GetOr<int>(obj, "morphMeshVertexIndex", -1);
+    if (Has(obj, "targetMeshPosition"))
+        corr.targetMeshPosition = DeserializeVector3(obj["targetMeshPosition"]);
+    corr.targetMeshVertexIndex = GetOr<int>(obj, "targetMeshVertexIndex", -1);
+    corr.isSymmetric = GetOr<bool>(obj, "isSymmetric", false);
+    corr.symmetricPairID = GetOr<int>(obj, "symmetricPairID", -1);
     return corr;
 }
 
-PointReferenceData ProjectSerializer::DeserializePointReferenceData(const QJsonObject& obj) const {
+PointReferenceData ProjectSerializer::DeserializePointReferenceData(const Json& obj) const {
     PointReferenceData data;
-    data.symmetryEnabled = obj["symmetryEnabled"].toBool(false);
-    data.symmetryAxis = static_cast<Axis>(obj["symmetryAxis"].toInt(0));
-    data.symmetryPlaneOffset = static_cast<float>(obj["symmetryPlaneOffset"].toDouble(0.0));
+    data.symmetryEnabled = GetOr<bool>(obj, "symmetryEnabled", false);
+    data.symmetryAxis = static_cast<Axis>(GetOr<int>(obj, "symmetryAxis", 0));
+    data.symmetryPlaneOffset = static_cast<float>(GetOr<double>(obj, "symmetryPlaneOffset", 0.0));
 
-    QJsonArray correspondences = obj["correspondences"].toArray();
-    for (const auto& val : correspondences) {
-        data.correspondences.push_back(DeserializePointCorrespondence(val.toObject()));
+    if (Has(obj, "correspondences") && obj["correspondences"].is_array()) {
+        for (const auto& val : obj["correspondences"]) {
+            data.correspondences.push_back(DeserializePointCorrespondence(val));
+        }
     }
 
     return data;
 }
 
-MorphData ProjectSerializer::DeserializeMorphData(const QJsonObject& obj) const {
+MorphData ProjectSerializer::DeserializeMorphData(const Json& obj) const {
     MorphData data;
-    data.algorithm = static_cast<DeformationAlgorithm>(obj["algorithm"].toInt(
-        static_cast<int>(DeformationAlgorithm::NRICP)));
-    data.stiffness = static_cast<float>(obj["stiffness"].toDouble(0.5));
-    data.smoothness = static_cast<float>(obj["smoothness"].toDouble(0.5));
-    data.previewMode = static_cast<MorphPreviewMode>(obj["previewMode"].toInt(0));
-    data.isProcessed = obj["isProcessed"].toBool(false);
-    data.isAccepted = obj["isAccepted"].toBool(false);
-    data.maxDisplacement = static_cast<float>(obj["maxDisplacement"].toDouble(0.0));
-    data.avgDisplacement = static_cast<float>(obj["avgDisplacement"].toDouble(0.0));
+    // Sprint 4 (Wrap Engine Redesign): the enum collapsed to a single member
+    // (NRICP). v1.0.0 .mmproj files may carry any of the discontinued ordinals
+    // (0=RBF_TPS, 1=RBF_GAUSSIAN, 2=RBF_MULTIQUADRIC, 3=ARAP). Read the field
+    // for forward-compat but ignore the value — every project runs through the
+    // surviving Wrap Engine path.
+    (void)GetOr<int>(obj, "algorithm", static_cast<int>(DeformationAlgorithm::NRICP));
+    data.algorithm = DeformationAlgorithm::NRICP;
+    data.stiffness = static_cast<float>(GetOr<double>(obj, "stiffness", 0.5));
+    data.smoothness = static_cast<float>(GetOr<double>(obj, "smoothness", 0.5));
+    data.previewMode = static_cast<MorphPreviewMode>(GetOr<int>(obj, "previewMode", 0));
+    data.isProcessed = GetOr<bool>(obj, "isProcessed", false);
+    data.isAccepted = GetOr<bool>(obj, "isAccepted", false);
+    data.maxDisplacement = static_cast<float>(GetOr<double>(obj, "maxDisplacement", 0.0));
+    data.avgDisplacement = static_cast<float>(GetOr<double>(obj, "avgDisplacement", 0.0));
 
-    // NRICP parameters (backward compatible - defaults match MorphData constructor)
-    data.nricpStiffnessSteps = obj["nricpStiffnessSteps"].toInt(5);
-    data.nricpAlphaInitial = static_cast<float>(obj["nricpAlphaInitial"].toDouble(100.0));
-    data.nricpAlphaFinal = static_cast<float>(obj["nricpAlphaFinal"].toDouble(1.0));
-    data.nricpIcpIterations = obj["nricpIcpIterations"].toInt(3);
-    data.nricpNormalThreshold = static_cast<float>(obj["nricpNormalThreshold"].toDouble(60.0));
-    data.nricpLandmarkWeight = static_cast<float>(obj["nricpLandmarkWeight"].toDouble(10.0));
-    data.nricpEpsilon = static_cast<float>(obj["nricpEpsilon"].toDouble(1e-4));
-    data.nricpEnableBoundaryExclusion = obj["nricpEnableBoundaryExclusion"].toBool(true);
-    data.nricpBoundaryExclusionHops = obj["nricpBoundaryExclusionHops"].toInt(3);
+    // NRICP parameters — fallbacks must match the MorphData() constructor
+    // defaults in include/core/Project.h. PR #22 review caught nricpAlphaFinal
+    // diverging (was 1.0, ctor is 50.0); audit found three more drifts
+    // (nricpIcpIterations, nricpSamplingInitial, nricpSamplingFinal). Sprint 4
+    // fixed all four — keep this list aligned with the ctor going forward.
+    data.nricpStiffnessSteps = GetOr<int>(obj, "nricpStiffnessSteps", 5);
+    data.nricpAlphaInitial = static_cast<float>(GetOr<double>(obj, "nricpAlphaInitial", 100.0));
+    data.nricpAlphaFinal = static_cast<float>(GetOr<double>(obj, "nricpAlphaFinal", 50.0));
+    data.nricpIcpIterations = GetOr<int>(obj, "nricpIcpIterations", 7);
+    data.nricpNormalThreshold = static_cast<float>(GetOr<double>(obj, "nricpNormalThreshold", 60.0));
+    data.nricpLandmarkWeight = static_cast<float>(GetOr<double>(obj, "nricpLandmarkWeight", 10.0));
+    data.nricpEpsilon = static_cast<float>(GetOr<double>(obj, "nricpEpsilon", 1e-4));
+    data.nricpEnableBoundaryExclusion = GetOr<bool>(obj, "nricpEnableBoundaryExclusion", true);
+    data.nricpBoundaryExclusionHops = GetOr<int>(obj, "nricpBoundaryExclusionHops", 3);
 
-    // NRICP optimization, rigidity, and subsampling parameters (backward compatible)
-    data.nricpOptimizationIterations = obj["nricpOptimizationIterations"].toInt(1);
-    data.nricpDpInitial = static_cast<float>(obj["nricpDpInitial"].toDouble(1.0));
-    data.nricpDpFinal = static_cast<float>(obj["nricpDpFinal"].toDouble(1.0));
-    data.nricpGammaInitial = static_cast<float>(obj["nricpGammaInitial"].toDouble(0.0));
-    data.nricpGammaFinal = static_cast<float>(obj["nricpGammaFinal"].toDouble(0.0));
-    data.nricpSamplingInitial = static_cast<float>(obj["nricpSamplingInitial"].toDouble(0.0));
-    data.nricpSamplingFinal = static_cast<float>(obj["nricpSamplingFinal"].toDouble(0.0));
-    data.nricpNormalizeSampling = obj["nricpNormalizeSampling"].toBool(true);
+    // NRICP optimization, rigidity, and subsampling parameters
+    data.nricpOptimizationIterations = GetOr<int>(obj, "nricpOptimizationIterations", 1);
+    data.nricpDpInitial = static_cast<float>(GetOr<double>(obj, "nricpDpInitial", 1.0));
+    data.nricpDpFinal = static_cast<float>(GetOr<double>(obj, "nricpDpFinal", 1.0));
+    data.nricpGammaInitial = static_cast<float>(GetOr<double>(obj, "nricpGammaInitial", 0.0));
+    data.nricpGammaFinal = static_cast<float>(GetOr<double>(obj, "nricpGammaFinal", 0.0));
+    data.nricpSamplingInitial = static_cast<float>(GetOr<double>(obj, "nricpSamplingInitial", 0.1));
+    data.nricpSamplingFinal = static_cast<float>(GetOr<double>(obj, "nricpSamplingFinal", 0.01));
+    data.nricpNormalizeSampling = GetOr<bool>(obj, "nricpNormalizeSampling", true);
 
     // Restore vertex mask (run-length encoded)
-    if (obj.contains("vertexMaskRLE") && obj.contains("vertexMaskSize")) {
-        int maskSize = obj["vertexMaskSize"].toInt(0);
-        QJsonArray maskRLE = obj["vertexMaskRLE"].toArray();
-        data.vertexMask.resize(maskSize, false);
+    if (Has(obj, "vertexMaskRLE") && Has(obj, "vertexMaskSize")) {
+        const int maskSize = GetOr<int>(obj, "vertexMaskSize", 0);
+        const Json& maskRLE = obj["vertexMaskRLE"];
+        data.vertexMask.assign(static_cast<size_t>(maskSize), false);
         int idx = 0;
-        for (int i = 0; i < maskRLE.size() && idx < maskSize; ++i) {
-            int run = maskRLE[i].toInt(0);
-            bool value = (run > 0);
-            int runLength = std::abs(run);
-            for (int j = 0; j < runLength && idx < maskSize; ++j) {
-                data.vertexMask[idx++] = value;
+        if (maskRLE.is_array()) {
+            for (size_t i = 0; i < maskRLE.size() && idx < maskSize; ++i) {
+                int run = maskRLE[i].is_number_integer() ? maskRLE[i].get<int>() : 0;
+                bool value = (run > 0);
+                int runLength = std::abs(run);
+                for (int j = 0; j < runLength && idx < maskSize; ++j) {
+                    data.vertexMask[idx++] = value;
+                }
             }
         }
     }
 
     // Restore deformed mesh vertex data if present
-    if (obj.contains("deformedVertices") && obj.contains("deformedNormals")) {
-        QJsonArray vertexArray = obj["deformedVertices"].toArray();
-        QJsonArray normalArray = obj["deformedNormals"].toArray();
+    if (Has(obj, "deformedVertices") && Has(obj, "deformedNormals")) {
+        const Json& vertexArray = obj["deformedVertices"];
+        const Json& normalArray = obj["deformedNormals"];
 
-        if (vertexArray.size() >= 3 && vertexArray.size() % 3 == 0) {
+        if (vertexArray.is_array() && vertexArray.size() >= 3 && vertexArray.size() % 3 == 0) {
             std::vector<Vector3> vertices;
             vertices.reserve(vertexArray.size() / 3);
-            for (int i = 0; i < vertexArray.size(); i += 3) {
+            for (size_t i = 0; i < vertexArray.size(); i += 3) {
                 vertices.push_back(Vector3(
-                    static_cast<float>(vertexArray[i].toDouble()),
-                    static_cast<float>(vertexArray[i + 1].toDouble()),
-                    static_cast<float>(vertexArray[i + 2].toDouble())
+                    static_cast<float>(vertexArray[i].get<double>()),
+                    static_cast<float>(vertexArray[i + 1].get<double>()),
+                    static_cast<float>(vertexArray[i + 2].get<double>())
                 ));
             }
 
             std::vector<Vector3> normals;
             normals.reserve(normalArray.size() / 3);
-            for (int i = 0; i < normalArray.size(); i += 3) {
+            for (size_t i = 0; i < normalArray.size(); i += 3) {
                 normals.push_back(Vector3(
-                    static_cast<float>(normalArray[i].toDouble()),
-                    static_cast<float>(normalArray[i + 1].toDouble()),
-                    static_cast<float>(normalArray[i + 2].toDouble())
+                    static_cast<float>(normalArray[i].get<double>()),
+                    static_cast<float>(normalArray[i + 1].get<double>()),
+                    static_cast<float>(normalArray[i + 2].get<double>())
                 ));
             }
 
@@ -475,59 +560,97 @@ MorphData ProjectSerializer::DeserializeMorphData(const QJsonObject& obj) const 
 
 // --- Path utilities ---
 
-QString ProjectSerializer::MakeRelativePath(const QString& filepath, const QString& projectDir) const {
-    if (filepath.isEmpty()) return "";
-    QDir dir(projectDir);
-    return dir.relativeFilePath(filepath);
+std::string ProjectSerializer::MakeRelativePath(const std::string& filepath, const std::string& projectDir) const {
+    if (filepath.empty()) return "";
+    std::error_code ec;
+    auto rel = std::filesystem::relative(filepath, projectDir, ec);
+    if (ec) return filepath;
+    std::string result = rel.generic_string();
+    return result;
 }
 
-QString ProjectSerializer::ResolveRelativePath(const QString& relativePath, const QString& projectDir) const {
-    if (relativePath.isEmpty()) return "";
+std::string ProjectSerializer::ResolveRelativePath(const std::string& relativePath, const std::string& projectDir) const {
+    if (relativePath.empty()) return "";
 
-    // If it's already absolute, return as-is
-    QFileInfo info(relativePath);
-    if (info.isAbsolute()) return relativePath;
+    std::filesystem::path p(relativePath);
+    if (p.is_absolute()) return relativePath;
 
-    // Resolve relative to project directory
-    return QDir(projectDir).absoluteFilePath(relativePath);
+    std::error_code ec;
+    auto resolved = std::filesystem::weakly_canonical(std::filesystem::path(projectDir) / p, ec);
+    if (ec) return (std::filesystem::path(projectDir) / p).generic_string();
+    return resolved.generic_string();
 }
 
-QJsonObject ProjectSerializer::SerializeTextureSet(const TextureSet& textures, const QString& projectDir) const {
-    QJsonObject obj;
-    if (textures.albedo && textures.albedo->IsLoaded()) {
-        obj["albedoPath"] = MakeRelativePath(textures.albedo->GetFilePath(), projectDir);
+ProjectSerializer::Json ProjectSerializer::SerializeTextureSet(const TextureSet& textures, const std::string& projectDir) const {
+    Json obj;
+
+    // New v3 format: entries array
+    Json entries = Json::array();
+    for (const auto& tex : textures.textures) {
+        if (tex.data && tex.data->IsLoaded()) {
+            Json entry;
+            entry["name"] = tex.name;
+            entry["path"] = MakeRelativePath(tex.data->GetFilePath(), projectDir);
+            entries.push_back(std::move(entry));
+        }
     }
-    if (textures.normalMap && textures.normalMap->IsLoaded()) {
-        obj["normalMapPath"] = MakeRelativePath(textures.normalMap->GetFilePath(), projectDir);
-    }
+    obj["entries"] = std::move(entries);
+
     return obj;
 }
 
-TextureSet ProjectSerializer::DeserializeTextureSet(const QJsonObject& obj, const QString& projectDir,
-                                                     QStringList& warnings) const {
+TextureSet ProjectSerializer::DeserializeTextureSet(const Json& obj, const std::string& projectDir,
+                                                     std::vector<std::string>& warnings) const {
     TextureSet textures;
 
-    if (obj.contains("albedoPath")) {
-        QString path = ResolveRelativePath(obj["albedoPath"].toString(), projectDir);
-        if (QFile::exists(path)) {
-            textures.albedo = TextureData::LoadFromFile(path);
-            if (!textures.albedo) {
-                warnings.append(QString("Failed to load albedo texture: %1").arg(path));
+    // New v3 format: entries array
+    if (Has(obj, "entries")) {
+        const Json& entries = obj["entries"];
+        if (entries.is_array()) {
+            for (const auto& entry : entries) {
+                const std::string name = GetStr(entry, "name");
+                const std::string path = ResolveRelativePath(GetStr(entry, "path"), projectDir);
+                if (std::filesystem::exists(path)) {
+                    auto data = TextureData::LoadFromFile(path);
+                    if (data) {
+                        textures.Add(name, data);
+                    } else {
+                        warnings.push_back(std::format("Failed to load texture '{}': {}", name, path));
+                    }
+                } else {
+                    warnings.push_back(std::format("Texture '{}' not found: {}", name, path));
+                }
+            }
+        }
+        return textures;
+    }
+
+    // Backward compat: v1/v2 format with albedoPath/normalMapPath
+    if (Has(obj, "albedoPath")) {
+        const std::string path = ResolveRelativePath(GetStr(obj, "albedoPath"), projectDir);
+        if (std::filesystem::exists(path)) {
+            auto data = TextureData::LoadFromFile(path);
+            if (data) {
+                textures.Add("Albedo", data);
+            } else {
+                warnings.push_back(std::format("Failed to load albedo texture: {}", path));
             }
         } else {
-            warnings.append(QString("Albedo texture not found: %1").arg(path));
+            warnings.push_back(std::format("Albedo texture not found: {}", path));
         }
     }
 
-    if (obj.contains("normalMapPath")) {
-        QString path = ResolveRelativePath(obj["normalMapPath"].toString(), projectDir);
-        if (QFile::exists(path)) {
-            textures.normalMap = TextureData::LoadFromFile(path);
-            if (!textures.normalMap) {
-                warnings.append(QString("Failed to load normal map: %1").arg(path));
+    if (Has(obj, "normalMapPath")) {
+        const std::string path = ResolveRelativePath(GetStr(obj, "normalMapPath"), projectDir);
+        if (std::filesystem::exists(path)) {
+            auto data = TextureData::LoadFromFile(path);
+            if (data) {
+                textures.Add("Normal Map", data);
+            } else {
+                warnings.push_back(std::format("Failed to load normal map: {}", path));
             }
         } else {
-            warnings.append(QString("Normal map not found: %1").arg(path));
+            warnings.push_back(std::format("Normal map not found: {}", path));
         }
     }
 

@@ -1,13 +1,18 @@
 #include "deformation/NRICPDeformer.h"
 #include "utils/BVH.h"
 #include "utils/Logger.h"
-#include <cmath>
 #include <algorithm>
-#include <numeric>
+#include <chrono>
+#include <cmath>
+#include <cstdlib>
+#include <filesystem>
+#include <format>
+#include <fstream>
 #include <limits>
-#include <set>
 #include <map>
+#include <numeric>
 #include <queue>
+#include <set>
 #include <tuple>
 #include <unordered_map>
 
@@ -132,8 +137,8 @@ void NRICPDeformer::BuildWeldMap() {
         totalWeldedVerts += static_cast<int>(g.size());
     }
 
-    MV_LOG_INFO(QString("NRICP: Found %1 weld groups (%2 vertices at UV seams)")
-        .arg(weldGroups_.size()).arg(totalWeldedVerts));
+    MV_LOG_INFO(std::format("Wrap Engine: Found {} weld groups ({} vertices at UV seams)",
+        weldGroups_.size(), totalWeldedVerts));
 }
 
 void NRICPDeformer::EnforceWeldConstraints(std::vector<Vector3>& positions) {
@@ -190,15 +195,15 @@ void NRICPDeformer::BuildEdges() {
         edges_.push_back({v0, v1});
     }
 
-    MV_LOG_INFO(QString("NRICP: Built %1 unique edges from %2 faces (%3 weld edges added)")
-        .arg(edges_.size()).arg(sourceFaces_.size()).arg(weldEdgeCount));
+    MV_LOG_INFO(std::format("Wrap Engine: Built {} unique edges from {} faces ({} weld edges added)",
+        edges_.size(), sourceFaces_.size(), weldEdgeCount));
 }
 
 void NRICPDeformer::DetectAndExcludeBoundaryVertices() {
     excludedVertices_.assign(vertexCount_, false);
 
     if (!params_.enableBoundaryExclusion || vertexCount_ == 0) {
-        MV_LOG_INFO("NRICP: Boundary exclusion disabled or no vertices");
+        MV_LOG_INFO("Wrap Engine: Boundary exclusion disabled or no vertices");
         return;
     }
 
@@ -233,11 +238,11 @@ void NRICPDeformer::DetectAndExcludeBoundaryVertices() {
         if (isBoundaryVertex[i]) boundaryVertexCount++;
     }
 
-    MV_LOG_INFO(QString("NRICP: Found %1 boundary edges, %2 boundary vertices")
-        .arg(boundaryEdgeCount).arg(boundaryVertexCount));
+    MV_LOG_INFO(std::format("Wrap Engine: Found {} boundary edges, {} boundary vertices",
+        boundaryEdgeCount, boundaryVertexCount));
 
     if (boundaryVertexCount == 0) {
-        MV_LOG_INFO("NRICP: No boundary vertices found - mesh is closed");
+        MV_LOG_INFO("Wrap Engine: No boundary vertices found - mesh is closed");
         return;
     }
 
@@ -279,10 +284,10 @@ void NRICPDeformer::DetectAndExcludeBoundaryVertices() {
         if (excludedVertices_[i]) excludedCount++;
     }
 
-    MV_LOG_INFO(QString("NRICP: Excluded %1 vertices (%2% of mesh) from ICP correspondence (boundary + %3 hops)")
-        .arg(excludedCount)
-        .arg(static_cast<float>(excludedCount) / vertexCount_ * 100.0f, 0, 'f', 1)
-        .arg(hops));
+    MV_LOG_INFO(std::format("Wrap Engine: Excluded {} vertices ({:.1f}% of mesh) from ICP correspondence (boundary + {} hops)",
+        excludedCount,
+        static_cast<float>(excludedCount) / vertexCount_ * 100.0f,
+        hops));
 
     // Merge user-painted mask into exclusion set
     if (!userExcludedVertices_.empty() &&
@@ -295,7 +300,7 @@ void NRICPDeformer::DetectAndExcludeBoundaryVertices() {
             }
         }
         if (userMaskCount > 0) {
-            MV_LOG_INFO(QString("NRICP: User mask added %1 additional excluded vertices").arg(userMaskCount));
+            MV_LOG_INFO(std::format("Wrap Engine: User mask added {} additional excluded vertices", userMaskCount));
         }
     }
 }
@@ -473,8 +478,8 @@ ControlNodeData NRICPDeformer::ComputeControlNodes(float voxelSize) {
     std::sort(data.controlNodeIndices.begin(), data.controlNodeIndices.end());
     data.controlNodeCount = static_cast<int>(data.controlNodeIndices.size());
 
-    MV_LOG_INFO(QString("NRICP: Selected %1 control nodes from %2 vertices (voxel size=%3)")
-        .arg(data.controlNodeCount).arg(vertexCount_).arg(voxelSize, 0, 'f', 4));
+    MV_LOG_INFO(std::format("Wrap Engine: Selected {} control nodes from {} vertices (voxel size={:.4f})",
+        data.controlNodeCount, vertexCount_, voxelSize));
 
     return data;
 }
@@ -573,8 +578,8 @@ void NRICPDeformer::BuildControlNodeEdges(ControlNodeData& data, int kNeighbors)
         data.controlEdges.push_back({v0, v1});
     }
 
-    MV_LOG_INFO(QString("NRICP: Built %1 control node edges (k=%2)")
-        .arg(data.controlEdges.size()).arg(kNeighbors));
+    MV_LOG_INFO(std::format("Wrap Engine: Built {} control node edges (k={})",
+        data.controlEdges.size(), kNeighbors));
 }
 
 void NRICPDeformer::ComputeInterpolationWeights(ControlNodeData& data, int kNearest) {
@@ -760,6 +765,14 @@ int NRICPDeformer::BuildSystemMatrix(
     }
 
     // --- Landmark term ---
+    // Sprint 7 Story 7.5 close-out: the landmark weight wl is held
+    // constant across stiffness steps -- this is the standard NRICP
+    // formulation, NOT a bug. The cottage-cheese-face spike was closed
+    // with "Outcome B stopgap is the answer" (the StageSidebar amber
+    // warning at landmarkWeight/alphaFinal > 0.5 is the user-facing
+    // fix). See .agents/context/development/cottage_cheese_face_decision.md
+    // for the full rationale + reopen criteria. Three-sprint deferral
+    // closed without a code change here.
     double wl = static_cast<double>(params_.landmarkWeight);
     if (subsampled) {
         for (const auto& [vi, target] : landmarks_) {
@@ -816,7 +829,7 @@ int NRICPDeformer::BuildSystemMatrix(
     cachedSolver_.compute(cachedAtA_);
 
     if (cachedSolver_.info() != Eigen::Success) {
-        MV_LOG_WARNING("NRICP: Cholesky decomposition failed, increasing regularization");
+        MV_LOG_WARNING("Wrap Engine: Cholesky decomposition failed, increasing regularization");
         for (int i = 0; i < cachedCols_; ++i) {
             cachedAtA_.coeffRef(i, i) += 1e-3;
         }
@@ -886,7 +899,7 @@ void NRICPDeformer::BuildRHS(
 
 void NRICPDeformer::SolveFromFactorized(Eigen::MatrixXd& X) {
     if (!solverFactorized_) {
-        MV_LOG_WARNING("NRICP: Solver not factorized, cannot solve");
+        MV_LOG_WARNING("Wrap Engine: Solver not factorized, cannot solve");
         return;
     }
 
@@ -1030,30 +1043,30 @@ float NRICPDeformer::ComputeRMSDisplacement(const std::vector<Vector3>& posA,
 
 std::vector<Vector3> NRICPDeformer::Solve() {
     if (vertexCount_ == 0 || !targetMesh_) {
-        MV_LOG_WARNING("NRICP: No source vertices or target mesh");
+        MV_LOG_WARNING("Wrap Engine: No source vertices or target mesh");
         return {};
     }
 
     // Step 0: Build weld map to identify UV seam vertices sharing the same position
     if (progressCallback_) {
-        progressCallback_(0.01f, "NRICP: Detecting UV seam vertices...");
+        progressCallback_(0.01f, "Wrap Engine: Detecting UV seam vertices...");
     }
     BuildWeldMap();
 
     // Step 1: Build edge graph (includes weld edges between UV seam duplicates)
     if (progressCallback_) {
-        progressCallback_(0.02f, "NRICP: Building mesh edge graph...");
+        progressCallback_(0.02f, "Wrap Engine: Building mesh edge graph...");
     }
     BuildEdges();
 
     if (edges_.empty()) {
-        MV_LOG_WARNING("NRICP: No edges found in source mesh");
+        MV_LOG_WARNING("Wrap Engine: No edges found in source mesh");
         return {};
     }
 
     // Step 1b: Detect boundary vertices and mark exclusion zone
     if (progressCallback_) {
-        progressCallback_(0.03f, "NRICP: Detecting boundary regions...");
+        progressCallback_(0.03f, "Wrap Engine: Detecting boundary regions...");
     }
     DetectAndExcludeBoundaryVertices();
 
@@ -1078,15 +1091,15 @@ std::vector<Vector3> NRICPDeformer::Solve() {
     // Compute max correspondence distance
     if (params_.maxCorrespondenceDistance < 0.0f) {
         resolvedMaxCorrespondenceDistance_ = bboxDiagonal_ * 0.15f;
-        MV_LOG_INFO(QString("NRICP: Auto-computed max correspondence distance: %1 (15%% of bbox diagonal %2)")
-            .arg(resolvedMaxCorrespondenceDistance_, 0, 'f', 3).arg(bboxDiagonal_, 0, 'f', 3));
+        MV_LOG_INFO(std::format("Wrap Engine: Auto-computed max correspondence distance: {:.3f} (15% of bbox diagonal {:.3f})",
+            resolvedMaxCorrespondenceDistance_, bboxDiagonal_));
     } else {
         resolvedMaxCorrespondenceDistance_ = params_.maxCorrespondenceDistance;
     }
 
     // Ensure target BVH is built
     if (progressCallback_) {
-        progressCallback_(0.04f, "NRICP: Building target acceleration structure...");
+        progressCallback_(0.04f, "Wrap Engine: Building target acceleration structure...");
     }
     targetMesh_->GetBVH(); // Triggers lazy build
 
@@ -1181,12 +1194,12 @@ std::vector<Vector3> NRICPDeformer::Solve() {
     int iterationCount = 0;
 
     int excludedCount = static_cast<int>(std::count(excludedVertices_.begin(), excludedVertices_.end(), true));
-    MV_LOG_INFO(QString("NRICP: Starting solve with %1 vertices (%2 excluded), %3 edges, %4 landmarks, "
-                        "%5 stiffness steps, %6 opt iters, rigidity=%7, subsampling=%8")
-        .arg(N).arg(excludedCount).arg(edges_.size()).arg(landmarks_.size())
-        .arg(steps).arg(optIters)
-        .arg(rigidityEnabled ? "on" : "off")
-        .arg(subsamplingEnabled ? "on" : "off"));
+    MV_LOG_INFO(std::format("Wrap Engine: Starting solve with {} vertices ({} excluded), {} edges, {} landmarks, "
+                             "{} stiffness steps, {} opt iters, rigidity={}, subsampling={}",
+        N, excludedCount, edges_.size(), landmarks_.size(),
+        steps, optIters,
+        rigidityEnabled ? "on" : "off",
+        subsamplingEnabled ? "on" : "off"));
 
     for (int s = 0; s < steps; ++s) {
         float alpha = alphaSchedule[s];
@@ -1216,9 +1229,16 @@ std::vector<Vector3> NRICPDeformer::Solve() {
             }
         }
 
+        // Story 5.2 — lifted out of the inner ICP loop so the latest
+        // correspondence set is still in scope when we dump residuals at
+        // the end of each stiffness step. FindCorrespondences clears and
+        // refills these every call, so behaviour is unchanged.
+        std::vector<int> corrIndices;
+        std::vector<Vector3> corrPoints;
+
         for (int iter = 0; iter < params_.icpIterations; ++iter) {
             if (cancelled_ && cancelled_->load()) {
-                MV_LOG_INFO("NRICP: Cancelled by user");
+                MV_LOG_INFO("Wrap Engine: Cancelled by user");
                 return {};
             }
 
@@ -1226,14 +1246,12 @@ std::vector<Vector3> NRICPDeformer::Solve() {
             ComputeNormals(currentPositions, currentNormals);
 
             // Find ICP correspondences (parallelized)
-            std::vector<int> corrIndices;
-            std::vector<Vector3> corrPoints;
             FindCorrespondences(currentPositions, currentNormals, normalThresholdCos,
                               corrIndices, corrPoints);
 
             if (corrIndices.empty() && landmarks_.empty()) {
-                MV_LOG_WARNING(QString("NRICP: No correspondences found at level %1, iter %2")
-                    .arg(s + 1).arg(iter + 1));
+                MV_LOG_WARNING(std::format("Wrap Engine: No correspondences found at level {}, iter {}",
+                    s + 1, iter + 1));
                 break;
             }
 
@@ -1264,14 +1282,14 @@ std::vector<Vector3> NRICPDeformer::Solve() {
             // Inner optimization loop
             for (int optIter = 0; optIter < optIters; ++optIter) {
                 if (cancelled_ && cancelled_->load()) {
-                    MV_LOG_INFO("NRICP: Cancelled by user");
+                    MV_LOG_INFO("Wrap Engine: Cancelled by user");
                     return {};
                 }
 
                 // Progress
                 float progress = 0.05f + 0.90f * (static_cast<float>(iterationCount) / static_cast<float>(std::max(totalIterations, 1)));
                 if (progressCallback_) {
-                    std::string msg = "NRICP: Level " + std::to_string(s + 1) + "/" + std::to_string(steps) +
+                    std::string msg = "Wrap Engine: Level " + std::to_string(s + 1) + "/" + std::to_string(steps) +
                         ", ICP " + std::to_string(iter + 1) + "/" + std::to_string(params_.icpIterations);
                     if (optIters > 1) {
                         msg += ", opt " + std::to_string(optIter + 1) + "/" + std::to_string(optIters);
@@ -1322,40 +1340,117 @@ std::vector<Vector3> NRICPDeformer::Solve() {
                 iterationCount++;
 
                 if (rmsd < params_.epsilon) {
-                    MV_LOG_INFO(QString("NRICP: Converged at level %1, ICP %2, opt %3 (RMSD=%4)")
-                        .arg(s + 1).arg(iter + 1).arg(optIter + 1).arg(rmsd));
+                    MV_LOG_INFO(std::format("Wrap Engine: Converged at level {}, ICP {}, opt {} (RMSD={})",
+                        s + 1, iter + 1, optIter + 1, rmsd));
                     break;
                 }
             }
         }
+
+        // Story 5.2 — diagnostic dump for the cottage-cheese-face spike.
+        // Fires once per stiffness step using the latest correspondence
+        // set. No-op unless METAVISAGE_DUMP_RESIDUALS=1.
+        MaybeDumpResiduals(s, currentPositions, corrIndices, corrPoints);
     }
 
     if (progressCallback_) {
-        progressCallback_(0.96f, "NRICP: Enforcing UV seam constraints...");
+        progressCallback_(0.96f, "Wrap Engine: Enforcing UV seam constraints...");
     }
 
     EnforceWeldConstraints(currentPositions);
 
     if (progressCallback_) {
-        progressCallback_(0.97f, "NRICP: Finalizing...");
+        progressCallback_(0.97f, "Wrap Engine: Finalizing...");
     }
 
     // Validate output
     for (const auto& v : currentPositions) {
         if (std::isnan(v.x) || std::isnan(v.y) || std::isnan(v.z) ||
             std::isinf(v.x) || std::isinf(v.y) || std::isinf(v.z)) {
-            MV_LOG_WARNING("NRICP: Output contains NaN or Inf values");
+            MV_LOG_WARNING("Wrap Engine: Output contains NaN or Inf values");
             return {};
         }
     }
 
-    MV_LOG_INFO(QString("NRICP: Solve complete, %1 vertices deformed").arg(currentPositions.size()));
+    MV_LOG_INFO(std::format("Wrap Engine: Solve complete, {} vertices deformed", currentPositions.size()));
 
     if (progressCallback_) {
-        progressCallback_(1.0f, "NRICP: Complete!");
+        progressCallback_(1.0f, "Wrap Engine: Complete!");
     }
 
     return currentPositions;
+}
+
+void NRICPDeformer::MaybeDumpResiduals(int stiffnessStep,
+                                        const std::vector<Vector3>& positions,
+                                        const std::vector<int>& corrIndices,
+                                        const std::vector<Vector3>& corrPoints) const {
+    // Story 5.2 — gated entirely by env var. Single getenv() in the hot
+    // path is fine; only the dump-writing branch does any real work.
+    const char* flag = std::getenv("METAVISAGE_DUMP_RESIDUALS");
+    if (!flag || std::string_view(flag) != "1") return;
+
+    // Build a sparse-vertex -> dense-corr-index map so per-vertex lookup
+    // is O(1) rather than O(corrIndices.size()) in the dump loop.
+    std::vector<int> corrSlotByVertex(positions.size(), -1);
+    for (size_t k = 0; k < corrIndices.size(); ++k) {
+        const int v = corrIndices[k];
+        if (v >= 0 && v < static_cast<int>(positions.size())) {
+            corrSlotByVertex[v] = static_cast<int>(k);
+        }
+    }
+
+    // Landmark lookup (small N, vector scan is fine).
+    auto isLandmark = [&](int vertexId) {
+        for (const auto& [lvi, _] : landmarks_) {
+            if (lvi == vertexId) return true;
+        }
+        return false;
+    };
+
+    namespace fs = std::filesystem;
+    fs::path outDir;
+    try {
+        outDir = fs::temp_directory_path();
+    } catch (const std::exception& e) {
+        MV_LOG_WARNING(std::format("Wrap Engine: residual dump failed — temp dir unavailable: {}", e.what()));
+        return;
+    }
+
+    const auto epochMs = std::chrono::duration_cast<std::chrono::milliseconds>(
+        std::chrono::system_clock::now().time_since_epoch()).count();
+
+    const fs::path filename = outDir /
+        std::format("metavisage_residuals_{}_step{}.csv", epochMs, stiffnessStep);
+
+    std::ofstream out(filename);
+    if (!out.is_open()) {
+        MV_LOG_WARNING(std::format("Wrap Engine: residual dump failed — could not open {}",
+                                    filename.string()));
+        return;
+    }
+
+    out << "vertex_id,residual_magnitude,is_landmark,is_excluded\n";
+
+    const size_t N = positions.size();
+    for (size_t i = 0; i < N; ++i) {
+        const int slot = corrSlotByVertex[i];
+        float residual = -1.0f; // sentinel: no correspondence found
+        if (slot >= 0) {
+            const Vector3 d(positions[i].x - corrPoints[slot].x,
+                            positions[i].y - corrPoints[slot].y,
+                            positions[i].z - corrPoints[slot].z);
+            residual = std::sqrt(d.x*d.x + d.y*d.y + d.z*d.z);
+        }
+        const bool excluded =
+            (i < excludedVertices_.size() && excludedVertices_[i]) ||
+            (i < userExcludedVertices_.size() && userExcludedVertices_[i]);
+        out << i << ',' << residual << ','
+            << (isLandmark(static_cast<int>(i)) ? 1 : 0) << ','
+            << (excluded ? 1 : 0) << '\n';
+    }
+
+    MV_LOG_INFO(std::format("Wrap Engine: residual dump written to {}", filename.string()));
 }
 
 } // namespace MetaVisage

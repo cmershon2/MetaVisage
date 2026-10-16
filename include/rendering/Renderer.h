@@ -1,7 +1,7 @@
 #ifndef RENDERER_H
 #define RENDERER_H
 
-#include <QOpenGLFunctions_4_3_Core>
+#include <GL/glew.h>
 #include <memory>
 #include <map>
 #include <vector>
@@ -9,6 +9,7 @@
 #include "core/Mesh.h"
 #include "core/Transform.h"
 #include "rendering/PointRenderer.h"
+#include "rendering/GizmoRenderer.h"
 
 namespace MetaVisage {
 
@@ -17,7 +18,7 @@ class MeshRenderer;
 class Project;
 class TextureData;
 
-class Renderer : protected QOpenGLFunctions_4_3_Core {
+class Renderer {
 public:
     Renderer();
     ~Renderer();
@@ -54,6 +55,14 @@ public:
     void UploadMeshTexture(const Mesh* mesh, const TextureData& texture);
     void ClearMeshTexture(const Mesh* mesh);
 
+    // Transform gizmo
+    void RenderTransformGizmo(TransformMode mode, const Vector3& position,
+                              GizmoAxis hoveredAxis, GizmoAxis activeAxis,
+                              const Camera& camera, int viewportWidth, int viewportHeight);
+    GizmoAxis GizmoHitTest(TransformMode mode, const Vector3& gizmoPosition,
+                           const Ray& ray, const Camera& camera,
+                           int viewportWidth, int viewportHeight) const;
+
     // Sculpting (Touch Up stage)
     void SetBrushCursor(const Vector3& position, const Vector3& normal, float radius, float innerRadius, bool visible);
     void UpdateMeshVertices(const Mesh* mesh);
@@ -61,12 +70,13 @@ public:
 
 private:
     void RenderGrid(const Matrix4x4& viewProjection);
+    void RenderOrientationGizmo(const Camera& camera, int viewportWidth, int viewportHeight);
     void RenderMesh(const Mesh& mesh, const Transform& transform,
-                   const Vector3& color, const Matrix4x4& viewProjection);
+                   const Vector3& color, const Matrix4x4& viewProjection, const Vector3& viewPos);
     void RenderMeshOverlay(const Mesh& mesh, const Transform& transform,
-                           const Vector3& color, float alpha, const Matrix4x4& viewProjection);
+                           const Vector3& color, float alpha, const Matrix4x4& viewProjection, const Vector3& viewPos);
     void RenderMeshHeatMap(const Mesh& mesh, const Transform& transform,
-                           const Matrix4x4& viewProjection);
+                           const Matrix4x4& viewProjection, const Vector3& viewPos);
     void RenderPoints(const Camera& camera, int width, int height, Project* project);
     void RenderMorphStage(const Camera& camera, int width, int height, Project* project,
                           const Matrix4x4& viewProjection);
@@ -85,7 +95,6 @@ private:
     RenderFilter renderFilter_;
     MorphPreviewMode morphPreviewMode_;
     unsigned int gridVAO_;
-    unsigned int gridVBO_;
     int gridVertexCount_;
 
     // Point rendering state
@@ -108,6 +117,13 @@ private:
 
     // Mask visualization
     bool showMask_;
+
+    // Orientation gizmo
+    unsigned int gizmoVAO_;
+    unsigned int gizmoVBO_;
+
+    // Transform gizmo
+    std::unique_ptr<GizmoRenderer> gizmoRenderer_;
 };
 
 } // namespace MetaVisage

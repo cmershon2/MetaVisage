@@ -1,14 +1,14 @@
 #include "deformation/MeshDeformer.h"
 #include "utils/Logger.h"
-#include <cmath>
 #include <algorithm>
+#include <cmath>
+#include <format>
 #include <numeric>
 
 namespace MetaVisage {
 
 MeshDeformer::MeshDeformer()
-    : kernelType_(DeformationAlgorithm::NRICP),
-      stiffness_(0.5f),
+    : stiffness_(0.5f),
       smoothness_(0.5f),
       cancelled_(false) {
 }
@@ -43,10 +43,6 @@ Vector3 MeshDeformer::TransformPoint(const Vector3& point, const Matrix4x4& matr
     float w = matrix.m[3] * point.x + matrix.m[7] * point.y + matrix.m[11] * point.z + matrix.m[15];
     if (std::abs(w) > 1e-6f) { x /= w; y /= w; z /= w; }
     return Vector3(x, y, z);
-}
-
-void MeshDeformer::SetKernelType(DeformationAlgorithm kernel) {
-    kernelType_ = kernel;
 }
 
 void MeshDeformer::SetStiffness(float stiffness) {
@@ -97,15 +93,10 @@ bool MeshDeformer::ValidateInputs(std::string& errorMessage) const {
         }
     }
 
-    // NRICP only needs 1 landmark (ICP finds its own correspondences)
-    // RBF needs at least 4 for the polynomial terms
-    size_t minPoints = (kernelType_ == DeformationAlgorithm::NRICP) ? 1 : 4;
-    if (correspondences_.size() < minPoints) {
-        if (kernelType_ == DeformationAlgorithm::NRICP) {
-            errorMessage = "At least 1 point correspondence required for NRICP";
-        } else {
-            errorMessage = "At least 4 point correspondences required for stable RBF deformation";
-        }
+    // The Wrap Engine only needs a single landmark — the iterative solver
+    // discovers the rest of the correspondence field on its own.
+    if (correspondences_.empty()) {
+        errorMessage = "At least 1 point correspondence required for the Wrap Engine";
         return false;
     }
 
@@ -155,7 +146,7 @@ void MeshDeformer::ExtractControlPoints(std::vector<Vector3>& sourcePoints,
         }
     }
 
-    MV_LOG_INFO(QString("ExtractControlPoints: Extracted %1 control point pairs").arg(sourcePoints.size()));
+    MV_LOG_INFO(std::format("ExtractControlPoints: Extracted {} control point pairs", sourcePoints.size()));
 }
 
 std::shared_ptr<Mesh> MeshDeformer::CopyMesh(const std::shared_ptr<Mesh>& source) const {
@@ -178,154 +169,21 @@ std::shared_ptr<Mesh> MeshDeformer::CopyMesh(const std::shared_ptr<Mesh>& source
 }
 
 DeformationResult MeshDeformer::Deform() {
-    DeformationResult result;
     cancelled_.store(false);
     displacementMagnitudes_.clear();
 
-    // Validate inputs
+    DeformationResult result;
     std::string validationError;
     if (!ValidateInputs(validationError)) {
         result.errorMessage = validationError;
         return result;
     }
 
-    // Dispatch to NRICP if selected
-    if (kernelType_ == DeformationAlgorithm::NRICP) {
-        return DeformNRICP();
-    }
-
-    // --- Legacy RBF path ---
-
-    // Report progress: starting
-    if (progressCallback_) {
-        progressCallback_(0.0f, "Preparing RBF deformation...");
-    }
-
-    // Extract control points from correspondences
-    std::vector<Vector3> sourcePoints, targetPoints;
-    ExtractControlPoints(sourcePoints, targetPoints);
-
-    if (sourcePoints.empty()) {
-        result.errorMessage = "No valid control point pairs found";
-        return result;
-    }
-
-    MV_LOG_INFO(QString("Starting deformation with %1 control points and %2 vertices")
-        .arg(sourcePoints.size()).arg(sourceMesh_->GetVertexCount()));
-
-    // Check for cancellation
-    if (cancelled_.load()) {
-        result.errorMessage = "Deformation cancelled";
-        return result;
-    }
-
-    // Report progress: setting up RBF
-    if (progressCallback_) {
-        progressCallback_(0.05f, "Setting up RBF interpolation...");
-    }
-
-    // Set up and solve RBF system
-    RBFInterpolator interpolator;
-    interpolator.SetControlPoints(sourcePoints, targetPoints);
-    interpolator.SetKernelType(kernelType_);
-    interpolator.SetStiffness(stiffness_);
-    interpolator.SetSmoothness(smoothness_);
-
-    // Report progress: solving
-    if (progressCallback_) {
-        progressCallback_(0.1f, "Solving RBF system...");
-    }
-
-    if (!interpolator.Solve()) {
-        result.errorMessage = "Failed to solve RBF interpolation system";
-        return result;
-    }
-
-    // Check for cancellation
-    if (cancelled_.load()) {
-        result.errorMessage = "Deformation cancelled";
-        return result;
-    }
-
-    // Report progress: applying deformation
-    if (progressCallback_) {
-        progressCallback_(0.3f, "Applying deformation to vertices...");
-    }
-
-    // Create a copy of the source mesh for deformation
-    auto deformedMesh = CopyMesh(sourceMesh_);
-    const auto& originalVertices = sourceMesh_->GetVertices();
-    std::vector<Vector3> newVertices(originalVertices.size());
-    displacementMagnitudes_.resize(originalVertices.size());
-
-    float maxDisp = 0.0f;
-    double totalDisp = 0.0;
-    const size_t vertexCount = originalVertices.size();
-
-    // Apply deformation to each vertex
-    for (size_t i = 0; i < vertexCount; ++i) {
-        // Check for cancellation periodically
-        if (i % 1000 == 0 && cancelled_.load()) {
-            result.errorMessage = "Deformation cancelled";
-            return result;
-        }
-
-        // Evaluate RBF displacement at this vertex
-        Vector3 displacement = interpolator.Evaluate(originalVertices[i]);
-        newVertices[i] = originalVertices[i] + displacement;
-
-        // Track displacement magnitude
-        float mag = displacement.Length();
-        displacementMagnitudes_[i] = mag;
-        maxDisp = std::max(maxDisp, mag);
-        totalDisp += static_cast<double>(mag);
-
-        // Report progress (30% to 90% is vertex processing)
-        if (i % 5000 == 0 && progressCallback_) {
-            float progress = 0.3f + 0.6f * (static_cast<float>(i) / static_cast<float>(vertexCount));
-            progressCallback_(progress, "Deforming vertices... (" +
-                std::to_string(i) + "/" + std::to_string(vertexCount) + ")");
-        }
-    }
-
-    // Set the deformed vertices (UVs are preserved automatically since we only changed positions)
-    deformedMesh->SetVertices(newVertices);
-
-    // Report progress: recalculating normals
-    if (progressCallback_) {
-        progressCallback_(0.9f, "Recalculating normals...");
-    }
-
-    // Recalculate normals for the deformed mesh
-    deformedMesh->CalculateNormals();
-
-    // Check for cancellation
-    if (cancelled_.load()) {
-        result.errorMessage = "Deformation cancelled";
-        return result;
-    }
-
-    // Validate the deformed mesh
-    if (!deformedMesh->Validate()) {
-        result.errorMessage = "Deformed mesh failed validation";
-        return result;
-    }
-
-    // Report progress: complete
-    if (progressCallback_) {
-        progressCallback_(1.0f, "Deformation complete!");
-    }
-
-    // Build result
-    result.success = true;
-    result.deformedMesh = deformedMesh;
-    result.maxDisplacement = maxDisp;
-    result.avgDisplacement = (vertexCount > 0) ? static_cast<float>(totalDisp / vertexCount) : 0.0f;
-
-    MV_LOG_INFO(QString("Deformation complete: max displacement=%1, avg=%2, vertices=%3")
-        .arg(result.maxDisplacement).arg(result.avgDisplacement).arg(vertexCount));
-
-    return result;
+    // Sprint 4 collapsed the algorithm dispatcher: the legacy RBF / TPS /
+    // Gaussian / Multiquadric / ARAP paths were removed and the surviving
+    // Wrap Engine is the single solver. Stiffness / smoothness setters stay
+    // for serializer round-trip with v1.0.0 projects but no longer route here.
+    return DeformNRICP();
 }
 
 int MeshDeformer::FindClosestVertex(const std::vector<Vector3>& vertices, const Vector3& point) {
@@ -364,7 +222,7 @@ DeformationResult MeshDeformer::DeformNRICP() {
     DeformationResult result;
 
     if (progressCallback_) {
-        progressCallback_(0.01f, "Preparing NRICP deformation...");
+        progressCallback_(0.01f, "Preparing Wrap Engine deformation...");
     }
 
     // Extract landmark correspondences in morph local space
@@ -408,7 +266,7 @@ DeformationResult MeshDeformer::DeformNRICP() {
     std::vector<Vector3> deformedVertices = nricp.Solve();
 
     if (deformedVertices.empty()) {
-        result.errorMessage = cancelled_.load() ? "Deformation cancelled" : "NRICP solver failed";
+        result.errorMessage = cancelled_.load() ? "Deformation cancelled" : "Wrap Engine solver failed";
         return result;
     }
 
@@ -443,8 +301,8 @@ DeformationResult MeshDeformer::DeformNRICP() {
     result.maxDisplacement = maxDisp;
     result.avgDisplacement = origVerts.empty() ? 0.0f : static_cast<float>(totalDisp / origVerts.size());
 
-    MV_LOG_INFO(QString("NRICP deformation complete: max displacement=%1, avg=%2, vertices=%3")
-        .arg(result.maxDisplacement).arg(result.avgDisplacement).arg(origVerts.size()));
+    MV_LOG_INFO(std::format("Wrap Engine deformation complete: max displacement={}, avg={}, vertices={}",
+        result.maxDisplacement, result.avgDisplacement, origVerts.size()));
 
     return result;
 }

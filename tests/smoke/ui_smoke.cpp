@@ -1,0 +1,392 @@
+// Story 5.4 — imgui_test_engine smoke-UI lane.
+//
+// Drives the live AppWindow through focused smoke scenarios that catch
+// the bug classes flagged across the Sprint 3.6-7 retros: modal/window
+// toggling, viewport-toolbar click-through, standalone startup, stage progression,
+// and unrestricted brush selection. Each scenario exits on first failure with a screenshot
+// available via ImGuiTestEngineIO::ScreenCaptureFunc — currently nullptr
+// so failures only surface in stdout, but the hook is wired so we can
+// add screenshot-on-failure later.
+//
+// Process exit codes:
+//   0  all tests passed
+//   1  AppWindow::Initialize failed
+//   2  60-second wall-clock timeout exceeded
+//   3  one or more test scenarios failed
+//
+// Limitations vs. the Sprint 5 plan's original 5-scenario spec:
+//   - The original three pragmatic substitutes remain: welcome modal
+//     dismiss, dockspace window-existence smoke, and viewport-toolbar
+//     shading modes, stage progression, and standalone brush selection.
+//   - Full loaded-asset Process/Accept and sculpt/undo gestures remain
+//     follow-ups. A tiny in-memory mesh now covers worker completion and
+//     project replacement without a multi-second production mesh solve.
+//   - The viewport_shading_modes scenario is the click-through smoke
+//     the Sprint 3.6/3.7/3.8 retros all asked for; the
+//     dockspace_window_smoke catches the related bug class where a
+//     refactor drops a Begin call.
+
+#include "core/Project.h"
+#include "core/Mesh.h"
+#include "core/Types.h"
+#include "ui/AppWindow.h"
+#include "ui/Viewport.h"
+#include "ui/ViewportHost.h"
+#include "utils/Logger.h"
+
+#include "imgui_te_context.h"
+#include "imgui_te_engine.h"
+
+#include <GLFW/glfw3.h>
+#include <imgui.h>
+
+#include <chrono>
+#include <cstdio>
+#include <string>
+
+using namespace MetaVisage;
+
+namespace MetaVisage {
+
+// Drive the worker/project lifecycle without timing-dependent menu clicks.
+// The fixture uses the same StartMorph and New handlers as the live UI.
+struct AppWindowTestAccess {
+    static void StartMorph(AppWindow& app) { app.StartMorph(); }
+    static void NewProject(AppWindow& app) { app.OnFileNewProject(); }
+    static bool MorphRunning(const AppWindow& app) { return app.morphRunning_.load(); }
+};
+
+} // namespace MetaVisage
+
+namespace {
+
+// Static pointer the tests look up to query AppWindow / Project state.
+// Lambda captures complicate the IM_REGISTER_TEST macro path; a single
+// translation-unit-scoped pointer is the cleanest way to thread state
+// into the TestFunc without juggling user-data pointers.
+//
+// PR #24 review nit — convention for new scenarios: any test that
+// dereferences g_app MUST guard with `if (!g_app || !g_app-><...>)`
+// + IM_CHECK(false) at the top (see ViewportShadingModes for the
+// pattern). Pure-ImGui scenarios that only call ImGui::* APIs (e.g.
+// FindWindowByName, ItemClick) don't need the guard — the engine
+// itself is bound at Start() and won't tick if the AppWindow is gone.
+// The harness sets g_app = &app before Start() and clears it after
+// Shutdown(), so it's never null mid-test in practice; the guard
+// exists for defence-in-depth, not as a routine null check.
+AppWindow* g_app = nullptr;
+
+void DismissWelcomeModalIfOpen(ImGuiTestContext* ctx) {
+    // The welcome modal pops on first frame because no project is
+    // loaded. Click its Close button if present so subsequent
+    // scenarios aren't blocked by an absorbing modal. Use ItemAction
+    // with NoError so a missing button is silently a no-op (the
+    // dialog might have been dismissed by an earlier test).
+    ctx->ItemAction(ImGuiTestAction_Click,
+                    "//Welcome to MetaVisage/Close",
+                    ImGuiTestOpFlags_NoError);
+}
+
+void RegisterScenario_WelcomeModalDismiss(ImGuiTestEngine* engine) {
+    ImGuiTest* t = IM_REGISTER_TEST(engine, "smoke", "welcome_modal_dismiss");
+    t->TestFunc = [](ImGuiTestContext* ctx) {
+        // Reset any leftover ref from a prior scenario.
+        ctx->SetRef("");
+
+        // The welcome modal is the first top-level interactable surface
+        // a fresh launch presents. Verify it renders and its Close
+        // button dismisses it — exercises the BeginPopupModal
+        // click-through path Sprint 3.6 introduced.
+        ImGuiWindow* modal = ImGui::FindWindowByName("Welcome to MetaVisage");
+        IM_CHECK(modal != nullptr);
+        ctx->ItemClick("//Welcome to MetaVisage/Close");
+
+        // Modal popups close by setting Active=false on the next
+        // frame. Yield a few frames so ImGui's popup-close animation
+        // (and our subsequent re-render) settles, then assert the
+        // modal isn't active anymore. WasActive flips to false on the
+        // first frame the window stops rendering.
+        ctx->Yield();
+        ctx->Yield();
+        IM_CHECK(modal && !modal->WasActive);
+    };
+}
+
+void RegisterScenario_DockspaceWindowSmoke(ImGuiTestEngine* engine) {
+    ImGuiTest* t = IM_REGISTER_TEST(engine, "smoke", "dockspace_window_smoke");
+    t->TestFunc = [](ImGuiTestContext* ctx) {
+        ctx->SetRef("");
+        DismissWelcomeModalIfOpen(ctx);
+
+        // The four expected top-level windows after a fresh launch.
+        // If any go missing, the dockspace layout regressed and stages
+        // can't render. Catches the bug class where a Sprint refactor
+        // accidentally drops a Begin call.
+        IM_CHECK(ImGui::FindWindowByName("##AppHostWindow") != nullptr);
+        IM_CHECK(ImGui::FindWindowByName("##MvTitleBar") != nullptr);
+
+        // The viewport toolbar uses the role-stamped ID we landed in
+        // this same story (Viewport.cpp). Its presence confirms the
+        // viewport host built its layout this frame.
+        IM_CHECK(ImGui::FindWindowByName("##VpToolbar_primary") != nullptr);
+    };
+}
+
+void RegisterScenario_ViewportShadingModes(ImGuiTestEngine* engine) {
+    ImGuiTest* t = IM_REGISTER_TEST(engine, "smoke", "viewport_shading_modes");
+    t->TestFunc = [](ImGuiTestContext* ctx) {
+        ctx->SetRef("");
+        DismissWelcomeModalIfOpen(ctx);
+
+        if (!g_app || !g_app->GetViewportHost()) {
+            IM_CHECK(false);
+            return;
+        }
+        Viewport* vp = g_app->GetViewportHost()->GetPrimaryViewport();
+        IM_CHECK(vp != nullptr);
+        if (!vp) return;
+
+        // Toolbar window ID is "##VpToolbar_primary" per Story 5.4's
+        // role-based ID change in Viewport.cpp. The shading-mode
+        // buttons live inside PushID("solid") / PushID("wire") /
+        // PushID("tex") wrappers around an InvisibleButton "##b".
+        // Absolute "//" prefix sidesteps any leftover SetRef state.
+        ctx->ItemClick("//##VpToolbar_primary/solid/##b");
+        IM_CHECK(vp->GetShadingMode() == ShadingMode::Solid);
+
+        ctx->ItemClick("//##VpToolbar_primary/wire/##b");
+        IM_CHECK(vp->GetShadingMode() == ShadingMode::Wireframe);
+
+        ctx->ItemClick("//##VpToolbar_primary/tex/##b");
+        IM_CHECK(vp->GetShadingMode() == ShadingMode::Textured);
+
+        // Restore default so the running window state is sane after
+        // the test - useful when iterating locally with the harness
+        // visible.
+        ctx->ItemClick("//##VpToolbar_primary/solid/##b");
+    };
+}
+
+void RegisterScenario_StageStepperProgression(ImGuiTestEngine* engine) {
+    // Sprint 7 Story 7.6 -- carryover from Sprint 5 retro AI #1 (Stage
+    // Stepper portion).
+    // Verifies the StageStepper window mounts and tracks Project::
+    // SetCurrentStage transitions across the four-stage workflow. Forward-
+    // gating logic (CanProceedToNextStage) requires per-stage prereqs --
+    // mesh loaded, points placed, morph processed -- that a hermetic
+    // harness cannot satisfy without a fixture. This tests UI state
+    // transitions directly.
+    ImGuiTest* t = IM_REGISTER_TEST(engine, "smoke", "stage_stepper_progression");
+    t->TestFunc = [](ImGuiTestContext* ctx) {
+        ctx->SetRef("");
+        DismissWelcomeModalIfOpen(ctx);
+
+        if (!g_app || !g_app->GetProject()) {
+            IM_CHECK(false);
+            return;
+        }
+        Project* project = g_app->GetProject();
+
+        // ImGui's BeginChild adds a synthetic hash suffix to the child
+        // window's stored name (parent_path/child_name_<id-hex>), so a
+        // direct FindWindowByName("##MvStageStepper") returns nullptr.
+        // The host window's existence is the proof the Stepper rendered
+        // -- StageStepper::Render is called unconditionally inside the
+        // host's Begin scope every frame. The transition assertions
+        // below are the actual contract this scenario verifies.
+        IM_CHECK(ImGui::FindWindowByName("##AppHostWindow") != nullptr);
+
+        const WorkflowStage stages[] = {
+            WorkflowStage::Alignment,
+            WorkflowStage::PointReference,
+            WorkflowStage::Morph,
+            WorkflowStage::TouchUp,
+        };
+        for (WorkflowStage stage : stages) {
+            project->SetCurrentStage(stage);
+            ctx->Yield();
+            ctx->Yield();
+            IM_CHECK(project->GetCurrentStage() == stage);
+            // Host still active -- if anything in the per-frame render
+            // path crashes (StageStepper included), the host stops
+            // rendering and this fires.
+            ImGuiWindow* host = ImGui::FindWindowByName("##AppHostWindow");
+            IM_CHECK(host != nullptr && host->WasActive);
+        }
+
+        // Restore Stage 1 so any subsequent manual exploration of the
+        // harness window starts from a coherent state.
+        project->SetCurrentStage(WorkflowStage::Alignment);
+        ctx->Yield();
+    };
+}
+
+void RegisterScenario_StandaloneBrushes(ImGuiTestEngine* engine) {
+    ImGuiTest* t = IM_REGISTER_TEST(engine, "smoke", "standalone_brushes");
+    t->TestFunc = [](ImGuiTestContext* ctx) {
+        ctx->SetRef("");
+        DismissWelcomeModalIfOpen(ctx);
+        IM_CHECK(g_app != nullptr && g_app->GetProject() != nullptr);
+        ImGuiWindow* host = ImGui::FindWindowByName("##AppHostWindow");
+        IM_CHECK(host != nullptr && host->WasActive);
+        Project* project = g_app->GetProject();
+        project->SetCurrentStage(WorkflowStage::TouchUp);
+        Viewport* viewport = g_app->GetViewportHost()->GetPrimaryViewport();
+        IM_CHECK(viewport != nullptr);
+        int brushKey = GLFW_KEY_1;
+        for (BrushType brush : {BrushType::Smooth, BrushType::Grab,
+                                BrushType::PushPull, BrushType::Inflate}) {
+            viewport->SetBrushType(brush);
+            IM_CHECK(viewport->GetBrushType() == brush);
+            viewport->OnKey(brushKey++, 0, GLFW_PRESS, 0);
+            ctx->Yield();
+            ctx->Yield();
+            IM_CHECK(project->GetSculptState().activeBrush == brush);
+            IM_CHECK(viewport->GetBrushType() == brush);
+        }
+        project->SetCurrentStage(WorkflowStage::Alignment);
+        ctx->Yield();
+    };
+}
+
+void RegisterScenario_ProjectSwitchDuringMorph(ImGuiTestEngine* engine) {
+    ImGuiTest* t = IM_REGISTER_TEST(engine, "smoke", "project_switch_during_morph");
+    t->TestFunc = [](ImGuiTestContext* ctx) {
+        if (!g_app || !g_app->GetProject()) { IM_CHECK(false); return; }
+        DismissWelcomeModalIfOpen(ctx);
+
+        const auto prepare = [] {
+            auto mesh = std::make_shared<Mesh>();
+            mesh->SetVertices({Vector3(0, 0, 0), Vector3(1, 0, 0),
+                               Vector3(0, 1, 0), Vector3(0, 0, 1)});
+            std::vector<Face> faces(4);
+            faces[0].vertexIndices = {0, 2, 1};
+            faces[1].vertexIndices = {0, 1, 3};
+            faces[2].vertexIndices = {0, 3, 2};
+            faces[3].vertexIndices = {1, 2, 3};
+            mesh->SetFaces(faces);
+            mesh->CalculateNormals();
+            Project& project = *g_app->GetProject();
+            for (MeshReference* ref : {&project.GetMorphMesh(), &project.GetTargetMesh()}) {
+                ref->mesh = mesh;
+                ref->isLoaded = true;
+            }
+            auto& morph = project.GetMorphData();
+            morph.nricpEnableBoundaryExclusion = false;
+            morph.nricpStiffnessSteps = 1;
+            morph.nricpIcpIterations = 1;
+            morph.nricpOptimizationIterations = 1;
+            morph.nricpSamplingInitial = 0;
+            morph.nricpSamplingFinal = 0;
+            for (int i = 0; i < 4; ++i) {
+                PointCorrespondence point;
+                point.pointID = i;
+                point.morphMeshVertexIndex = point.targetMeshVertexIndex = i;
+                point.morphMeshPosition = point.targetMeshPosition = mesh->GetVertices()[i];
+                project.GetPointReferenceData().correspondences.push_back(point);
+            }
+        };
+
+        // First verify a result still applies to the workspace that started it.
+        AppWindowTestAccess::NewProject(*g_app);
+        prepare();
+        AppWindowTestAccess::StartMorph(*g_app);
+        while (AppWindowTestAccess::MorphRunning(*g_app)) ctx->Yield();
+        IM_CHECK(g_app->GetProject()->GetMorphData().isProcessed);
+        IM_CHECK(g_app->GetProject()->GetMorphData().deformedMorphMesh != nullptr);
+
+        AppWindowTestAccess::NewProject(*g_app);
+        prepare();
+        AppWindowTestAccess::StartMorph(*g_app);
+        // No yield: replace the workspace before completion can be consumed,
+        // even if this tiny solver has already finished on the worker thread.
+        AppWindowTestAccess::NewProject(*g_app);
+        while (AppWindowTestAccess::MorphRunning(*g_app)) ctx->Yield();
+        IM_CHECK(!g_app->GetProject()->GetMorphData().isProcessed);
+        IM_CHECK(g_app->GetProject()->GetMorphData().deformedMorphMesh == nullptr);
+        IM_CHECK(!g_app->GetProject()->GetMorphMesh().isLoaded);
+    };
+}
+
+} // namespace
+
+int main(int /*argc*/, char** /*argv*/) {
+    Logger::Instance().SetFileLogging(false);
+
+    AppWindow app;
+    g_app = &app;
+    if (!app.Initialize(1280, 800, "MetaVisage smoke_ui")) {
+        std::fprintf(stderr, "smoke_ui: AppWindow::Initialize failed\n");
+        return 1;
+    }
+
+    // Test engine setup must come AFTER Initialize because Initialize
+    // calls ImGui::CreateContext, and ImGuiTestEngine_Start binds to
+    // the current context.
+    ImGuiTestEngine* engine = ImGuiTestEngine_CreateContext();
+    ImGuiTestEngineIO& te_io = ImGuiTestEngine_GetIO(engine);
+    te_io.ConfigVerboseLevel        = ImGuiTestVerboseLevel_Info;
+    te_io.ConfigVerboseLevelOnError = ImGuiTestVerboseLevel_Debug;
+    te_io.ConfigRunSpeed            = ImGuiTestRunSpeed_Fast;
+    te_io.ConfigLogToTTY            = true; // mirror per-step log to stdout
+
+    RegisterScenario_WelcomeModalDismiss(engine);
+    RegisterScenario_DockspaceWindowSmoke(engine);
+    RegisterScenario_ViewportShadingModes(engine);
+    RegisterScenario_StageStepperProgression(engine);
+    RegisterScenario_StandaloneBrushes(engine);
+    RegisterScenario_ProjectSwitchDuringMorph(engine);
+
+    ImGuiTestEngine_Start(engine, ImGui::GetCurrentContext());
+    ImGuiTestEngine_QueueTests(engine, ImGuiTestGroup_Tests, /*filter=*/nullptr,
+                               ImGuiTestRunFlags_None);
+
+    GLFWwindow* window = app.GetWindow();
+    const auto deadline = std::chrono::steady_clock::now() + std::chrono::seconds(60);
+
+    while (!ImGuiTestEngine_IsTestQueueEmpty(engine)) {
+        if (std::chrono::steady_clock::now() > deadline) {
+            std::fprintf(stderr, "smoke_ui: 60 s wall-clock timeout exceeded\n");
+            ImGuiTestEngine_Stop(engine);
+            ImGuiTestEngine_DestroyContext(engine);
+            app.Shutdown();
+            return 2;
+        }
+        if (glfwWindowShouldClose(window)) {
+            std::fprintf(stderr, "smoke_ui: window closed before tests completed\n");
+            ImGuiTestEngine_Stop(engine);
+            ImGuiTestEngine_DestroyContext(engine);
+            app.Shutdown();
+            return 2;
+        }
+        glfwPollEvents();
+        int fbW = 0, fbH = 0;
+        glfwGetFramebufferSize(window, &fbW, &fbH);
+        app.TickOnce(fbW, fbH);
+        ImGuiTestEngine_PostSwap(engine);
+    }
+
+    int tested = 0, succeeded = 0;
+    ImGuiTestEngine_GetResult(engine, tested, succeeded);
+    std::printf("\nsmoke_ui: %d/%d scenarios passed\n", succeeded, tested);
+
+    // Per-test status summary so failures name themselves in CTest log.
+    ImVector<ImGuiTest*> tests;
+    ImGuiTestEngine_GetTestList(engine, &tests);
+    for (ImGuiTest* test : tests) {
+        const char* statusStr =
+            (test->Output.Status == ImGuiTestStatus_Success) ? "PASS" :
+            (test->Output.Status == ImGuiTestStatus_Error)   ? "FAIL" :
+                                                                "SKIP";
+        std::printf("  [%s] %s/%s\n", statusStr,
+                    test->Category ? test->Category : "?",
+                    test->Name     ? test->Name     : "?");
+    }
+
+    ImGuiTestEngine_Stop(engine);
+    ImGuiTestEngine_DestroyContext(engine);
+    app.Shutdown();
+    g_app = nullptr;
+
+    return (succeeded == tested) ? 0 : 3;
+}

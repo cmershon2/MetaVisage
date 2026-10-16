@@ -1,0 +1,22 @@
+{
+  "name": "metavisage",
+  "version-string": "2.0.0",
+  "description": "MetaHuman mesh morphing desktop application",
+  "dependencies": [
+    "glfw3",
+    {
+      "name": "imgui",
+      "features": [
+        "glfw-binding",
+        "opengl3-binding",
+        "docking-experimental",
+        "test-engine"
+      ]
+    },
+    "glew",
+    "eigen3",
+    "assimp",
+    "nlohmann-json",
+    "nativefiledialog-extended"
+  ]
+}

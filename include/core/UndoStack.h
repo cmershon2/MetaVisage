@@ -2,8 +2,9 @@
 #define UNDOSTACK_H
 
 #include "core/UndoableAction.h"
-#include <vector>
 #include <memory>
+#include <string>
+#include <vector>
 
 namespace MetaVisage {
 
@@ -18,8 +19,8 @@ public:
     void Redo();
     void Clear();
 
-    QString UndoDescription() const;
-    QString RedoDescription() const;
+    std::string UndoDescription() const;
+    std::string RedoDescription() const;
     int Size() const { return static_cast<int>(actions_.size()); }
 
 private:

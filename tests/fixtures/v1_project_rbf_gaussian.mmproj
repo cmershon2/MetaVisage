@@ -1,0 +1,9 @@
+{
+  "formatVersion": 1,
+  "name": "v1_rbf_gaussian",
+  "morph": {
+    "algorithm": 1,
+    "stiffness": 0.5,
+    "smoothness": 0.5
+  }
+}

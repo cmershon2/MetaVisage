@@ -1,11 +1,11 @@
 # MetaVisage Build Script for MinGW
-# This script automates the build process for Qt MinGW builds
+# Sprint 3.7 -- Qt removed; this script is retained for cross-toolchain use.
+# MSVC remains the authoritative build (build-msvc.ps1).
 
 param(
     [switch]$Clean,
     [switch]$Deploy,
     [string]$BuildType = "Release",
-    [string]$QtPath = "C:/Qt/6.10.1/mingw_64",
     [string]$MinGWPath = "C:/Qt/Tools/mingw1310_64",
     [string]$VcpkgToolchain = ""
 )
@@ -18,6 +18,16 @@ Write-Host ""
 $ProjectRoot = $PSScriptRoot
 $BuildDir = Join-Path $ProjectRoot "build"
 $BinDir = Join-Path $BuildDir "bin"
+
+# Validate before cleaning so an invalid toolchain leaves the existing build intact.
+if ($VcpkgToolchain -ne "") {
+    if (-not (Test-Path -LiteralPath $VcpkgToolchain -PathType Leaf)) {
+        Write-Host "ERROR: vcpkg toolchain file not found: $VcpkgToolchain" -ForegroundColor Red
+        Write-Host "Pass the path to an existing scripts/buildsystems/vcpkg.cmake file." -ForegroundColor Red
+        exit 1
+    }
+    $VcpkgToolchain = (Resolve-Path -LiteralPath $VcpkgToolchain).Path.Replace('\', '/')
+}
 
 # Clean build directory if requested
 if ($Clean) {
@@ -53,18 +63,24 @@ Set-Location $BuildDir
 
 $CMakeArgs = @(
     "..",
-    "-DCMAKE_PREFIX_PATH=`"$QtPath`"",
     "-G", "MinGW Makefiles",
     "-DCMAKE_BUILD_TYPE=$BuildType",
-    "-DCMAKE_C_COMPILER=`"$MinGWPath/bin/gcc.exe`"",
-    "-DCMAKE_CXX_COMPILER=`"$MinGWPath/bin/g++.exe`"",
-    "-DCMAKE_MAKE_PROGRAM=`"$MinGWPath/bin/mingw32-make.exe`""
+    "-DCMAKE_C_COMPILER=$MinGWPath/bin/gcc.exe",
+    "-DCMAKE_CXX_COMPILER=$MinGWPath/bin/g++.exe",
+    "-DCMAKE_MAKE_PROGRAM=$MinGWPath/bin/mingw32-make.exe"
 )
 
-# Add vcpkg toolchain if specified
+# Add vcpkg toolchain if specified.
+#
+# Note: with the default x64-windows triplet, vcpkg ships MSVC-built .libs
+# that do not link against MinGW's GCC. Sprint 3.5.2 onward requires ImGui
+# symbols in the executable, so MSVC is the authoritative toolchain. See
+# build-msvc.ps1. This script is retained for pre-3.5.2 targets and for any
+# future cross-toolchain experimentation via custom triplets.
 if ($VcpkgToolchain -ne "") {
     Write-Host "Using vcpkg toolchain: $VcpkgToolchain" -ForegroundColor Cyan
-    $CMakeArgs += "-DCMAKE_TOOLCHAIN_FILE=`"$VcpkgToolchain`""
+    # PowerShell passes each array element as one argument, including paths with spaces.
+    $CMakeArgs += "-DCMAKE_TOOLCHAIN_FILE=$VcpkgToolchain"
 }
 
 # Run CMake
@@ -91,17 +107,16 @@ if ($LASTEXITCODE -ne 0) {
 Write-Host ""
 Write-Host "Build completed successfully!" -ForegroundColor Green
 
-# Deploy Qt dependencies if requested
+# Deploy runtime dependencies if requested. Qt was removed in Sprint 3.7; the
+# executable's runtime DLLs are now staged by vcpkg's applocal post-build step.
 if ($Deploy) {
-    Write-Host ""
-    Write-Host "Deploying Qt dependencies..." -ForegroundColor Green
-    Set-Location $BinDir
-    & windeployqt MetaVisage.exe
-
-    if ($LASTEXITCODE -eq 0) {
-        Write-Host "Qt dependencies deployed successfully!" -ForegroundColor Green
+    $ExePath = Join-Path $BinDir "MetaVisage.exe"
+    if (Test-Path $ExePath) {
+        Write-Host ""
+        Write-Host "Runtime dependencies staged by vcpkg applocal." -ForegroundColor Green
     } else {
-        Write-Host "WARNING: windeployqt failed" -ForegroundColor Yellow
+        Write-Host ""
+        Write-Host "Skipping deploy: no executable was produced." -ForegroundColor Yellow
     }
 }
 
@@ -109,9 +124,15 @@ if ($Deploy) {
 Set-Location $ProjectRoot
 
 Write-Host ""
-Write-Host "Executable location: $BinDir\MetaVisage.exe" -ForegroundColor Cyan
-Write-Host ""
-Write-Host "To run the application:" -ForegroundColor Yellow
-Write-Host "  cd build\bin" -ForegroundColor Yellow
-Write-Host "  .\MetaVisage.exe" -ForegroundColor Yellow
+$ExePath = Join-Path $BinDir "MetaVisage.exe"
+if (Test-Path $ExePath) {
+    Write-Host "Executable location: $ExePath" -ForegroundColor Cyan
+    Write-Host ""
+    Write-Host "To run the application:" -ForegroundColor Yellow
+    Write-Host "  cd build\bin" -ForegroundColor Yellow
+    Write-Host "  .\MetaVisage.exe" -ForegroundColor Yellow
+} else {
+    Write-Host "Built MetaVisageCore static library (Sprint 3.5.1 transitional target)." -ForegroundColor Cyan
+    Write-Host "Executable target returns in Story 3.5.2." -ForegroundColor Cyan
+}
 Write-Host ""

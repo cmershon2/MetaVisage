@@ -1,111 +1,102 @@
-![MetaVisage Banner](https://github.com/cmershon2/MetaVisage/blob/master/docs/MetaVisage_Banner.png?raw=true)
+![MetaVisage Banner](docs/MetaVisage_Banner.png)
 
-An open-source desktop application for automated MetaHuman mesh morphing. Wrap MetaHuman head meshes to custom head models for use in Unreal Engine.
+MetaVisage is an open-source Windows desktop application for wrapping MetaHuman
+head meshes to custom head models for use in Unreal Engine. All implemented
+tools run locally without accounts, subscriptions, or usage limits.
 
 ## Features
 
-- **Four-stage workflow**: Alignment, Point Reference, Morph, Touch Up
-- **NRICP deformation**: Non-Rigid ICP algorithm for high-quality surface registration (plus RBF/TPS alternatives)
-- **Sculpting tools**: Smooth, Grab, Push/Pull, and Inflate brushes for manual refinement
-- **Symmetry support**: Mirrored point placement and sculpting
-- **Blender-style controls**: Familiar orbit/pan/zoom camera and G/R/S transform shortcuts
-- **Multiple formats**: Import/export FBX, OBJ, and GLTF meshes
-- **Unreal Engine ready**: Exports preserve topology, UVs, normals, and material slots
-- **Project management**: Save/load workflow state with full undo/redo support
-- **Included assets**: Ships with a MetaHuman head mesh (LOD0) ready to use
+- **Four-stage workflow**: Alignment, Point Reference, Morph, and Touch Up.
+- **Wrap Engine**: Quick Wrap and Fantasy Wrap presets, advanced parameter
+  controls, and user presets that can be saved, renamed, replaced, and deleted.
+- **Sculpting**: Smooth, Grab, Push/Pull, and Inflate brushes, with symmetry,
+  masking, and brush previews.
+- **Blender-style controls**: MMB orbit, Shift+MMB pan, scroll zoom, numpad
+  views, G/R/S transforms, X/Y/Z constraints, and `[` / `]` brush sizing.
+- **Mesh I/O**: FBX, OBJ, and GLTF import/export through Assimp. FBX is the
+  default export format; triangulation is off by default to preserve quads.
+- **Mesh preservation**: The morph workflow preserves topology, vertex order,
+  UVs, normals, and material slots for MetaHuman workflows.
+- **Local projects**: Save/load `.mmproj` files, undo/redo, and compatibility
+  with v1.0.0 project files.
+- **Texture tools**: Six texture slots and local texture baking.
 
 ## Requirements
 
-### Runtime
-- Windows 10/11 (64-bit)
-- Intel i5 / AMD Ryzen 5 or better
-- 8 GB RAM minimum (16 GB recommended)
-- DirectX 11 compatible GPU with 2 GB VRAM
-- 1920x1080 minimum display resolution
+- Windows 10/11 (64-bit).
+- GPU and driver supporting **OpenGL 4.3 or newer**.
+- 8 GB RAM minimum; 16 GB recommended. Larger meshes require more memory.
+- 1920x1080 display recommended.
 
-### Build
-- Qt 6.x (6.5+)
-- CMake 3.16+
-- C++17 compiler - MSVC 2019+ or MinGW
-- Assimp (recommended via vcpkg)
-- Eigen3
-- OpenGL 4.3+
+To build, install Visual Studio 2022 with **Desktop development with C++** and
+a Windows SDK, CMake 3.16+, Git, and vcpkg. The application uses C++20, Dear
+ImGui, GLFW, GLEW, Eigen, Assimp, nlohmann/json, and Native File Dialog Extended.
+Dependencies are listed in [vcpkg.json](vcpkg.json); Qt is not required.
 
-## Quick Start
+## Build and run
 
-### Building from Source
-
-```bash
-git clone https://github.com/cmershon2/MetaVisage.git
-cd MetaVisage
-mkdir build && cd build
-
-# MSVC
-cmake .. -DCMAKE_PREFIX_PATH="C:/Qt/6.10.1/msvc2022_64" -G "Visual Studio 17 2022" -A x64
-cmake --build . --config Release
-
-# Run
-./bin/Release/MetaVisage.exe
-```
-
-See [BUILD.md](BUILD.md) for detailed instructions (MinGW, Qt Creator, vcpkg setup, troubleshooting).
-
-### Using the Build Scripts
+The standalone changes are on `development`. Run these commands in PowerShell;
+replace the toolchain path with your vcpkg installation:
 
 ```powershell
-# MSVC build with Qt dependency deployment
-.\build-msvc.ps1 -Deploy
-
-# MinGW build
-.\build-mingw.ps1
+git clone --branch development https://github.com/cmershon2/MetaVisage.git
+cd MetaVisage
+.\build-msvc.ps1 -Deploy -VcpkgToolchain "C:/vcpkg/scripts/buildsystems/vcpkg.cmake"
+Push-Location build/bin/Release
+.\MetaVisage.exe
+Pop-Location
 ```
+
+Keep the executable, runtime DLLs, and staged `assets/` directory together.
+See [BUILD.md](BUILD.md) for vcpkg setup, tests, and troubleshooting. MSVC is
+the validated toolchain; the retained MinGW helper requires a compatible vcpkg
+triplet and has not been validated for the standalone release.
 
 ## Workflow
 
-1. **Alignment** - Load your MetaHuman head mesh and custom target mesh, then align them using move (G), rotate (R), and scale (S) tools
-2. **Point Reference** - Place corresponding landmark points on both meshes in synchronized dual viewports
-3. **Morph** - Run the NRICP deformation algorithm to automatically wrap the MetaHuman mesh to your target shape
-4. **Touch Up** - Refine the result with sculpting brushes (smooth, grab, push/pull, inflate)
-5. **Export** - Save the morphed mesh as FBX or OBJ, ready for Unreal Engine
+1. **Alignment**: Load a source MetaHuman head and your target head, then align
+   them with move (`G`), rotate (`R`), and scale (`S`).
+2. **Point Reference**: Place corresponding landmarks on both meshes in the
+   dual viewports. Use symmetry for matching features.
+3. **Morph**: Choose a wrap preset, process the mesh, inspect the result, and
+   accept it before continuing.
+4. **Touch Up**: Refine the result with sculpting brushes and texture tools.
+5. **Export**: Use FBX for the Unreal workflow. Keep triangulation disabled
+   when preserving the source quad topology for MetaHuman Conform.
 
-## Included Assets
+Save frequently with `Ctrl+S`; auto-save and crash recovery are not implemented.
+Settings, recent projects, presets, and logs are stored under
+`%APPDATA%/MetaVisage`. Projects are saved to the location you choose.
 
-A MetaHuman head mesh (LOD0) is included in `assets/models/MetaHumanHeadLod0.obj` for immediate use as the morph source mesh.
+## Repository layout
 
-## Project Structure
+| Path | Contents |
+|------|----------|
+| `assets/` | Fonts, icons, shaders, gizmos, brush previews, and a reference head mesh |
+| `include/`, `src/` | C++ headers and implementation, organized by subsystem |
+| `tests/` | Four CTest smoke targets and project/mesh fixtures |
+| `docs/` | Known issues and public documentation assets |
+| `.agents/`, `.codex/` | Maintainer context and optional agent tooling |
+| `build-msvc.ps1`, `build-mingw.ps1` | Build helpers |
 
-```
-MetaVisage/
-├── assets/           # Shaders, models, icons
-├── docs/             # Documentation (PRD, sprint plan, known issues)
-├── include/          # Header files (core, deformation, rendering, sculpting, ui, io, utils)
-├── src/              # Source files (mirrors include/ structure)
-├── tests/            # Unit tests
-├── CMakeLists.txt    # Build configuration
-├── BUILD.md          # Detailed build instructions
-├── CONTRIBUTING.md   # Contribution guidelines
-└── LICENSE           # MIT License
-```
+Historical sprint and integration documents under `.agents/context/` describe
+earlier work. Current scope is the standalone desktop application; the retired
+web, account, and paid-feature specifications do not describe current behavior.
 
-## Contributing
+## Contributing and support
 
-Contributions are welcome! See [CONTRIBUTING.md](CONTRIBUTING.md) for guidelines.
+See [CONTRIBUTING.md](CONTRIBUTING.md) for development and pull request guidance.
+Report bugs through [GitHub Issues](https://github.com/cmershon2/MetaVisage/issues).
+See [known issues](docs/KNOWN_ISSUES.md) and [release notes](RELEASE_NOTES.md)
+before reporting a problem.
 
-## Known Issues
+## License and credits
 
-See [docs/KNOWN_ISSUES.md](docs/KNOWN_ISSUES.md) for a list of known issues and platform limitations.
+MetaVisage code is licensed under the [MIT License](LICENSE). Third-party code
+and assets have their own terms. A reference head is present at
+`assets/models/MetaHumanHeadLod0.obj`; its source and redistribution terms still
+need to be documented before release packaging.
 
-## License
-
-MIT License - see [LICENSE](LICENSE) for details.
-
-## Author
-
-Casey Mershon
-
-## Acknowledgments
-
-- Epic Games for MetaHuman Creator
-- Qt Project for the UI framework
-- Eigen for linear algebra
-- Assimp for mesh I/O
+Created by Casey Mershon. Thanks to Epic Games for MetaHuman Creator and to
+the maintainers of Dear ImGui, GLFW, GLEW, Eigen, Assimp, nlohmann/json, Native
+File Dialog Extended, stb, Inter, JetBrains Mono, Saira, and Lucide.

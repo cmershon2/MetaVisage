@@ -21,7 +21,6 @@ Makefile
 
 # IDE files
 .vscode/
-.claude
 .idea/
 *.pro.user
 *.vcxproj
@@ -30,7 +29,6 @@ Makefile
 
 # Compiler output
 *.o
-*.obj
 *.a
 *.lib
 
@@ -49,8 +47,18 @@ desktop.ini
 # Project files
 *.mmproj
 *.autosave
+# Test fixtures are an exception — they pin the v1.0.0 schema for the
+# backward-compat regression in tests/smoke/v1_backward_compat.cpp.
+!tests/fixtures/*.mmproj
 
 # User config
 config.ini
 .settings
-.claude
+
+# Claude Code runtime artifacts (per-session session ID + PID)
+.claude/scheduled_tasks.lock
+
+# Keep any local configuration from the archived web-integrated version private.
+.env
+.env.*
+keys/*.pem
