@@ -222,7 +222,7 @@ DeformationResult MeshDeformer::DeformNRICP() {
     DeformationResult result;
 
     if (progressCallback_) {
-        progressCallback_(0.01f, "Preparing NRICP deformation...");
+        progressCallback_(0.01f, "Preparing Wrap Engine deformation...");
     }
 
     // Extract landmark correspondences in morph local space
@@ -301,7 +301,7 @@ DeformationResult MeshDeformer::DeformNRICP() {
     result.maxDisplacement = maxDisp;
     result.avgDisplacement = origVerts.empty() ? 0.0f : static_cast<float>(totalDisp / origVerts.size());
 
-    MV_LOG_INFO(std::format("NRICP deformation complete: max displacement={}, avg={}, vertices={}",
+    MV_LOG_INFO(std::format("Wrap Engine deformation complete: max displacement={}, avg={}, vertices={}",
         result.maxDisplacement, result.avgDisplacement, origVerts.size()));
 
     return result;

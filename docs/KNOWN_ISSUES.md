@@ -8,6 +8,10 @@ implementation notes are not a list of current defects.
 - **No auto-save or crash recovery**: Save frequently with `Ctrl+S`. Unsaved
   work can be lost if the application exits unexpectedly.
 - **Manual landmarks**: Automated landmark placement is not implemented.
+- **Large-file responsiveness**: Mesh import, project save/load, and texture
+  baking/export currently run synchronously and can temporarily pause the UI.
+  Morph processing runs on a background worker. Moving the remaining heavy I/O
+  to workers is follow-up work.
 - **Morph artifacts with aggressive parameters**: High landmark weighting
   relative to final stiffness can cause local geometry artifacts. The Morph
   inspector displays a warning for this combination. Lower landmark weight or

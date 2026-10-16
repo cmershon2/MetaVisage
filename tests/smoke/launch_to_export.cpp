@@ -21,6 +21,8 @@
 #include <cstdio>
 #include <filesystem>
 #include <memory>
+#include <iostream>
+#include <sstream>
 #include <string>
 
 namespace {
@@ -48,6 +50,17 @@ std::string LocateAsset(const std::string& exeDir, const std::string& relative) 
 int main(int /*argc*/, char** /*argv*/) {
     using namespace MetaVisage;
     Logger::Instance().SetFileLogging(false); // keep CI stdout clean
+
+    std::ostringstream logOutput;
+    auto* previousOutput = std::cout.rdbuf(logOutput.rdbuf());
+    Logger::Instance().Log(LogLevel::Info, "Wrap Engine diagnostic",
+                           "deformation/NRICPDeformer.cpp", 1);
+    std::cout.rdbuf(previousOutput);
+    if (logOutput.str().find("NRICP") != std::string::npos ||
+        logOutput.str().find("WrapEngine.cpp:1") == std::string::npos) {
+        std::fprintf(stderr, "smoke: diagnostic metadata exposes an internal implementation name\n");
+        return 12;
+    }
 
     const std::string exeDir = Paths::ExecutableDir();
     const std::string morphPath = LocateAsset(exeDir, "assets/models/MetaHumanHeadLod0.obj");

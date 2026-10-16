@@ -45,3 +45,9 @@ third-party assets, and collect dependency notices. The dependency manifest
 does not pin a vcpkg baseline. See
 `reviews/open-source-documentation.md` for the documentation review and remaining
 release-readiness findings; these were not resolved by the functional transition.
+
+The promotion review into `master` adds a project-generation guard so an old
+morph result cannot populate a replacement workspace, and keeps the public
+Wrap Engine name in progress messages and diagnostic metadata. A tiny in-memory
+mesh regression expands the UI lane to six scenarios; full loaded-asset
+Process/Accept and sculpt/undo coverage remains separate follow-up work.

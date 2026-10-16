@@ -17,9 +17,12 @@ std::string WideToUtf8(const wchar_t* wide, int wideLen = -1) {
     if (!wide) return {};
     const int bytes = WideCharToMultiByte(CP_UTF8, 0, wide, wideLen, nullptr, 0, nullptr, nullptr);
     if (bytes <= 0) return {};
-    // If wideLen < 0 the count includes the trailing null; trim it.
-    std::string out(static_cast<size_t>(wideLen < 0 ? bytes - 1 : bytes), '\0');
-    WideCharToMultiByte(CP_UTF8, 0, wide, wideLen, out.data(), bytes, nullptr, nullptr);
+    // The conversion writes the terminator when wideLen is -1, so reserve the
+    // full output buffer before trimming it from the resulting string.
+    std::string out(static_cast<size_t>(bytes), '\0');
+    if (WideCharToMultiByte(CP_UTF8, 0, wide, wideLen, out.data(), bytes,
+                            nullptr, nullptr) != bytes) return {};
+    if (wideLen < 0) out.resize(out.size() - 1);
     return out;
 }
 

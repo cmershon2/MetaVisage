@@ -1891,6 +1891,7 @@ bool AppWindow::HandleGlobalShortcut(int key, int action, int mods) {
 }
 
 void AppWindow::OnFileNewProject() {
+    ++projectGeneration_;
     project_ = std::make_unique<Project>();
     WrapPreset::QuickWrap().ApplyTo(project_->GetMorphData());
     if (undoStack_) undoStack_->Clear();
@@ -1909,6 +1910,7 @@ void AppWindow::OpenProjectFromDisk(const std::string& path) {
         errorModal_.Open(std::format("Could not open project:\n{}", result.errorMessage));
         return;
     }
+    ++projectGeneration_;
     project_ = std::move(fresh);
     projectPath_ = path;
     project_->SetPath(path);
@@ -2350,6 +2352,7 @@ void AppWindow::StartMorph() {
     morphProgress_.store(0.0f);
     morphFinished_.store(false);
     morphRunning_.store(true);
+    morphProjectGeneration_ = projectGeneration_;
 
     morphThread_ = std::thread([this]() {
         DeformationResult result = morphDeformer_->Deform();
@@ -2380,8 +2383,12 @@ void AppWindow::PollMorphCompletion() {
     morphRunning_.store(false);
     morphFinished_.store(false);
 
-    if (!project_) {
+    // New/Open may replace the workspace while the worker still owns its mesh
+    // inputs. A completed result belongs only to the project that started it.
+    if (!project_ || morphProjectGeneration_ != projectGeneration_) {
         morphResultMesh_.reset();
+        morphResultDisplacements_.clear();
+        morphDeformer_.reset();
         return;
     }
 

@@ -162,9 +162,18 @@ int RunPreset(const std::string& meshPath,
     deformer.SetSmoothness(m.smoothness);
     deformer.SetNRICPParams(params);
 
+    bool publicProgressNames = true;
+    deformer.SetProgressCallback([&](float, const std::string& message) {
+        if (message.find("NRICP") != std::string::npos) publicProgressNames = false;
+    });
+
     const auto t0 = std::chrono::steady_clock::now();
     DeformationResult result = deformer.Deform();
     const auto t1 = std::chrono::steady_clock::now();
+    if (!publicProgressNames) {
+        std::fprintf(stderr, "wrap_parity: progress exposes an internal implementation name\n");
+        return errorCodeBase + 7;
+    }
     const double elapsedSec =
         std::chrono::duration<double>(t1 - t0).count();
 

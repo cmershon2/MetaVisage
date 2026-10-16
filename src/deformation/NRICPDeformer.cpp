@@ -137,7 +137,7 @@ void NRICPDeformer::BuildWeldMap() {
         totalWeldedVerts += static_cast<int>(g.size());
     }
 
-    MV_LOG_INFO(std::format("NRICP: Found {} weld groups ({} vertices at UV seams)",
+    MV_LOG_INFO(std::format("Wrap Engine: Found {} weld groups ({} vertices at UV seams)",
         weldGroups_.size(), totalWeldedVerts));
 }
 
@@ -195,7 +195,7 @@ void NRICPDeformer::BuildEdges() {
         edges_.push_back({v0, v1});
     }
 
-    MV_LOG_INFO(std::format("NRICP: Built {} unique edges from {} faces ({} weld edges added)",
+    MV_LOG_INFO(std::format("Wrap Engine: Built {} unique edges from {} faces ({} weld edges added)",
         edges_.size(), sourceFaces_.size(), weldEdgeCount));
 }
 
@@ -203,7 +203,7 @@ void NRICPDeformer::DetectAndExcludeBoundaryVertices() {
     excludedVertices_.assign(vertexCount_, false);
 
     if (!params_.enableBoundaryExclusion || vertexCount_ == 0) {
-        MV_LOG_INFO("NRICP: Boundary exclusion disabled or no vertices");
+        MV_LOG_INFO("Wrap Engine: Boundary exclusion disabled or no vertices");
         return;
     }
 
@@ -238,11 +238,11 @@ void NRICPDeformer::DetectAndExcludeBoundaryVertices() {
         if (isBoundaryVertex[i]) boundaryVertexCount++;
     }
 
-    MV_LOG_INFO(std::format("NRICP: Found {} boundary edges, {} boundary vertices",
+    MV_LOG_INFO(std::format("Wrap Engine: Found {} boundary edges, {} boundary vertices",
         boundaryEdgeCount, boundaryVertexCount));
 
     if (boundaryVertexCount == 0) {
-        MV_LOG_INFO("NRICP: No boundary vertices found - mesh is closed");
+        MV_LOG_INFO("Wrap Engine: No boundary vertices found - mesh is closed");
         return;
     }
 
@@ -284,7 +284,7 @@ void NRICPDeformer::DetectAndExcludeBoundaryVertices() {
         if (excludedVertices_[i]) excludedCount++;
     }
 
-    MV_LOG_INFO(std::format("NRICP: Excluded {} vertices ({:.1f}% of mesh) from ICP correspondence (boundary + {} hops)",
+    MV_LOG_INFO(std::format("Wrap Engine: Excluded {} vertices ({:.1f}% of mesh) from ICP correspondence (boundary + {} hops)",
         excludedCount,
         static_cast<float>(excludedCount) / vertexCount_ * 100.0f,
         hops));
@@ -300,7 +300,7 @@ void NRICPDeformer::DetectAndExcludeBoundaryVertices() {
             }
         }
         if (userMaskCount > 0) {
-            MV_LOG_INFO(std::format("NRICP: User mask added {} additional excluded vertices", userMaskCount));
+            MV_LOG_INFO(std::format("Wrap Engine: User mask added {} additional excluded vertices", userMaskCount));
         }
     }
 }
@@ -478,7 +478,7 @@ ControlNodeData NRICPDeformer::ComputeControlNodes(float voxelSize) {
     std::sort(data.controlNodeIndices.begin(), data.controlNodeIndices.end());
     data.controlNodeCount = static_cast<int>(data.controlNodeIndices.size());
 
-    MV_LOG_INFO(std::format("NRICP: Selected {} control nodes from {} vertices (voxel size={:.4f})",
+    MV_LOG_INFO(std::format("Wrap Engine: Selected {} control nodes from {} vertices (voxel size={:.4f})",
         data.controlNodeCount, vertexCount_, voxelSize));
 
     return data;
@@ -578,7 +578,7 @@ void NRICPDeformer::BuildControlNodeEdges(ControlNodeData& data, int kNeighbors)
         data.controlEdges.push_back({v0, v1});
     }
 
-    MV_LOG_INFO(std::format("NRICP: Built {} control node edges (k={})",
+    MV_LOG_INFO(std::format("Wrap Engine: Built {} control node edges (k={})",
         data.controlEdges.size(), kNeighbors));
 }
 
@@ -829,7 +829,7 @@ int NRICPDeformer::BuildSystemMatrix(
     cachedSolver_.compute(cachedAtA_);
 
     if (cachedSolver_.info() != Eigen::Success) {
-        MV_LOG_WARNING("NRICP: Cholesky decomposition failed, increasing regularization");
+        MV_LOG_WARNING("Wrap Engine: Cholesky decomposition failed, increasing regularization");
         for (int i = 0; i < cachedCols_; ++i) {
             cachedAtA_.coeffRef(i, i) += 1e-3;
         }
@@ -899,7 +899,7 @@ void NRICPDeformer::BuildRHS(
 
 void NRICPDeformer::SolveFromFactorized(Eigen::MatrixXd& X) {
     if (!solverFactorized_) {
-        MV_LOG_WARNING("NRICP: Solver not factorized, cannot solve");
+        MV_LOG_WARNING("Wrap Engine: Solver not factorized, cannot solve");
         return;
     }
 
@@ -1043,30 +1043,30 @@ float NRICPDeformer::ComputeRMSDisplacement(const std::vector<Vector3>& posA,
 
 std::vector<Vector3> NRICPDeformer::Solve() {
     if (vertexCount_ == 0 || !targetMesh_) {
-        MV_LOG_WARNING("NRICP: No source vertices or target mesh");
+        MV_LOG_WARNING("Wrap Engine: No source vertices or target mesh");
         return {};
     }
 
     // Step 0: Build weld map to identify UV seam vertices sharing the same position
     if (progressCallback_) {
-        progressCallback_(0.01f, "NRICP: Detecting UV seam vertices...");
+        progressCallback_(0.01f, "Wrap Engine: Detecting UV seam vertices...");
     }
     BuildWeldMap();
 
     // Step 1: Build edge graph (includes weld edges between UV seam duplicates)
     if (progressCallback_) {
-        progressCallback_(0.02f, "NRICP: Building mesh edge graph...");
+        progressCallback_(0.02f, "Wrap Engine: Building mesh edge graph...");
     }
     BuildEdges();
 
     if (edges_.empty()) {
-        MV_LOG_WARNING("NRICP: No edges found in source mesh");
+        MV_LOG_WARNING("Wrap Engine: No edges found in source mesh");
         return {};
     }
 
     // Step 1b: Detect boundary vertices and mark exclusion zone
     if (progressCallback_) {
-        progressCallback_(0.03f, "NRICP: Detecting boundary regions...");
+        progressCallback_(0.03f, "Wrap Engine: Detecting boundary regions...");
     }
     DetectAndExcludeBoundaryVertices();
 
@@ -1091,7 +1091,7 @@ std::vector<Vector3> NRICPDeformer::Solve() {
     // Compute max correspondence distance
     if (params_.maxCorrespondenceDistance < 0.0f) {
         resolvedMaxCorrespondenceDistance_ = bboxDiagonal_ * 0.15f;
-        MV_LOG_INFO(std::format("NRICP: Auto-computed max correspondence distance: {:.3f} (15% of bbox diagonal {:.3f})",
+        MV_LOG_INFO(std::format("Wrap Engine: Auto-computed max correspondence distance: {:.3f} (15% of bbox diagonal {:.3f})",
             resolvedMaxCorrespondenceDistance_, bboxDiagonal_));
     } else {
         resolvedMaxCorrespondenceDistance_ = params_.maxCorrespondenceDistance;
@@ -1099,7 +1099,7 @@ std::vector<Vector3> NRICPDeformer::Solve() {
 
     // Ensure target BVH is built
     if (progressCallback_) {
-        progressCallback_(0.04f, "NRICP: Building target acceleration structure...");
+        progressCallback_(0.04f, "Wrap Engine: Building target acceleration structure...");
     }
     targetMesh_->GetBVH(); // Triggers lazy build
 
@@ -1194,7 +1194,7 @@ std::vector<Vector3> NRICPDeformer::Solve() {
     int iterationCount = 0;
 
     int excludedCount = static_cast<int>(std::count(excludedVertices_.begin(), excludedVertices_.end(), true));
-    MV_LOG_INFO(std::format("NRICP: Starting solve with {} vertices ({} excluded), {} edges, {} landmarks, "
+    MV_LOG_INFO(std::format("Wrap Engine: Starting solve with {} vertices ({} excluded), {} edges, {} landmarks, "
                              "{} stiffness steps, {} opt iters, rigidity={}, subsampling={}",
         N, excludedCount, edges_.size(), landmarks_.size(),
         steps, optIters,
@@ -1238,7 +1238,7 @@ std::vector<Vector3> NRICPDeformer::Solve() {
 
         for (int iter = 0; iter < params_.icpIterations; ++iter) {
             if (cancelled_ && cancelled_->load()) {
-                MV_LOG_INFO("NRICP: Cancelled by user");
+                MV_LOG_INFO("Wrap Engine: Cancelled by user");
                 return {};
             }
 
@@ -1250,7 +1250,7 @@ std::vector<Vector3> NRICPDeformer::Solve() {
                               corrIndices, corrPoints);
 
             if (corrIndices.empty() && landmarks_.empty()) {
-                MV_LOG_WARNING(std::format("NRICP: No correspondences found at level {}, iter {}",
+                MV_LOG_WARNING(std::format("Wrap Engine: No correspondences found at level {}, iter {}",
                     s + 1, iter + 1));
                 break;
             }
@@ -1282,14 +1282,14 @@ std::vector<Vector3> NRICPDeformer::Solve() {
             // Inner optimization loop
             for (int optIter = 0; optIter < optIters; ++optIter) {
                 if (cancelled_ && cancelled_->load()) {
-                    MV_LOG_INFO("NRICP: Cancelled by user");
+                    MV_LOG_INFO("Wrap Engine: Cancelled by user");
                     return {};
                 }
 
                 // Progress
                 float progress = 0.05f + 0.90f * (static_cast<float>(iterationCount) / static_cast<float>(std::max(totalIterations, 1)));
                 if (progressCallback_) {
-                    std::string msg = "NRICP: Level " + std::to_string(s + 1) + "/" + std::to_string(steps) +
+                    std::string msg = "Wrap Engine: Level " + std::to_string(s + 1) + "/" + std::to_string(steps) +
                         ", ICP " + std::to_string(iter + 1) + "/" + std::to_string(params_.icpIterations);
                     if (optIters > 1) {
                         msg += ", opt " + std::to_string(optIter + 1) + "/" + std::to_string(optIters);
@@ -1340,7 +1340,7 @@ std::vector<Vector3> NRICPDeformer::Solve() {
                 iterationCount++;
 
                 if (rmsd < params_.epsilon) {
-                    MV_LOG_INFO(std::format("NRICP: Converged at level {}, ICP {}, opt {} (RMSD={})",
+                    MV_LOG_INFO(std::format("Wrap Engine: Converged at level {}, ICP {}, opt {} (RMSD={})",
                         s + 1, iter + 1, optIter + 1, rmsd));
                     break;
                 }
@@ -1354,28 +1354,28 @@ std::vector<Vector3> NRICPDeformer::Solve() {
     }
 
     if (progressCallback_) {
-        progressCallback_(0.96f, "NRICP: Enforcing UV seam constraints...");
+        progressCallback_(0.96f, "Wrap Engine: Enforcing UV seam constraints...");
     }
 
     EnforceWeldConstraints(currentPositions);
 
     if (progressCallback_) {
-        progressCallback_(0.97f, "NRICP: Finalizing...");
+        progressCallback_(0.97f, "Wrap Engine: Finalizing...");
     }
 
     // Validate output
     for (const auto& v : currentPositions) {
         if (std::isnan(v.x) || std::isnan(v.y) || std::isnan(v.z) ||
             std::isinf(v.x) || std::isinf(v.y) || std::isinf(v.z)) {
-            MV_LOG_WARNING("NRICP: Output contains NaN or Inf values");
+            MV_LOG_WARNING("Wrap Engine: Output contains NaN or Inf values");
             return {};
         }
     }
 
-    MV_LOG_INFO(std::format("NRICP: Solve complete, {} vertices deformed", currentPositions.size()));
+    MV_LOG_INFO(std::format("Wrap Engine: Solve complete, {} vertices deformed", currentPositions.size()));
 
     if (progressCallback_) {
-        progressCallback_(1.0f, "NRICP: Complete!");
+        progressCallback_(1.0f, "Wrap Engine: Complete!");
     }
 
     return currentPositions;
@@ -1413,7 +1413,7 @@ void NRICPDeformer::MaybeDumpResiduals(int stiffnessStep,
     try {
         outDir = fs::temp_directory_path();
     } catch (const std::exception& e) {
-        MV_LOG_WARNING(std::format("NRICP: residual dump failed — temp dir unavailable: {}", e.what()));
+        MV_LOG_WARNING(std::format("Wrap Engine: residual dump failed — temp dir unavailable: {}", e.what()));
         return;
     }
 
@@ -1425,7 +1425,7 @@ void NRICPDeformer::MaybeDumpResiduals(int stiffnessStep,
 
     std::ofstream out(filename);
     if (!out.is_open()) {
-        MV_LOG_WARNING(std::format("NRICP: residual dump failed — could not open {}",
+        MV_LOG_WARNING(std::format("Wrap Engine: residual dump failed — could not open {}",
                                     filename.string()));
         return;
     }
@@ -1450,7 +1450,7 @@ void NRICPDeformer::MaybeDumpResiduals(int stiffnessStep,
             << (excluded ? 1 : 0) << '\n';
     }
 
-    MV_LOG_INFO(std::format("NRICP: residual dump written to {}", filename.string()));
+    MV_LOG_INFO(std::format("Wrap Engine: residual dump written to {}", filename.string()));
 }
 
 } // namespace MetaVisage

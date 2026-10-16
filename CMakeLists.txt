@@ -67,9 +67,9 @@ endif()
 # OpenMP — parallel deformation (optional, unchanged)
 find_package(OpenMP)
 if(OpenMP_CXX_FOUND)
-    message(STATUS "OpenMP found - parallel NRICP enabled")
+    message(STATUS "OpenMP found - parallel Wrap Engine enabled")
 else()
-    message(WARNING "OpenMP not found - NRICP will run single-threaded")
+    message(WARNING "OpenMP not found - Wrap Engine will run single-threaded")
 endif()
 
 # ---------------------------------------------------------------------------
@@ -348,7 +348,7 @@ set_tests_properties(smoke_wrap_parity PROPERTIES TIMEOUT 120)
 # ---------------------------------------------------------------------------
 # imgui_test_engine smoke-UI lane (Story 5.4)
 # ---------------------------------------------------------------------------
-# Drives the live AppWindow through five smoke scenarios via
+# Drives the live AppWindow through six smoke scenarios via
 # imgui_test_engine — stage stepper, standalone startup, viewport
 # toolbar shading-mode toggles. Catches the click-through and modal-toggle
 # bug classes the Sprint 3.6 / 3.7 / 3.8 retros all flagged. Real GLFW

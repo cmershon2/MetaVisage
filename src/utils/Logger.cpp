@@ -99,7 +99,9 @@ void Logger::Log(LogLevel level, const std::string& message, const char* file, i
     std::string formatted;
     if (file && line > 0) {
         // Extract just the filename from the path
-        const std::string filename = std::filesystem::path(file).filename().string();
+        std::string filename = std::filesystem::path(file).filename().string();
+        // Use the public subsystem name in diagnostic source metadata too.
+        if (filename == "NRICPDeformer.cpp") filename = "WrapEngine.cpp";
         formatted = std::format("[{}] [{}] {} [{}:{}]",
                                 timestamp, levelStr, message, filename, line);
     } else {

@@ -9,6 +9,7 @@
 
 #include <atomic>
 #include <chrono>
+#include <cstdint>
 #include <functional>
 #include <memory>
 #include <mutex>
@@ -72,6 +73,8 @@ public:
     static void RequestForegroundFocus();
 
 private:
+    friend struct AppWindowTestAccess;
+
     void RenderFrame(int fbWidth, int fbHeight);
 
     void RenderAppShell();
@@ -177,6 +180,8 @@ private:
     // frame. `morphResult_*` are populated when the worker finishes and
     // consumed by PollMorphCompletion on the main thread.
     std::unique_ptr<MeshDeformer> morphDeformer_;
+    std::uint64_t projectGeneration_ = 0;
+    std::uint64_t morphProjectGeneration_ = 0;
     std::thread morphThread_;
     std::atomic<bool> morphRunning_{false};
     std::atomic<bool> morphFinished_{false};

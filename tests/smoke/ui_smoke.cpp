@@ -18,17 +18,16 @@
 //   - The original three pragmatic substitutes remain: welcome modal
 //     dismiss, dockspace window-existence smoke, and viewport-toolbar
 //     shading modes, stage progression, and standalone brush selection.
-//   - Scenarios 3 (Stage 3 process+Accept) and 4 (Stage 4 brush+sculpt
-//     +undo) are NOT implemented — both require loading a mesh,
-//     running a multi-second worker, or synthesising mouse strokes
-//     against a loaded BVH, none of which fit a deterministic <60 s
-//     smoke. Sprint 6+ candidates.
+//   - Full loaded-asset Process/Accept and sculpt/undo gestures remain
+//     follow-ups. A tiny in-memory mesh now covers worker completion and
+//     project replacement without a multi-second production mesh solve.
 //   - The viewport_shading_modes scenario is the click-through smoke
 //     the Sprint 3.6/3.7/3.8 retros all asked for; the
 //     dockspace_window_smoke catches the related bug class where a
 //     refactor drops a Begin call.
 
 #include "core/Project.h"
+#include "core/Mesh.h"
 #include "core/Types.h"
 #include "ui/AppWindow.h"
 #include "ui/Viewport.h"
@@ -46,6 +45,18 @@
 #include <string>
 
 using namespace MetaVisage;
+
+namespace MetaVisage {
+
+// Drive the worker/project lifecycle without timing-dependent menu clicks.
+// The fixture uses the same StartMorph and New handlers as the live UI.
+struct AppWindowTestAccess {
+    static void StartMorph(AppWindow& app) { app.StartMorph(); }
+    static void NewProject(AppWindow& app) { app.OnFileNewProject(); }
+    static bool MorphRunning(const AppWindow& app) { return app.morphRunning_.load(); }
+};
+
+} // namespace MetaVisage
 
 namespace {
 
@@ -238,6 +249,65 @@ void RegisterScenario_StandaloneBrushes(ImGuiTestEngine* engine) {
     };
 }
 
+void RegisterScenario_ProjectSwitchDuringMorph(ImGuiTestEngine* engine) {
+    ImGuiTest* t = IM_REGISTER_TEST(engine, "smoke", "project_switch_during_morph");
+    t->TestFunc = [](ImGuiTestContext* ctx) {
+        if (!g_app || !g_app->GetProject()) { IM_CHECK(false); return; }
+        DismissWelcomeModalIfOpen(ctx);
+
+        const auto prepare = [] {
+            auto mesh = std::make_shared<Mesh>();
+            mesh->SetVertices({Vector3(0, 0, 0), Vector3(1, 0, 0),
+                               Vector3(0, 1, 0), Vector3(0, 0, 1)});
+            std::vector<Face> faces(4);
+            faces[0].vertexIndices = {0, 2, 1};
+            faces[1].vertexIndices = {0, 1, 3};
+            faces[2].vertexIndices = {0, 3, 2};
+            faces[3].vertexIndices = {1, 2, 3};
+            mesh->SetFaces(faces);
+            mesh->CalculateNormals();
+            Project& project = *g_app->GetProject();
+            for (MeshReference* ref : {&project.GetMorphMesh(), &project.GetTargetMesh()}) {
+                ref->mesh = mesh;
+                ref->isLoaded = true;
+            }
+            auto& morph = project.GetMorphData();
+            morph.nricpEnableBoundaryExclusion = false;
+            morph.nricpStiffnessSteps = 1;
+            morph.nricpIcpIterations = 1;
+            morph.nricpOptimizationIterations = 1;
+            morph.nricpSamplingInitial = 0;
+            morph.nricpSamplingFinal = 0;
+            for (int i = 0; i < 4; ++i) {
+                PointCorrespondence point;
+                point.pointID = i;
+                point.morphMeshVertexIndex = point.targetMeshVertexIndex = i;
+                point.morphMeshPosition = point.targetMeshPosition = mesh->GetVertices()[i];
+                project.GetPointReferenceData().correspondences.push_back(point);
+            }
+        };
+
+        // First verify a result still applies to the workspace that started it.
+        AppWindowTestAccess::NewProject(*g_app);
+        prepare();
+        AppWindowTestAccess::StartMorph(*g_app);
+        while (AppWindowTestAccess::MorphRunning(*g_app)) ctx->Yield();
+        IM_CHECK(g_app->GetProject()->GetMorphData().isProcessed);
+        IM_CHECK(g_app->GetProject()->GetMorphData().deformedMorphMesh != nullptr);
+
+        AppWindowTestAccess::NewProject(*g_app);
+        prepare();
+        AppWindowTestAccess::StartMorph(*g_app);
+        // No yield: replace the workspace before completion can be consumed,
+        // even if this tiny solver has already finished on the worker thread.
+        AppWindowTestAccess::NewProject(*g_app);
+        while (AppWindowTestAccess::MorphRunning(*g_app)) ctx->Yield();
+        IM_CHECK(!g_app->GetProject()->GetMorphData().isProcessed);
+        IM_CHECK(g_app->GetProject()->GetMorphData().deformedMorphMesh == nullptr);
+        IM_CHECK(!g_app->GetProject()->GetMorphMesh().isLoaded);
+    };
+}
+
 } // namespace
 
 int main(int /*argc*/, char** /*argv*/) {
@@ -265,6 +335,7 @@ int main(int /*argc*/, char** /*argv*/) {
     RegisterScenario_ViewportShadingModes(engine);
     RegisterScenario_StageStepperProgression(engine);
     RegisterScenario_StandaloneBrushes(engine);
+    RegisterScenario_ProjectSwitchDuringMorph(engine);
 
     ImGuiTestEngine_Start(engine, ImGui::GetCurrentContext());
     ImGuiTestEngine_QueueTests(engine, ImGuiTestGroup_Tests, /*filter=*/nullptr,
