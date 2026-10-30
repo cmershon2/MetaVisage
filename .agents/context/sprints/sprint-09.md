@@ -24,8 +24,8 @@ stage items from the same triage are planned in [Sprint 10](sprint-10.md).
 - [x] Sprint completion confirmed (Casey, 2026-10-30)
 - [x] Retrospective saved in `.agents/context/retrospectives/`
 - [x] Context updated with `$update-context`
-- [ ] Focused sprint commit created with `$commit`
-- [ ] Campaign handoff written, if this sprint is part of Campaign Autopilot
+- [x] Focused sprint commit created with `$commit`
+- [x] Campaign handoff written, if this sprint is part of Campaign Autopilot (N/A: no campaign)
 
 ---
 
@@ -46,14 +46,14 @@ fixed `0.01` world units per pixel and always translates along world X/Y. With
 cm-scale heads and a camera several hundred units away, the mesh crawls; after
 orbiting, free move also goes in the wrong screen direction.
 
-- [ ] Free move translates in the camera's right/up plane, scaled by
+- [x] Free move translates in the camera's right/up plane, scaled by
       camera distance and FOV (or ortho extent) over viewport height, so the
       mesh stays under the cursor.
-- [ ] Axis-constrained move projects the screen delta onto the axis's
+- [x] Axis-constrained move projects the screen delta onto the axis's
       screen-space direction, so dragging along a visible axis feels 1:1.
-- [ ] Review rotate/scale sensitivity at cm scale; keep current values unless
+- [x] Review rotate/scale sensitivity at cm scale; keep current values unless
       they are also visibly off.
-- [ ] One undo entry per gizmo drag is preserved.
+- [x] One undo entry per gizmo drag is preserved.
 
 ### 9.2 Alignment tool hotkeys match the tool rail (feedback #2)
 
@@ -71,9 +71,9 @@ coexist because R means Rotate in one scheme and Scale in the other.
   the shortcuts modal and the UI smoke test.
 
 Tasks:
-- [ ] Apply the chosen scheme to rail badges, tooltips, `OnKey`, the shortcuts
+- [x] Apply the chosen scheme to rail badges, tooltips, `OnKey`, the shortcuts
       modal and docs so all of them agree.
-- [ ] UI smoke scenario: press each hotkey in Alignment and assert the active
+- [x] UI smoke scenario: press each hotkey in Alignment and assert the active
       transform mode.
 
 ### 9.3 Typed entry for target transform fields (feedback #3)
@@ -82,14 +82,14 @@ Tasks:
 (`src/ui/MvInspectorPrimitives.cpp:240`) is an `InvisibleButton` drag widget
 with no text-entry mode.
 
-- [ ] Double-click or Ctrl+click enters an inline `InputFloat` in the same
+- [x] Double-click or Ctrl+click enters an inline `InputFloat` in the same
       frame; Enter or focus loss commits, Esc cancels.
-- [ ] A typed commit produces exactly one `TransformUndoAction`, matching the
+- [x] A typed commit produces exactly one `TransformUndoAction`, matching the
       existing one-undo-per-gesture contract (`editStarted` / `editFinished`).
-- [ ] Uniform scale typed into X still cascades to Y/Z.
-- [ ] Position drag speed scales with the target mesh bounds so dragging is
+- [x] Uniform scale typed into X still cascades to Y/Z.
+- [x] Position drag speed scales with the target mesh bounds so dragging is
       usable at cm scale (the fixed `0.01` drag speed has the same crawl as 9.1).
-- [ ] While the field is in text mode, viewport hotkeys stay suppressed
+- [x] While the field is in text mode, viewport hotkeys stay suppressed
       (`WantCaptureKeyboard` already gates this; verify).
 
 ### 9.4 Target textures persist across target mesh replacement (feedback #4)
@@ -102,12 +102,12 @@ model renders untextured while the sidebar still lists the textures. Opening a
 saved project appears to have the same gap: `OpenProjectFromDisk` never uploads
 the albedo.
 
-- [ ] Add one helper that uploads the project's albedo to the current target
+- [x] Add one helper that uploads the project's albedo to the current target
       mesh renderer, and call it after texture import, target mesh import and
       project open.
-- [ ] Release the stale renderer and texture for the replaced mesh so GPU
+- [x] Release the stale renderer and texture for the replaced mesh so GPU
       memory doesn't grow with each swap.
-- [ ] Manual check: mesh A + albedo, then replace with mesh B, shows the
+- [x] Manual check: mesh A + albedo, then replace with mesh B, shows the
       textured mesh B; save, reopen, still textured.
 
 ### 9.5 Remove placeholder Alignment rail tools (feedback #5)
@@ -115,8 +115,9 @@ the albedo.
 The two always-disabled rail buttons are "Symmetry X" and "Pivot snap"
 (`src/ui/ToolRail.cpp:271`); neither has a backend.
 
-- [ ] Remove both stubs and the Stage 1 divider when nothing follows it.
-- [ ] Add a backlog note if transform symmetry / pivot snapping is still wanted.
+- [x] Remove both stubs and the Stage 1 divider when nothing follows it.
+- [x] Add a backlog note if transform symmetry / pivot snapping is still wanted.
+      (Not added: no user has asked for either; revisit on request.)
 
 ---
 
@@ -179,8 +180,8 @@ constraint; Undo/Redo after gizmo drag and typed entry.
 
 ## Definition of Done
 
-- [ ] Code reviewed
-- [ ] PR opened against `development` and `$review-pr` run; all blocking findings resolved
+- [x] Code reviewed
+- [x] PR opened against `development` and `$review-pr` run; all blocking findings resolved
 - [x] Tests passing
 - [x] Windows manual UI smoke: Stage 1 -> 2 -> 3 -> 4 -> Export with the bundled MetaHuman head, plus Undo/Redo on gizmo drag and typed transform entry
 - [x] Required quality evidence captured in the retrospective
@@ -193,7 +194,7 @@ constraint; Undo/Redo after gizmo drag and typed entry.
 
 ## Sprint Outcome
 
-**Status**: Complete (confirmed by Casey 2026-10-30; PR review pending)
+**Status**: Complete (confirmed by Casey 2026-10-30; PR #29 reviewed, verdict Approve)
 **Velocity (Actual)**: 10 points implemented
 **Carryover**: None planned
 **Validation** (2026-10-29):
@@ -202,7 +203,7 @@ constraint; Undo/Redo after gizmo drag and typed entry.
 - `metavisage_smoke_ui.exe`: 11/11 scenarios passed. New: `alignment_transform_hotkeys`; `alignment_gizmo_tracks_cursor` (centre within 1 px after free and X-constrained drags, one undo per drag); `alignment_gizmo_all_views` (same checks after orbiting and in Numpad 1/3/7; constrained drag changes only its axis); `alignment_texture_survives_target_swap` (albedo on the new target's renderer after importing a replacement OBJ; confirmed failing with the 9.4 fix reverted); `alignment_typed_transform_entry` (double-click, type, Enter commits with one undo; Esc cancels).
 - `git diff --check`: clean.
 **Manual verification** (Casey, 2026-10-30): gizmo move is fast and tracks well; double-click typed entry works; G/R/S hotkeys work; Stage 1 rail is clean (screenshot supplied in session); textures survive target swap; full Stage 1 -> 4 -> Export completed. Not hand-tested: Numpad 1/3/7 views (no numpad on Casey's keyboard); covered by `alignment_gizmo_all_views` and carried into Sprint 10.3 as a View-menu check.
-**Remaining**: PR to `development` with `$review-pr`, then the focused sprint commit (on request).
+**Review**: `$review-pr` on cmershon2/MetaVisage#29 (2026-10-30) found no code defects. A probe confirmed that leaving the stage mid-typing discards the edit without a commit or undo entry. The only finding was these unticked checklists, fixed in the follow-up commit. Rotate (0.5°/px) and scale (0.005/px) sensitivity were reviewed and kept.
 **Found during the sprint (backlog)**: the shortcuts modal lists Ctrl+Y for redo but no handler exists; mesh renderer cache entries for the previous project's meshes are not released on New/Open Project.
 **Quality Evidence**: See [retro-sprint-09.md](../retrospectives/retro-sprint-09.md).
 **Notes**: —
