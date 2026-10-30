@@ -206,6 +206,30 @@ target_link_libraries(${PROJECT_NAME}
         OpenGL::GL
 )
 
+# Sprint 10.5 — embed the MetaVisage icon. The resource is named GLFW_ICON so
+# GLFW also uses it for the window (title bar and taskbar). The .rc is
+# configured with an absolute icon path so it needs no include directories.
+if(WIN32)
+    set(METAVISAGE_ICON_PATH "${CMAKE_CURRENT_SOURCE_DIR}/assets/icons/metavisage.ico")
+    set(METAVISAGE_RC "${CMAKE_CURRENT_BINARY_DIR}/metavisage.rc")
+    configure_file(resources/metavisage.rc.in "${METAVISAGE_RC}" @ONLY)
+    enable_language(RC)
+    if(MINGW)
+        # windres runs the preprocessor through a shell command that splits
+        # -I paths containing spaces, and CMake passes every target include
+        # directory to .rc sources. Compile the resource on its own instead.
+        set(METAVISAGE_RC_OBJ "${CMAKE_CURRENT_BINARY_DIR}/metavisage_rc.obj")
+        add_custom_command(
+            OUTPUT "${METAVISAGE_RC_OBJ}"
+            COMMAND "${CMAKE_RC_COMPILER}" -O coff "${METAVISAGE_RC}" "${METAVISAGE_RC_OBJ}"
+            DEPENDS "${METAVISAGE_RC}" "${METAVISAGE_ICON_PATH}"
+            VERBATIM)
+        target_sources(${PROJECT_NAME} PRIVATE "${METAVISAGE_RC_OBJ}")
+    else()
+        target_sources(${PROJECT_NAME} PRIVATE "${METAVISAGE_RC}")
+    endif()
+endif()
+
 # ---------------------------------------------------------------------------
 # Link
 # ---------------------------------------------------------------------------

@@ -119,6 +119,11 @@ private:
     void CancelMorph();
     void PollMorphCompletion();
     void AcceptMorph();
+    // Sprint 10.6 — discard the processed morph and show the source mesh.
+    // Request confirms first when the result was accepted (Touch Up work
+    // lives on the deformed mesh); Reset pushes a MorphUndoAction.
+    void RequestResetMorphResult();
+    void ResetMorphResult();
 
     GLFWwindow* window_ = nullptr;
     bool imguiContextCreated_ = false;
@@ -158,6 +163,7 @@ private:
     // Modal state — every struct is inert until its Open() is called.
     bool showAbout_ = false;
     bool showIconExplorer_ = false;        // Dev tool, gated by Help menu
+    bool showDebugHud_ = false;            // Dev tool, gated by Help menu
 
     ConfirmModalState confirmModal_;
     ErrorModalState errorModal_;

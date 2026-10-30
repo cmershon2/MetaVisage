@@ -28,6 +28,7 @@ public:
         bool processMorphRequested = false;
         bool cancelMorphRequested = false;
         bool acceptMorphRequested = false;
+        bool resetMorphResultRequested = false;   // Sprint 10.6
         bool clearAllPointsRequested = false;
         bool clearMaskRequested = false;
         bool invertMaskRequested = false;

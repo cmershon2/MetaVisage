@@ -3,23 +3,11 @@
 **Project**: MetaVisage
 **Last Updated**: October 30, 2026
 
-> Active v2.0 work is tracked in `.agents/context/sprints/SPRINT_PLAN.md` and individual sprint files seeded via `$sprint-planner`. Sprint 8 closes the standalone transition. This backlog holds items **not yet committed to a sprint** — candidates pulled from v1.0.0 feedback that fell out of v2.0 scope, and post-v2.0 enhancements from the PRD.
+> Active v2.0 work is tracked in `.agents/context/sprints/SPRINT_PLAN.md` and individual sprint files seeded via `$sprint-planner`. Sprint 8 closes the standalone transition; Sprints 9 and 10 deliver the 2026-10-29 feedback triage. This backlog holds items **not yet committed to a sprint** — candidates pulled from v1.0.0 feedback that fell out of v2.0 scope, and post-v2.0 enhancements from the PRD.
 
 ---
 
 ## 🔥 High Priority
-
-### Feedback triage 2026-10-29 — planned for Sprint 10
-
-The Sprint 9 items from this triage are complete and archived in `backlog_changelog.md`.
-
-- [ ] **Debug HUD hidden by default** — Sprint 10
-- [ ] **Remove stub Mesh menu** — Sprint 10
-- [ ] **Working View menu** — Sprint 10
-- [ ] **Menu spacing pass** — Sprint 10
-- [ ] **MetaVisage icon on the executable and window** — Sprint 10
-- [ ] **Reset morph result to source mesh** — Sprint 10 (includes fixing "Reset to defaults" wiping the result)
-- [ ] **Vertex mask in its own Morph section** — Sprint 10
 
 ### Other
 
@@ -31,6 +19,10 @@ The Sprint 9 items from this triage are complete and archived in `backlog_change
 ---
 
 ## 🟡 Medium Priority
+
+- [ ] **Separate MinGW build directory**
+  - `build-mingw.ps1` builds into the same `build\` folder as `build-msvc.ps1`, so a full MinGW build can't run without overwriting the MSVC cache. Give it its own directory (for example `build-mingw\`) and validate the full MinGW build, including the Sprint 10 icon resource step. Found in Sprint 10.
+  - **Effort**: ~0.5 day
 
 - [ ] **Ctrl+Y redo shortcut**
   - The Keyboard Shortcuts dialog lists Ctrl+Y for redo, but `HandleGlobalShortcut` only handles Ctrl+Shift+Z. Bind it or drop it from the dialog. Found in Sprint 9.

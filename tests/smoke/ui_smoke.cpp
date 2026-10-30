@@ -31,6 +31,7 @@
 #include "core/TextureData.h"
 #include "core/Types.h"
 #include "core/UndoStack.h"
+#include "core/WrapPreset.h"
 #include "ui/AppWindow.h"
 #include "ui/Viewport.h"
 #include "ui/ViewportHost.h"
@@ -41,6 +42,7 @@
 
 #include <GLFW/glfw3.h>
 #include <imgui.h>
+#include <imgui_internal.h>
 
 #include <chrono>
 #include <cmath>
@@ -574,6 +576,178 @@ void RegisterScenario_AlignmentTypedTransformEntry(ImGuiTestEngine* engine) {
     };
 }
 
+
+// Sprint 10.1 / 10.2 / 10.3 — Debug HUD hidden until opened from Help, the
+// stub Mesh menu is gone, and View menu items drive the viewport.
+void RegisterScenario_ShellMenus(ImGuiTestEngine* engine) {
+    ImGuiTest* t = IM_REGISTER_TEST(engine, "smoke", "shell_menus_and_debug_hud");
+    t->TestFunc = [](ImGuiTestContext* ctx) {
+        if (!g_app || !g_app->GetViewportHost()) { IM_CHECK(false); return; }
+        DismissWelcomeModalIfOpen(ctx);
+        ctx->SetRef("//##AppHostWindow");
+
+        auto hudVisible = [] {
+            ImGuiWindow* w = ImGui::FindWindowByName("Debug HUD");
+            return w != nullptr && w->Active;
+        };
+        IM_CHECK(!hudVisible());
+        ctx->MenuClick("Help/Debug HUD (Dev)");
+        ctx->Yield(2);
+        IM_CHECK(hudVisible());
+        ctx->MenuClick("Help/Debug HUD (Dev)");
+        ctx->Yield(2);
+        IM_CHECK(!hudVisible());
+
+        IM_CHECK(ctx->ItemExists("**/View"));
+        IM_CHECK(!ctx->ItemExists("**/Mesh"));
+
+        ViewportHost* host = g_app->GetViewportHost();
+        const bool gridBefore = host->GetShowGrid();
+        ctx->MenuClick("View/Show Grid");
+        ctx->Yield();
+        IM_CHECK(host->GetShowGrid() == !gridBefore);
+        IM_CHECK(host->GetSecondaryViewport()->GetShowGrid() == !gridBefore);
+        ctx->MenuClick("View/Show Grid");
+        ctx->Yield();
+        IM_CHECK(host->GetShowGrid() == gridBefore);
+
+        const Camera& cam = host->GetPrimaryViewport()->GetCameraConst();
+        ctx->MenuClick("View/Top");
+        ctx->Yield();
+        IM_CHECK(cam.GetProjectionMode() == ProjectionMode::OrthographicTop);
+        IM_CHECK_FLOAT_NEAR(cam.GetPitch(), 90.0f, 1e-3f);
+        ctx->MenuClick("View/Perspective");
+        ctx->Yield();
+        IM_CHECK(cam.GetProjectionMode() == ProjectionMode::Perspective);
+        ctx->MenuClick("View/Right");
+        ctx->Yield();
+        IM_CHECK(cam.GetProjectionMode() == ProjectionMode::OrthographicRight);
+        ctx->MenuClick("View/Reset Camera");
+        ctx->Yield();
+        IM_CHECK(cam.GetProjectionMode() == ProjectionMode::Perspective);
+
+        // Auto perspective: orbiting out of a preset view returns to
+        // perspective; an orthographic view chosen with the toolbar toggle
+        // stays orthographic while orbiting.
+        Camera* camera = host->GetPrimaryViewport()->GetCamera();
+        ctx->MenuClick("View/Front");
+        ctx->Yield();
+        IM_CHECK(cam.GetProjectionMode() == ProjectionMode::OrthographicFront);
+        camera->Orbit(20.0f, 10.0f);
+        IM_CHECK(cam.GetProjectionMode() == ProjectionMode::Perspective);
+
+        const char* kProjToggle = "//##VpToolbar_primary/proj/##b";
+        ctx->ItemClick(kProjToggle);
+        ctx->Yield();
+        IM_CHECK(cam.GetProjectionMode() != ProjectionMode::Perspective);
+        camera->Orbit(20.0f, 10.0f);
+        IM_CHECK(cam.GetProjectionMode() != ProjectionMode::Perspective);
+        ctx->ItemClick(kProjToggle);
+        ctx->Yield();
+        IM_CHECK(cam.GetProjectionMode() == ProjectionMode::Perspective);
+
+        ctx->SetRef("");
+        AppWindowTestAccess::NewProject(*g_app);
+    };
+}
+
+// Sprint 10.6 / 10.7 — Reset to source mesh is undoable and confirms when the
+// result was accepted; Reset to defaults only touches parameters.
+void RegisterScenario_MorphResetToSource(ImGuiTestEngine* engine) {
+    ImGuiTest* t = IM_REGISTER_TEST(engine, "smoke", "morph_reset_to_source");
+    t->TestFunc = [](ImGuiTestContext* ctx) {
+        if (!g_app || !g_app->GetProject() || !g_app->GetUndoStack()) { IM_CHECK(false); return; }
+        DismissWelcomeModalIfOpen(ctx);
+        AppWindowTestAccess::NewProject(*g_app);
+        Project& project = *g_app->GetProject();
+        UndoStack* undo = g_app->GetUndoStack();
+
+        // Tiny source mesh plus a fake processed result (no worker run).
+        auto makeTetra = [] {
+            auto mesh = std::make_shared<Mesh>();
+            mesh->SetVertices({Vector3(0, 0, 0), Vector3(1, 0, 0),
+                               Vector3(0, 1, 0), Vector3(0, 0, 1)});
+            std::vector<Face> faces(4);
+            faces[0].vertexIndices = {0, 2, 1};
+            faces[1].vertexIndices = {0, 1, 3};
+            faces[2].vertexIndices = {0, 3, 2};
+            faces[3].vertexIndices = {1, 2, 3};
+            mesh->SetFaces(faces);
+            mesh->CalculateNormals();
+            return mesh;
+        };
+        auto source = makeTetra();
+        project.GetMorphMesh().mesh = source;
+        project.GetMorphMesh().isLoaded = true;
+        MorphData& morph = project.GetMorphData();
+        auto deformed = makeTetra();
+        auto setProcessed = [&](bool accepted) {
+            morph.deformedMorphMesh = deformed;
+            morph.isProcessed = true;
+            morph.isAccepted = accepted;
+            morph.displacementMagnitudes = {0.1f, 0.2f, 0.3f, 0.4f};
+            morph.maxDisplacement = 0.4f;
+        };
+        setProcessed(false);
+        morph.vertexMask = {true, false, true, false};
+        project.SetCurrentStage(WorkflowStage::Morph);
+        ctx->Yield(3);
+
+        ctx->SetRef(ctx->WindowInfo("//Stage/##stage3body").Window);
+        IM_CHECK(ctx->ItemExists("Vertex Mask"));
+        // Order: Advanced, Vertex Mask, Reset to defaults.
+        IM_CHECK_LT(ctx->ItemInfo("Advanced").RectFull.Min.y,
+                    ctx->ItemInfo("Vertex Mask").RectFull.Min.y);
+        IM_CHECK_LT(ctx->ItemInfo("Vertex Mask").RectFull.Min.y,
+                    ctx->ItemInfo("Reset to defaults").RectFull.Min.y);
+
+        // Reset to defaults: parameters only.
+        morph.nricpLandmarkWeight = 99.0f;
+        ctx->ItemClick("Reset to defaults");
+        ctx->Yield();
+        IM_CHECK(WrapPreset::QuickWrap().MatchesParamsOf(morph));
+        IM_CHECK(morph.isProcessed && morph.deformedMorphMesh == deformed);
+        IM_CHECK_EQ(morph.vertexMask.size(), (size_t)4);
+
+        // Unaccepted result: reset immediately, one undo restores it.
+        const int undoBefore = undo->Size();
+        ctx->ItemClick("Reset to source mesh");
+        ctx->Yield(2);
+        IM_CHECK(!morph.isProcessed);
+        IM_CHECK(morph.deformedMorphMesh == nullptr);
+        IM_CHECK(morph.displacementMagnitudes.empty());
+        IM_CHECK_EQ(morph.vertexMask.size(), (size_t)4);
+        IM_CHECK_EQ(undo->Size(), undoBefore + 1);
+        undo->Undo();
+        ctx->Yield();
+        IM_CHECK(morph.isProcessed && morph.deformedMorphMesh == deformed);
+        IM_CHECK_FLOAT_NEAR(morph.maxDisplacement, 0.4f, 1e-6f);
+
+        // Accepted result: confirm first; Cancel keeps it.
+        setProcessed(true);
+        ctx->Yield();
+        ctx->ItemClick("Reset to source mesh");
+        ctx->Yield(2);
+        ctx->SetRef("//##ConfirmModal");
+        ctx->ItemClick("Cancel");
+        ctx->Yield(2);
+        IM_CHECK(morph.isProcessed && morph.isAccepted);
+        ctx->SetRef(ctx->WindowInfo("//Stage/##stage3body").Window);
+        ctx->ItemClick("Reset to source mesh");
+        ctx->Yield(2);
+        ctx->SetRef("//##ConfirmModal");
+        ctx->ItemClick("Reset");
+        ctx->Yield(2);
+        IM_CHECK(!morph.isProcessed && !morph.isAccepted);
+
+        // Nothing processed: the button is disabled.
+        ctx->SetRef(ctx->WindowInfo("//Stage/##stage3body").Window);
+        IM_CHECK((ctx->ItemInfo("Reset to source mesh").ItemFlags & ImGuiItemFlags_Disabled) != 0);
+
+        ctx->SetRef("");
+        AppWindowTestAccess::NewProject(*g_app);
+    };
+}
 } // namespace
 
 int main(int /*argc*/, char** /*argv*/) {
@@ -607,6 +781,8 @@ int main(int /*argc*/, char** /*argv*/) {
     RegisterScenario_AlignmentGizmoAllViews(engine);
     RegisterScenario_AlignmentTextureSurvivesTargetSwap(engine);
     RegisterScenario_AlignmentTypedTransformEntry(engine);
+    RegisterScenario_ShellMenus(engine);
+    RegisterScenario_MorphResetToSource(engine);
 
     ImGuiTestEngine_Start(engine, ImGui::GetCurrentContext());
     ImGuiTestEngine_QueueTests(engine, ImGuiTestGroup_Tests, /*filter=*/nullptr,

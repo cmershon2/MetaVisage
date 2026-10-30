@@ -350,6 +350,8 @@ bool AppWindow::Initialize(int width, int height, const char* title) {
         return false;
     }
 
+    viewportHost_->SetShowGrid(Config::Instance().ShowGrid());
+
     project_ = std::make_unique<Project>();
     // Quick Wrap is the canonical project default per AGENTS.md and the
     // Sprint 4 plan — apply on every fresh-project construction so the
@@ -795,6 +797,7 @@ void AppWindow::TickOnce(int fbWidth, int fbHeight) {
         if (actions.processMorphRequested) StartMorph();
         if (actions.cancelMorphRequested)  CancelMorph();
         if (actions.acceptMorphRequested)  AcceptMorph();
+        if (actions.resetMorphResultRequested) RequestResetMorphResult();
         // finalize is a Sprint 4 no-op (Export handles end-of-workflow).
 
         // Story 4.4 — Wrap preset card row actions.
@@ -964,7 +967,7 @@ void AppWindow::RenderAppShell() {
     //   ┌─────────────────────────────────────────┐  ← OS native title bar
     //   │ ◇ MetaVisage · file.mmproj > STAGE 01 … │ 36 px ##MvTitleBar window
     //   ├─────────────────────────────────────────┤
-    //   │ File Edit View Mesh Help …  Saved · LL │ ~26 px BeginMenuBar
+    //   │ File Edit View Help …  Saved · LL      │ ~26 px BeginMenuBar
     //   ├─────────────────────────────────────────┤
     //   │  DockSpace (sidebar + viewport)         │
     //   ├─────────────────────────────────────────┤
@@ -1371,13 +1374,33 @@ void AppWindow::RenderTitleBar() {
     ImGui::End();
 }
 
+namespace {
+
+// Sprint 10.4 — menu popups use MvStyle::Menu spacing. WindowPadding is read
+// when BeginMenu creates the popup; ItemSpacing is pushed only inside it so
+// the menu bar's own layout is unchanged.
+bool BeginStyledMenu(const char* label) {
+    ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding, MvStyle::Menu::WindowPadding);
+    const bool open = ImGui::BeginMenu(label);
+    ImGui::PopStyleVar();
+    if (open) ImGui::PushStyleVar(ImGuiStyleVar_ItemSpacing, MvStyle::Menu::ItemSpacing);
+    return open;
+}
+
+void EndStyledMenu() {
+    ImGui::PopStyleVar();
+    ImGui::EndMenu();
+}
+
+} // namespace
+
 void AppWindow::RenderMainMenuBar() {
     if (!ImGui::BeginMenuBar()) return;
 
     const bool canUndo = undoStack_ && undoStack_->CanUndo();
     const bool canRedo = undoStack_ && undoStack_->CanRedo();
 
-    if (ImGui::BeginMenu("File")) {
+    if (BeginStyledMenu("File")) {
         if (ImGui::MenuItem("New Project", "Ctrl+N")) OnFileNewProject();
         if (ImGui::MenuItem("Open Project...", "Ctrl+O")) pendingAction_ = PendingAction::OpenProject;
         ImGui::Separator();
@@ -1388,54 +1411,53 @@ void AppWindow::RenderMainMenuBar() {
         // stage-gated in the sidebar — duplicating them here confused users
         // about when they apply. Decision kept in Sprint 3.6.
         if (ImGui::MenuItem("Exit", "Alt+F4")) OnFileExit();
-        ImGui::EndMenu();
+        EndStyledMenu();
     }
 
-    if (ImGui::BeginMenu("Edit")) {
+    if (BeginStyledMenu("Edit")) {
         ImGui::BeginDisabled(!canUndo);
         if (ImGui::MenuItem("Undo", "Ctrl+Z")) OnEditUndo();
         ImGui::EndDisabled();
         ImGui::BeginDisabled(!canRedo);
         if (ImGui::MenuItem("Redo", "Ctrl+Shift+Z")) OnEditRedo();
         ImGui::EndDisabled();
-        ImGui::EndMenu();
+        EndStyledMenu();
     }
 
-    if (ImGui::BeginMenu("View")) {
-        // Shading mode lives on the viewport overlay (Stage-3 Story 3.8.5
-        // moves it into the new top-centre toolbar). The grid and camera
-        // presets remain stubbed for a future story.
-        ImGui::MenuItem("Show Grid", nullptr, false, false);
+    // Sprint 10.3 — camera presets act on the pane keyboard input goes to
+    // (dual-mode cameras are synced), so these match the numpad / Home / F
+    // keys exactly. Shading mode lives on the viewport toolbar.
+    if (BeginStyledMenu("View")) {
+        Viewport* vp = viewportHost_ ? viewportHost_->GetKeyboardViewport() : nullptr;
+        const bool hasVp = vp != nullptr;
+        bool grid = hasVp && viewportHost_->GetShowGrid();
+        if (ImGui::MenuItem("Show Grid", nullptr, &grid, hasVp)) {
+            viewportHost_->SetShowGrid(grid);
+            Config::Instance().SetShowGrid(grid);
+        }
         ImGui::Separator();
-        ImGui::MenuItem("Front View (Numpad 1)", nullptr, false, false);
-        ImGui::MenuItem("Right View (Numpad 3)", nullptr, false, false);
-        ImGui::MenuItem("Top View (Numpad 7)", nullptr, false, false);
-        ImGui::MenuItem("Perspective (Home)", nullptr, false, false);
-        ImGui::EndMenu();
-    }
-
-    // Story 3.8.2 — new "Mesh" menu, scaffolded with the entries the design
-    // file shows. All items are stubbed disabled until the corresponding
-    // backend lands; surfacing them now matches the design and lets keyboard
-    // users discover the planned commands.
-    if (ImGui::BeginMenu("Mesh")) {
-        ImGui::MenuItem("Recompute Normals",   nullptr, false, false);
-        ImGui::MenuItem("Validate Topology",   nullptr, false, false);
+        if (ImGui::MenuItem("Front", "Numpad 1", false, hasVp)) vp->ApplyViewPreset(Viewport::ViewPreset::Front);
+        if (ImGui::MenuItem("Right", "Numpad 3", false, hasVp)) vp->ApplyViewPreset(Viewport::ViewPreset::Right);
+        if (ImGui::MenuItem("Top",   "Numpad 7", false, hasVp)) vp->ApplyViewPreset(Viewport::ViewPreset::Top);
+        const bool perspective = hasVp &&
+            vp->GetCameraConst().GetProjectionMode() == ProjectionMode::Perspective;
+        if (ImGui::MenuItem("Perspective", "Numpad 5", perspective, hasVp)) vp->ToggleProjection();
         ImGui::Separator();
-        ImGui::MenuItem("Center on Origin",    nullptr, false, false);
-        ImGui::MenuItem("Snap to Floor",       nullptr, false, false);
-        ImGui::EndMenu();
+        if (ImGui::MenuItem("Frame Meshes", "F",    false, hasVp)) vp->FrameMeshes();
+        if (ImGui::MenuItem("Reset Camera", "Home", false, hasVp)) vp->ResetView();
+        EndStyledMenu();
     }
 
-    if (ImGui::BeginMenu("Help")) {
+    if (BeginStyledMenu("Help")) {
         if (ImGui::MenuItem("Keyboard Shortcuts")) pendingAction_ = PendingAction::ShowKeyboardShortcuts;
         if (ImGui::MenuItem("About MetaVisage")) pendingAction_ = PendingAction::ShowAbout;
         ImGui::Separator();
-        // Sprint 3.8.5 dev aid — browse the Lucide icon font's loaded glyphs
-        // and copy codepoints into MvIcons.h. Will move behind a debug build
-        // flag once the icon constants are stable.
+        // Developer aids, hidden until opened from here: the Lucide glyph
+        // browser (Sprint 3.8.5) and the frame-time / GL version HUD
+        // (Sprint 10.1).
         ImGui::MenuItem("Icon Glyph Explorer (Dev)", nullptr, &showIconExplorer_);
-        ImGui::EndMenu();
+        ImGui::MenuItem("Debug HUD (Dev)", nullptr, &showDebugHud_);
+        EndStyledMenu();
     }
 
     // Keep the save indicator aligned to the right when space permits.
@@ -2244,10 +2266,12 @@ void AppWindow::OnEditRedo() {
 }
 
 void AppWindow::RenderFrame(int /*fbWidth*/, int /*fbHeight*/) {
-    // Debug HUD retained behind a single dockable window — useful during the
-    // 3.6 rebuild. Removed before Sprint 3.6 closes.
+    // Debug HUD — developer aid, hidden by default and opened from
+    // Help > Debug HUD (Dev) (Sprint 10.1). Not submitting the window keeps
+    // it closed regardless of imgui.ini.
+    if (!showDebugHud_) return;
     ImGui::SetNextWindowSize(ImVec2(320.0f, 110.0f), ImGuiCond_FirstUseEver);
-    if (ImGui::Begin("Debug HUD")) {
+    if (ImGui::Begin("Debug HUD", &showDebugHud_)) {
         ImGui::Text("Frame: %.3f ms (%.1f FPS)",
                     1000.0f / ImGui::GetIO().Framerate,
                     ImGui::GetIO().Framerate);
@@ -2456,6 +2480,57 @@ void AppWindow::AcceptMorph() {
     MorphData& morphData = project_->GetMorphData();
     if (!morphData.isProcessed) return;
     morphData.isAccepted = true;
+}
+
+void AppWindow::RequestResetMorphResult() {
+    if (!project_ || morphRunning_.load()) return;
+    const MorphData& morphData = project_->GetMorphData();
+    if (!morphData.isProcessed) return;
+    if (!morphData.isAccepted) {
+        ResetMorphResult();
+        return;
+    }
+    confirmModal_.Open(
+        "Reset to source mesh?",
+        "This discards the accepted morph result, including any Touch Up "
+        "sculpting. Undo (Ctrl+Z) restores it.",
+        [this]() { ResetMorphResult(); },
+        "Reset");
+}
+
+void AppWindow::ResetMorphResult() {
+    if (!project_ || morphRunning_.load()) return;
+    MorphData& morphData = project_->GetMorphData();
+    if (!morphData.isProcessed) return;
+
+    // The undo action keeps the deformed mesh alive (shared_ptr, no copy),
+    // so sculpt-stroke undo entries that point at it stay valid, and its
+    // renderer cache entry is kept for an undo.
+    const MorphUndoAction::MorphState before{
+        morphData.deformedMorphMesh, morphData.isProcessed, morphData.isAccepted,
+        morphData.displacementMagnitudes, morphData.maxDisplacement,
+        morphData.avgDisplacement};
+    const MorphUndoAction::MorphState after{nullptr, false, false, {}, 0.0f, 0.0f};
+
+    morphData.deformedMorphMesh.reset();
+    morphData.isProcessed = false;
+    morphData.isAccepted  = false;
+    morphData.displacementMagnitudes.clear();
+    morphData.maxDisplacement = 0.0f;
+    morphData.avgDisplacement = 0.0f;
+    if (undoStack_) {
+        undoStack_->Push(std::make_unique<MorphUndoAction>(project_.get(), before, after));
+    }
+
+    // The mask overlay was drawn on the deformed mesh; repaint it on the
+    // source mesh that is now shown.
+    const MeshReference& source = project_->GetMorphMesh();
+    if (viewportHost_ && source.mesh && !morphData.vertexMask.empty()) {
+        if (Viewport* vp = viewportHost_->GetPrimaryViewport()) {
+            vp->UploadMaskColors(source.mesh.get(), morphData.vertexMask);
+        }
+    }
+    statusMessage_ = "Morph result reset to source mesh";
 }
 
 } // namespace MetaVisage

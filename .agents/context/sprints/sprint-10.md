@@ -8,7 +8,7 @@ safely.
 **Committed**: 12 points
 **Execution Mode**: Classic
 **Campaign**: None
-**Approval**: Pending
+**Approval**: Approved by Casey on 2026-10-30 ("start sprint 10 in a new development branch"); branched from `fix/sprint-09-alignment` because PR #29 is not merged yet
 
 Source: user feedback triage on 2026-10-29 (items 1, 6, 7, 8, 9, 10, 11).
 Alignment items from the same triage are planned in [Sprint 9](sprint-09.md).
@@ -19,14 +19,14 @@ Both sprints edit `AppWindow.cpp`, so run them in order, not in parallel.
 ## Workflow Loop
 
 - [x] Sprint plan created in `.agents/context/sprints/`
-- [ ] Sprint plan approved before execution
-- [ ] Approved scope executed
-- [ ] Tests run and validation recorded
-- [ ] Sprint completion confirmed
-- [ ] Retrospective saved in `.agents/context/retrospectives/`
-- [ ] Context updated with `$update-context`
-- [ ] Focused sprint commit created with `$commit`
-- [ ] Campaign handoff written, if this sprint is part of Campaign Autopilot
+- [x] Sprint plan approved before execution
+- [x] Approved scope executed
+- [x] Tests run and validation recorded
+- [x] Sprint completion confirmed (Casey, 2026-10-30)
+- [x] Retrospective saved in `.agents/context/retrospectives/`
+- [x] Context updated with `$update-context`
+- [x] Focused sprint commit created with `$commit`
+- [x] Campaign handoff written, if this sprint is part of Campaign Autopilot (N/A: no campaign)
 
 ---
 
@@ -34,30 +34,31 @@ Both sprints edit `AppWindow.cpp`, so run them in order, not in parallel.
 
 | # | Story | Points | Dependencies | Status |
 |---|-------|--------|--------------|--------|
-| 10.1 | **Debug HUD hidden by default** | 1 | None | [ ] |
-| 10.2 | **Remove stub Mesh menu** | 1 | None | [ ] |
-| 10.3 | **Working View menu** | 3 | None | [ ] |
-| 10.4 | **Menu spacing pass** | 1 | 10.1–10.3 (final menu contents) | [ ] |
-| 10.5 | **MetaVisage icon on the executable and window** | 2 | None | [ ] |
-| 10.6 | **Reset morph result to source mesh** | 3 | None | [ ] |
-| 10.7 | **Vertex mask in its own Morph section** | 1 | None | [ ] |
+| 10.1 | **Debug HUD hidden by default** | 1 | None | [x] Implemented, tested |
+| 10.2 | **Remove stub Mesh menu** | 1 | None | [x] Implemented, tested |
+| 10.3 | **Working View menu** | 3 | None | [x] Implemented, tested, verified by Casey (+ projection toggle follow-up) |
+| 10.4 | **Menu spacing pass** | 1 | 10.1–10.3 (final menu contents) | [x] Implemented; screenshots supplied by Casey |
+| 10.5 | **MetaVisage icon on the executable and window** | 2 | None | [x] Implemented, verified (EXE + window class icon) |
+| 10.6 | **Reset morph result to source mesh** | 3 | None | [x] Implemented, tested |
+| 10.7 | **Vertex mask in its own Morph section** | 1 | None | [x] Implemented, tested; moved above Reset to defaults per Casey |
 
 ### 10.1 Debug HUD hidden by default (feedback #1)
 
 `AppWindow::RenderFrame` (`src/ui/AppWindow.cpp:2224`) draws the "Debug HUD"
 window every frame; its own comment says it was meant to be removed in 3.6.
 
-- [ ] Gate it behind a `showDebugHud_` flag, default off, toggled from
+- [x] Gate it behind a `showDebugHud_` flag, default off, toggled from
       Help > "Debug HUD (Dev)" next to the Icon Glyph Explorer entry.
-- [ ] Confirm the dockspace/ImGui ini doesn't re-open it on next launch.
+- [x] Confirm the dockspace/ImGui ini doesn't re-open it on next launch.
 
 ### 10.2 Remove stub Mesh menu (feedback #6)
 
 All four Mesh items (`src/ui/AppWindow.cpp:1422`) are permanently disabled
 placeholders.
 
-- [ ] Remove the menu. Record Recompute Normals / Validate Topology /
+- [x] Remove the menu. Record Recompute Normals / Validate Topology /
       Center on Origin / Snap to Floor in the backlog only if still wanted.
+      (Not added: no user request for them.)
 
 ### 10.3 Working View menu (feedback #7)
 
@@ -65,16 +66,16 @@ Every View item (`src/ui/AppWindow.cpp:1405`) is disabled, though the
 behavior already exists: `Renderer::SetShowGrid` and numpad / Home handling
 in `Viewport::OnKey` (`src/ui/Viewport.cpp:548`).
 
-- [ ] Extract the numpad/Home camera presets into `Viewport` methods used by
+- [x] Extract the numpad/Home camera presets into `Viewport` methods used by
       both the key handler and the menu (no duplicated camera math).
-- [ ] Show Grid is a checked toggle applied to every viewport (Stage 2 is
+- [x] Show Grid is a checked toggle applied to every viewport (Stage 2 is
       dual-view) and persisted in `Config`.
-- [ ] Front / Right / Top / Perspective act on the primary viewport (or the
+- [x] Front / Right / Top / Perspective act on the primary viewport (or the
       hovered one in dual mode); add "Toggle Ortho/Persp (Numpad 5)", which the
       shortcuts modal already advertises.
-- [ ] Shortcut labels go in the `MenuItem` shortcut column, not the label text.
-- [ ] UI smoke: toggle Show Grid via menu and assert renderer state.
-- [ ] Manual: Casey has no numpad, so the View menu is the hand-test path for
+- [x] Shortcut labels go in the `MenuItem` shortcut column, not the label text.
+- [x] UI smoke: toggle Show Grid via menu and assert renderer state.
+- [x] Manual: Casey has no numpad, so the View menu is the hand-test path for
       the orthographic views. Sprint 9 fixed the degenerate Numpad 7 top view
       and made Numpad 1/3/7 set yaw/pitch (keeping target and distance); they
       are covered only by `alignment_gizmo_all_views` until this lands. Check
@@ -85,21 +86,29 @@ in `Viewport::OnKey` (`src/ui/Viewport.cpp:548`).
 Menus inherit the global `ItemSpacing.y = 6` and `FramePadding.y = 6`
 (`src/ui/MvStyle.cpp:75`), which reads cramped in popups.
 
-- [ ] Add menu-specific spacing/padding tokens to `MvStyle` (no pixel
+- [x] Add menu-specific spacing/padding tokens to `MvStyle` (no pixel
       literals in widgets) and apply them to every main menu popup.
-- [ ] Before/after screenshots of File, Edit, View and Help.
+- [x] Before/after screenshots of File, Edit, View and Help. (After
+      screenshots supplied by Casey 2026-10-30.)
 
 ### 10.5 MetaVisage icon on the executable and window (feedback #9)
 
 There is no `.ico`, no `.rc` and no `glfwSetWindowIcon` call. Sized PNGs
 already exist under `assets/icons/Windows/` and `assets/icons/MacOS.appiconset/`.
 
-- [ ] Generate a committed multi-resolution `assets/icons/metavisage.ico`
+- [x] Generate a committed multi-resolution `assets/icons/metavisage.ico`
       (16, 24, 32, 48, 64, 256) from the existing PNGs; document how it was made.
-- [ ] Add `resources/metavisage.rc` and include it in the MSVC and MinGW
+- [x] Add `resources/metavisage.rc` and include it in the MSVC and MinGW
       executable sources in `CMakeLists.txt`.
-- [ ] Call `glfwSetWindowIcon` at startup so the title bar and taskbar match.
-- [ ] Verify in Explorer, the taskbar, and the packaged ZIP from `package-release.ps1`.
+      (Shipped as `resources/metavisage.rc.in`, configured with the absolute
+      icon path. MinGW compiles it in a custom `windres` step because windres
+      splits include paths containing spaces.)
+- [x] Call `glfwSetWindowIcon` at startup so the title bar and taskbar match.
+      (Not needed: the resource is named `GLFW_ICON`, which GLFW's Win32
+      backend loads as the window-class icon. Verified on the running window.)
+- [/] Verify in Explorer, the taskbar, and the packaged ZIP from `package-release.ps1`.
+      (EXE icon and live window-class icon verified by extraction; packaged
+      ZIP not built — the icon is embedded in the EXE the ZIP copies.)
 
 ### 10.6 Reset morph result to source mesh (feedback #10)
 
@@ -108,15 +117,16 @@ There is no way to discard a processed morph. Related bug found during triage:
 which also wipes the processed result, the vertex mask and the accepted flag,
 and isn't undoable.
 
-- [ ] Add "Reset to source mesh" in the Morph inspector, enabled when
+- [x] Add "Reset to source mesh" in the Morph inspector, enabled when
       `isProcessed`. It clears `deformedMorphMesh`, displacement data,
       `isProcessed` and `isAccepted`, and returns the viewport to the source mesh.
-- [ ] Route it through an undoable command (reuse or extend `MorphUndoAction`)
+- [x] Route it through an undoable command (reuse or extend `MorphUndoAction`)
       so Ctrl+Z restores the result.
-- [ ] If the morph was accepted and Touch Up sculpting exists, confirm before
-      discarding.
-- [ ] Fix "Reset to defaults" to reset only wrap parameters, keeping the
-      result and mask.
+- [x] If the morph was accepted and Touch Up sculpting exists, confirm before
+      discarding. (Confirms whenever the result is accepted; Touch Up edits
+      are only possible after accepting.)
+- [x] Fix "Reset to defaults" to reset only wrap parameters, keeping the
+      result and mask. (Resets to Quick Wrap, the new-project default.)
 
 ### 10.7 Vertex mask in its own Morph section (feedback #11)
 
@@ -124,10 +134,11 @@ The mask controls sit under a flat "VERTEX MASK" label between the preset
 cards and the collapsible General / Advanced sections, so they read as part
 of the parameter block.
 
-- [ ] Move them into a collapsible "Vertex Mask" section (default expanded,
+- [x] Move them into a collapsible "Vertex Mask" section (default expanded,
       collapse state persisted via `Config` like General / Advanced), placed
-      after Advanced and before Process.
-- [ ] Keep the no-mesh guard that disables mask painting.
+      after Advanced and before "Reset to defaults" (Casey's review moved it
+      above the reset button).
+- [x] Keep the no-mesh guard that disables mask painting.
 
 ---
 
@@ -150,7 +161,12 @@ of the parameter block.
 
 | Work | Why It Helped | Status |
 |------|---------------|--------|
-| None | | |
+| `Config::Save` is a no-op until `Load` has run | The smoke harness never loads the user config, so menu tests would otherwise overwrite `%APPDATA%\MetaVisage\config.json` | [x] |
+| Home / View > Reset Camera also returns to perspective | `Camera::Reset` kept the orthographic mode, leaving a "Front/Right/Top" mode on a reset view | [x] |
+| View > Frame Meshes (F) added to the menu | Same camera-preset extraction; gives a mouse path for F | [x] |
+| Viewport toolbar projection toggle (camera icon + PERSP / FRONT / RIGHT / TOP / ORTHO) replaces the static "PERSP" label, which was wrong in orthographic views | Casey: the View menu's Perspective item was too tucked away and users could get stuck in orthographic | [x] |
+| Auto Perspective: orbiting out of a Front / Right / Top preset returns to perspective; an orthographic view chosen with the toggle stays orthographic (Blender default) | Same feedback; flag lives on `Camera` so dual-pane camera sync carries it | [x] |
+| Menu popups previously inherited the app host's ItemSpacing.y = 0 | Root cause of the crowded menus; `MvStyle::Menu` tokens now apply inside each popup | [x] |
 
 ---
 
@@ -181,24 +197,34 @@ of the parameter block.
 
 ## Definition of Done
 
-- [ ] Code reviewed
+- [x] Code reviewed
 - [ ] PR opened against `development` and `$review-pr` run; all blocking findings resolved
-- [ ] Tests passing
-- [ ] Windows manual UI smoke: Stage 1 -> 2 -> 3 -> 4 -> Export with the bundled MetaHuman head, plus Undo/Redo on Morph reset and mask paint
-- [ ] Required quality evidence captured in the retrospective
-- [ ] PO approval
-- [ ] Sprint outcome confirmed
-- [ ] Retrospective saved
-- [ ] Context updated
+- [x] Tests passing
+- [x] Windows manual UI smoke: Stage 1 -> 2 -> 3 -> 4 -> Export with the bundled MetaHuman head, plus Undo/Redo on Morph reset and mask paint
+- [x] Required quality evidence captured in the retrospective
+- [x] PO approval
+- [x] Sprint outcome confirmed
+- [x] Retrospective saved
+- [x] Context updated
 
 ---
 
 ## Sprint Outcome
 
-**Status**: Planned
-**Velocity (Actual)**: —
-**Carryover**: —
-**Validation**: —
-**Quality Evidence**: —
+**Status**: Complete (confirmed by Casey 2026-10-30; PR pending)
+**Velocity (Actual)**: 12 points implemented
+**Carryover**: None planned
+**Branch**: `feat/sprint-10-shell-morph`, stacked on `fix/sprint-09-alignment` (PR #29 not yet merged)
+**Validation** (2026-10-30):
+- `.\build-msvc.ps1 -Deploy`: builds and deploys `MetaVisage.exe`.
+- `ctest --test-dir build -C Release --output-on-failure`: 4/4 passed (43.8 s).
+- `metavisage_smoke_ui.exe`: 13/13. New: `shell_menus_and_debug_hud` (HUD hidden until Help toggle; no Mesh menu; Show Grid toggles both panes; Top / Perspective / Right / Reset Camera menu items; orbit out of Front returns to perspective; toolbar projection toggle, which stays orthographic while orbiting); `morph_reset_to_source` (section order Advanced < Vertex Mask < Reset to defaults; Reset to defaults keeps result and mask; reset clears the result with one undo, and undo restores it; accepted result confirms, Cancel keeps it; button disabled with no result).
+- Icon: extracted from `MetaVisage.exe` and from the running window's class icon; both show the MetaVisage logo.
+- MinGW: `.\build-mingw.ps1` not run because it shares `build\` with MSVC. The resource step was validated with a throwaway MinGW Makefiles project in a spaced path (`C:\Qt\Tools\mingw1310_64`): builds, links `.rsrc`, icon extractable.
+- `git diff --check`: clean.
+**Manual verification** (Casey, 2026-10-30): menu spacing good (File / Edit / View / Help screenshots); Vertex Mask options good (screenshot); View presets snap and orbit away; taskbar icon good; Reset to source mesh + undo work on a real morph; full Stage 1 -> 4 -> Export works. Follow-ups requested and implemented: a visible projection toggle (plus Auto Perspective), and the Vertex Mask section above Reset to defaults.
+**Review** (2026-10-30, `$review-pr` on the working diff): no blocking findings. Fixed: the Keyboard Shortcuts dialog now lists F (frame meshes) and Home (reset camera) to match the View menu. Rebuilt; ctest 4/4.
+**Remaining**: PR into `development` once cmershon2/MetaVisage#29 merges (or stacked on it); MinGW full build still unvalidated (shared `build\` directory).
+**Quality Evidence**: See [retro-sprint-10.md](../retrospectives/retro-sprint-10.md).
 **Notes**: —
 **Campaign Handoff**: N/A

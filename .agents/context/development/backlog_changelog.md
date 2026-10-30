@@ -105,3 +105,10 @@ implemented or counted as completed delivery.
 - **Effort (Estimated)**: 10 points.
 - **Completed**: Sprint 9, 2026-10-30.
 - **Notes**: Casey confirmed by hand, including a full Stage 1 -> 4 -> Export run. Numpad view checks are automated only; hand-testing them moves to the Sprint 10 View menu. Also fixed the degenerate Numpad 7 top view. See `retrospectives/retro-sprint-09.md`.
+
+### 2026-10-30 - Sprint 10 app shell and Morph stage polish
+
+- Completed: **Debug HUD hidden by default**, **Remove stub Mesh menu**, **Working View menu** (plus a viewport-toolbar projection toggle and Auto Perspective), **Menu spacing pass**, **MetaVisage icon on the executable and window**, **Reset morph result to source mesh** (undoable; "Reset to defaults" now resets parameters only), **Vertex mask in its own Morph section**.
+- **Effort (Estimated)**: 12 points.
+- **Completed**: Sprint 10, 2026-10-30.
+- **Notes**: Casey confirmed by hand, including a full Stage 1 -> 4 -> Export run. This completes the 2026-10-29 feedback triage. See `retrospectives/retro-sprint-10.md`.

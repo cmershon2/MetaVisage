@@ -65,6 +65,7 @@ void Config::Load() {
     // Story 5.1 — UI state. Missing block / unknown keys silently fall
     // through to defaults; bad value types are skipped, not crashed.
     if (auto ui = j.find("ui_state"); ui != j.end() && ui->is_object()) {
+        showGrid_ = ui->value("show_grid", showGrid_);
         if (auto cs = ui->find("collapsed_sections");
             cs != ui->end() && cs->is_object()) {
             for (auto entry = cs->begin(); entry != cs->end(); ++entry) {
@@ -77,6 +78,7 @@ void Config::Load() {
 }
 
 void Config::Save() const {
+    if (!loaded_) return;
     const std::string path = Paths::ConfigFile();
     if (path.empty()) return;
 
@@ -90,16 +92,16 @@ void Config::Save() const {
     for (const auto& p : recentProjects_) recent.push_back(p);
     j["recent_projects"] = std::move(recent);
 
-    // Story 5.1 — only emit ui_state if at least one section has been
-    // explicitly recorded; keeps fresh configs minimal.
+    // Story 5.1 — only emit ui_state entries that differ from defaults;
+    // keeps fresh configs minimal.
     if (!collapsedSections_.empty()) {
         json sections = json::object();
         for (const auto& [key, expanded] : collapsedSections_) {
             sections[key] = expanded;
         }
-        j["ui_state"] = json::object();
         j["ui_state"]["collapsed_sections"] = std::move(sections);
     }
+    if (!showGrid_) j["ui_state"]["show_grid"] = false;
 
     std::ofstream out(path);
     if (!out.is_open()) {
@@ -130,6 +132,12 @@ void Config::AddRecentProject(const std::string& absolutePath) {
 
 void Config::ClearRecentProjects() {
     recentProjects_.clear();
+    Save();
+}
+
+void Config::SetShowGrid(bool show) {
+    if (showGrid_ == show) return;
+    showGrid_ = show;
     Save();
 }
 

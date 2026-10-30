@@ -12,7 +12,8 @@ tools run locally without accounts, subscriptions, or usage limits.
 - **Sculpting**: Smooth, Grab, Push/Pull, and Inflate brushes, with symmetry,
   masking, and brush previews.
 - **Blender-style controls**: MMB orbit, Shift+MMB pan, scroll zoom, numpad
-  views, G/R/S transforms, X/Y/Z constraints, and `[` / `]` brush sizing.
+  views (also in the View menu and the viewport toolbar), G/R/S transforms,
+  X/Y/Z constraints, and `[` / `]` brush sizing.
 - **Mesh I/O**: FBX, OBJ, and GLTF import/export through Assimp. FBX is the
   default export format; triangulation is off by default to preserve quads.
 - **Mesh preservation**: The morph workflow preserves topology, vertex order,

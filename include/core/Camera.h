@@ -34,6 +34,13 @@ public:
     void SetPitch(float pitch) { pitch_ = pitch; UpdatePositionFromAngles(); }
     void SetDistance(float distance) { distance_ = distance; UpdatePositionFromAngles(); }
 
+    // Blender-style "Auto Perspective": the Front / Right / Top presets set
+    // this, and the next Orbit switches back to perspective so the user
+    // can't get stranded in an orthographic view. Choosing orthographic
+    // explicitly (Numpad 5 / toolbar toggle) clears it.
+    void SetAutoPerspective(bool on) { autoPerspective_ = on; }
+    bool GetAutoPerspective() const { return autoPerspective_; }
+
     // Copy all camera state from another camera (for viewport synchronization)
     void CopyStateFrom(const Camera& other);
 
@@ -62,6 +69,7 @@ private:
     float distance_;
     float yaw_;
     float pitch_;
+    bool autoPerspective_ = false;
 
     void UpdatePositionFromAngles();
 };

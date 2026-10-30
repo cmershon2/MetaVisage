@@ -890,6 +890,8 @@ void RenderShortcutsModal(ShortcutsModalState& state) {
                 {"Scroll", "Zoom"},
                 {"Numpad 1/3/7", "Front / Side / Top view"},
                 {"Numpad 5", "Toggle perspective / orthographic"},
+                {"F", "Frame meshes"},
+                {"Home", "Reset camera"},
             }},
             {"Transform (Alignment stage)", {
                 {"G", "Move gizmo"},

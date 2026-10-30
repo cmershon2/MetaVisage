@@ -82,6 +82,16 @@ public:
     float GetPixelWidth() const { return lastW_; }
     float GetPixelHeight() const { return lastH_; }
 
+    // --- Camera presets (Sprint 10.3) ---
+    // Shared by the numpad / Home / F keys and the View menu.
+    enum class ViewPreset { Front, Right, Top };
+    void ApplyViewPreset(ViewPreset preset);   // Numpad 1 / 3 / 7
+    void ToggleProjection();                   // Numpad 5
+    void ResetView();                          // Home
+    void FrameMeshes();                        // F
+    void SetShowGrid(bool show);
+    bool GetShowGrid() const;
+
     // --- Transform mode (Alignment stage) ---
     TransformMode GetTransformMode() const { return transformMode_; }
     AxisConstraint GetAxisConstraint() const { return axisConstraint_; }
