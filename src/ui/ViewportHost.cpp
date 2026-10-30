@@ -230,13 +230,25 @@ void ViewportHost::ForwardScroll(double xOffset, double yOffset,
     target->OnScroll(static_cast<float>(xOffset), static_cast<float>(yOffset));
 }
 
-void ViewportHost::ForwardKey(int key, int scancode, int action, int mods) {
+Viewport* ViewportHost::GetKeyboardViewport() {
     // Keyboard routes to the active viewport when one is set (dual mode), or
     // to the primary viewport otherwise. Single-viewport mode always routes
     // to left_.
-    Viewport* target = left_.get();
-    if (dualMode_ && right_->IsActive()) target = right_.get();
-    target->OnKey(key, scancode, action, mods);
+    if (dualMode_ && right_->IsActive()) return right_.get();
+    return left_.get();
+}
+
+void ViewportHost::SetShowGrid(bool show) {
+    left_->SetShowGrid(show);
+    right_->SetShowGrid(show);
+}
+
+bool ViewportHost::GetShowGrid() const {
+    return left_->GetShowGrid();
+}
+
+void ViewportHost::ForwardKey(int key, int scancode, int action, int mods) {
+    GetKeyboardViewport()->OnKey(key, scancode, action, mods);
 }
 
 void ViewportHost::RenderGL(int fbHeight) {

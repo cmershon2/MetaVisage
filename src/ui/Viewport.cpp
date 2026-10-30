@@ -593,82 +593,111 @@ void Viewport::OnKey(int key, int /*scancode*/, int action, int mods) {
             break;
 
         case GLFW_KEY_HOME:
-            camera_->Reset();
-            if (OnCameraChanged) OnCameraChanged();
+            ResetView();
             break;
-
-        // Numpad views keep the current target and distance (like Blender),
-        // and go through yaw/pitch so a later orbit continues from them.
         case GLFW_KEY_KP_1:
-            if (noMods) {
-                camera_->SetProjectionMode(ProjectionMode::OrthographicFront);
-                camera_->SetYaw(0.0f);
-                camera_->SetPitch(0.0f);
-                if (OnCameraChanged) OnCameraChanged();
-            }
+            if (noMods) ApplyViewPreset(ViewPreset::Front);
             break;
         case GLFW_KEY_KP_3:
-            if (noMods) {
-                camera_->SetProjectionMode(ProjectionMode::OrthographicRight);
-                camera_->SetYaw(90.0f);
-                camera_->SetPitch(0.0f);
-                if (OnCameraChanged) OnCameraChanged();
-            }
+            if (noMods) ApplyViewPreset(ViewPreset::Right);
             break;
         case GLFW_KEY_KP_7:
-            if (noMods) {
-                camera_->SetProjectionMode(ProjectionMode::OrthographicTop);
-                camera_->SetYaw(0.0f);
-                camera_->SetPitch(90.0f);
-                if (OnCameraChanged) OnCameraChanged();
-            }
+            if (noMods) ApplyViewPreset(ViewPreset::Top);
             break;
         case GLFW_KEY_KP_5:
-            if (noMods) {
-                camera_->SetProjectionMode(
-                    camera_->GetProjectionMode() == ProjectionMode::Perspective
-                        ? ProjectionMode::OrthographicFront
-                        : ProjectionMode::Perspective);
-                if (OnCameraChanged) OnCameraChanged();
-            }
+            if (noMods) ToggleProjection();
             break;
-
-        case GLFW_KEY_F: {
-            BoundingBox combined;
-            bool has = false;
-            auto addMesh = [&](const MeshReference& mr) {
-                if (!mr.isLoaded || !mr.mesh) return;
-                const BoundingBox& b = mr.mesh->GetBounds();
-                Vector3 c = b.Center();
-                Vector3 p = mr.transform.GetPosition();
-                Vector3 tc(c.x + p.x, c.y + p.y, c.z + p.z);
-                Vector3 hs((b.max.x - b.min.x) * 0.5f,
-                           (b.max.y - b.min.y) * 0.5f,
-                           (b.max.z - b.min.z) * 0.5f);
-                BoundingBox tb;
-                tb.min = Vector3(tc.x - hs.x, tc.y - hs.y, tc.z - hs.z);
-                tb.max = Vector3(tc.x + hs.x, tc.y + hs.y, tc.z + hs.z);
-                if (!has) { combined = tb; has = true; }
-                else {
-                    combined.min.x = std::min(combined.min.x, tb.min.x);
-                    combined.min.y = std::min(combined.min.y, tb.min.y);
-                    combined.min.z = std::min(combined.min.z, tb.min.z);
-                    combined.max.x = std::max(combined.max.x, tb.max.x);
-                    combined.max.y = std::max(combined.max.y, tb.max.y);
-                    combined.max.z = std::max(combined.max.z, tb.max.z);
-                }
-            };
-            if (project_) {
-                addMesh(project_->GetMorphMesh());
-                addMesh(project_->GetTargetMesh());
-            }
-            if (has) camera_->FocusOnBounds(combined);
-            else     camera_->Reset();
-            if (OnCameraChanged) OnCameraChanged();
+        case GLFW_KEY_F:
+            FrameMeshes();
             break;
-        }
         default: break;
     }
+}
+
+// --- Camera presets (shared by the numpad / Home / F keys and the View menu) ---
+
+// Views keep the current target and distance (like Blender), and go through
+// yaw/pitch so a later orbit continues from them.
+void Viewport::ApplyViewPreset(ViewPreset preset) {
+    switch (preset) {
+        case ViewPreset::Front:
+            camera_->SetProjectionMode(ProjectionMode::OrthographicFront);
+            camera_->SetYaw(0.0f);
+            camera_->SetPitch(0.0f);
+            break;
+        case ViewPreset::Right:
+            camera_->SetProjectionMode(ProjectionMode::OrthographicRight);
+            camera_->SetYaw(90.0f);
+            camera_->SetPitch(0.0f);
+            break;
+        case ViewPreset::Top:
+            camera_->SetProjectionMode(ProjectionMode::OrthographicTop);
+            camera_->SetYaw(0.0f);
+            camera_->SetPitch(90.0f);
+            break;
+    }
+    camera_->SetAutoPerspective(true);
+    if (OnCameraChanged) OnCameraChanged();
+}
+
+void Viewport::ToggleProjection() {
+    // An explicit choice: orbiting keeps whichever projection this picks.
+    camera_->SetAutoPerspective(false);
+    camera_->SetProjectionMode(
+        camera_->GetProjectionMode() == ProjectionMode::Perspective
+            ? ProjectionMode::OrthographicFront
+            : ProjectionMode::Perspective);
+    if (OnCameraChanged) OnCameraChanged();
+}
+
+void Viewport::ResetView() {
+    // Camera::Reset leaves the projection alone; reset that too so Home
+    // after an orthographic view isn't left labelled Front/Right/Top.
+    camera_->Reset();
+    camera_->SetProjectionMode(ProjectionMode::Perspective);
+    if (OnCameraChanged) OnCameraChanged();
+}
+
+void Viewport::FrameMeshes() {
+    BoundingBox combined;
+    bool has = false;
+    auto addMesh = [&](const MeshReference& mr) {
+        if (!mr.isLoaded || !mr.mesh) return;
+        const BoundingBox& b = mr.mesh->GetBounds();
+        Vector3 c = b.Center();
+        Vector3 p = mr.transform.GetPosition();
+        Vector3 tc(c.x + p.x, c.y + p.y, c.z + p.z);
+        Vector3 hs((b.max.x - b.min.x) * 0.5f,
+                   (b.max.y - b.min.y) * 0.5f,
+                   (b.max.z - b.min.z) * 0.5f);
+        BoundingBox tb;
+        tb.min = Vector3(tc.x - hs.x, tc.y - hs.y, tc.z - hs.z);
+        tb.max = Vector3(tc.x + hs.x, tc.y + hs.y, tc.z + hs.z);
+        if (!has) { combined = tb; has = true; }
+        else {
+            combined.min.x = std::min(combined.min.x, tb.min.x);
+            combined.min.y = std::min(combined.min.y, tb.min.y);
+            combined.min.z = std::min(combined.min.z, tb.min.z);
+            combined.max.x = std::max(combined.max.x, tb.max.x);
+            combined.max.y = std::max(combined.max.y, tb.max.y);
+            combined.max.z = std::max(combined.max.z, tb.max.z);
+        }
+    };
+    if (project_) {
+        addMesh(project_->GetMorphMesh());
+        addMesh(project_->GetTargetMesh());
+    }
+    if (has) camera_->FocusOnBounds(combined);
+    else     camera_->Reset();
+    if (OnCameraChanged) OnCameraChanged();
+}
+
+void Viewport::SetShowGrid(bool show) {
+    if (renderer_) renderer_->SetShowGrid(show);
+}
+
+bool Viewport::GetShowGrid() const {
+    return renderer_ && renderer_->GetShowGrid();
 }
 
 // --- Gizmo helpers ---
@@ -1010,6 +1039,57 @@ void ToolbarSeparator() {
 // floating above the row's mid-line. We now emit the glyph via ImDrawList
 // at the correct Y and reserve a 26 px-tall layout dummy so SameLine
 // continues to work for the next inline element.
+// Sprint 10.3 follow-up — label for the toolbar projection toggle. Named
+// views come from the camera angles, so an orthographic view reached by
+// toggling from an orbited camera reads ORTHO rather than a wrong FRONT.
+const char* ProjectionLabel(const MetaVisage::Camera& cam) {
+    using MetaVisage::ProjectionMode;
+    if (cam.GetProjectionMode() == ProjectionMode::Perspective) return "PERSP";
+    auto near = [](float a, float b) { return std::abs(a - b) < 0.01f; };
+    if (near(cam.GetPitch(), 90.0f)) return "TOP";
+    if (near(cam.GetPitch(), 0.0f) && near(cam.GetYaw(), 0.0f))  return "FRONT";
+    if (near(cam.GetPitch(), 0.0f) && near(cam.GetYaw(), 90.0f)) return "RIGHT";
+    return "ORTHO";
+}
+
+// Clickable icon + mono label sharing the 26 px toolbar row. Width is sized
+// for the widest label so the toolbar doesn't shift as the text changes.
+bool ToolbarLabelButton(const char* id, const char* glyph, const char* text,
+                        const char* widestText, const ImVec4& color,
+                        const char* tooltip) {
+    using namespace MetaVisage;
+    constexpr float H = 26.0f;
+    constexpr float PadX = 8.0f;
+    constexpr float IconSize = 14.0f;
+    constexpr float Gap = 6.0f;
+    MvStyle::ScopedFont f(MvStyle::Font.Mono);
+    const float fs = ImGui::GetFontSize();
+    const float textW = ImGui::CalcTextSize(widestText).x;
+    const float W = PadX + IconSize + Gap + textW + PadX;
+
+    const ImVec2 pos = ImGui::GetCursorScreenPos();
+    ImGui::PushID(id);
+    const bool clicked = ImGui::InvisibleButton("##b", ImVec2(W, H));
+    const bool hovered = ImGui::IsItemHovered();
+    ImGui::PopID();
+
+    ImDrawList* dl = ImGui::GetWindowDrawList();
+    if (hovered) {
+        dl->AddRectFilled(pos, ImVec2(pos.x + W, pos.y + H), ColU(MvStyle::MvBg3), 4.0f);
+    }
+    if (glyph && MvStyle::Font.Icon) {
+        ImFont* icon = MvStyle::Font.Icon;
+        const ImVec2 ts = icon->CalcTextSizeA(IconSize, FLT_MAX, 0.0f, glyph);
+        dl->AddText(icon, IconSize, ImVec2(pos.x + PadX, pos.y + (H - ts.y) * 0.5f),
+                    ColU(color), glyph);
+    }
+    dl->AddText(ImVec2(pos.x + PadX + IconSize + Gap, pos.y + (H - fs) * 0.5f),
+                ColU(color), text);
+
+    if (hovered && tooltip) ImGui::SetTooltip("%s", tooltip);
+    return clicked;
+}
+
 void ToolbarMonoLabel(const char* text, const ImVec4& color) {
     MetaVisage::MvStyle::ScopedFont f(MetaVisage::MvStyle::Font.Mono);
     const float fs = ImGui::GetFontSize();
@@ -1066,12 +1146,16 @@ void Viewport::DrawTopCenterToolbar(float x, float y, float w, float h) {
     ImGui::PushStyleColor(ImGuiCol_Border,   MvStyle::MvLine2);
 
     if (ImGui::Begin(wid, nullptr, flags)) {
-        // PERSP label — projection mode indicator.
-        ImGui::Dummy(ImVec2(6.0f, 0.0f));
-        ImGui::SameLine(0.0f, 0.0f);
-        ToolbarMonoLabel("PERSP", MvStyle::MvBlue400);
-        ImGui::SameLine(0.0f, 4.0f);
-        ImGui::Dummy(ImVec2(2.0f, 0.0f));
+        // Projection toggle (Sprint 10.3 follow-up) — shows the current view
+        // (PERSP / FRONT / RIGHT / TOP / ORTHO) and flips perspective /
+        // orthographic on click, same as Numpad 5 and View > Perspective.
+        const bool persp = camera_->GetProjectionMode() == ProjectionMode::Perspective;
+        if (ToolbarLabelButton("proj", MV_ICON_CAMERA, ProjectionLabel(*camera_), "FRONT",
+                               persp ? MvStyle::MvBlue400 : MvStyle::MvFg1,
+                               persp ? "Perspective. Click for orthographic (Numpad 5)"
+                                     : "Orthographic. Click for perspective (Numpad 5)")) {
+            ToggleProjection();
+        }
         ImGui::SameLine(0.0f, 0.0f);
         ToolbarSeparator();
 

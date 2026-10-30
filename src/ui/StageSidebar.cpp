@@ -1142,66 +1142,6 @@ void StageSidebar::RenderMorph(Project& project, bool processing, float progress
             ImGui::EndTable();
         }
 
-        // ---- Vertex mask (Story 5.1 — promoted to top of body) --------
-        // Masking is the most-used Stage 3 control once a morph is in
-        // flight, so it deserves first slot per the master plan layout.
-        // Existing mesh-ready guard preserved (no mesh = nothing to mask).
-        const bool morphMeshReady = project.GetMorphMesh().isLoaded || morph.isProcessed;
-        if (morphMeshReady) {
-            I::DrawSectionLabel("VERTEX MASK");
-
-            {
-                MvStyle::ScopedFont f(MvStyle::Font.BodySm);
-                ImGui::PushStyleColor(ImGuiCol_Text, MvStyle::MvFg3);
-                ImGui::TextWrapped("Paint to exclude vertices from the next "
-                                   "Process — useful for eyes, mouths, and "
-                                   "interior cavities.");
-                ImGui::PopStyleColor();
-            }
-            ImGui::Dummy(ImVec2(0.0f, 4.0f));
-
-            ImGui::Checkbox("Paint mask", &maskPaintingActive_);
-            ImGui::SameLine();
-            ImGui::Checkbox("Show mask", &maskShowMask_);
-
-            ImGui::BeginDisabled(!maskPaintingActive_);
-            ImGui::PushItemWidth(ImGui::GetContentRegionAvail().x * 0.55f);
-            ImGui::SliderFloat("Mask radius", &maskBrushRadius_, 0.5f, 50.0f, "%.1f");
-            ImGui::PopItemWidth();
-            ImGui::Checkbox("Erase", &maskEraseMode_);
-            ImGui::EndDisabled();
-
-            const bool hasMaskData = !morph.vertexMask.empty();
-            ImGui::Dummy(ImVec2(0.0f, 4.0f));
-            ImGui::BeginDisabled(!hasMaskData);
-            if (ImGui::BeginTable("##maskActions", 2,
-                                  ImGuiTableFlags_SizingStretchSame |
-                                  ImGuiTableFlags_NoPadOuterX)) {
-                ImGui::TableNextRow();
-                ImGui::TableNextColumn();
-                if (ImGui::Button("Clear mask", ImVec2(-FLT_MIN, 28.0f))) {
-                    out.clearMaskRequested = true;
-                }
-                ImGui::TableNextColumn();
-                if (ImGui::Button("Invert mask", ImVec2(-FLT_MIN, 28.0f))) {
-                    out.invertMaskRequested = true;
-                }
-                ImGui::EndTable();
-            }
-            ImGui::EndDisabled();
-
-            // Mirror the current mask controls onto the primary viewport.
-            out.maskPaintingActive = maskPaintingActive_;
-            out.maskShow           = maskShowMask_ || maskPaintingActive_;
-            out.maskEraseMode      = maskEraseMode_;
-            out.maskBrushRadius    = maskBrushRadius_;
-        } else {
-            // Ensure the viewport doesn't treat LMB as mask painting when
-            // no mesh is loaded yet.
-            out.maskPaintingActive = false;
-            out.maskShow           = false;
-        }
-
         // ---- Parameter edit tracking + collapsible-section helper -----
         // Track per-frame edits across the slider blocks below so any
         // manual tweak clears activePresetId_ and the active-card
@@ -1281,13 +1221,77 @@ void StageSidebar::RenderMorph(Project& project, bool processing, float progress
             ImGui::PopItemWidth();
         }
 
+        // ---- Vertex mask (Sprint 10.7 — own collapsible section) -------
+        // Between Advanced and "Reset to defaults", in its own section so
+        // it doesn't read as one of the wrap parameters. Default expanded; collapse state persists like General /
+        // Advanced. Mesh-ready guard preserved (no mesh = nothing to mask).
+        const bool morphMeshReady = project.GetMorphMesh().isLoaded || morph.isProcessed;
+        if (morphMeshReady &&
+            DrawCollapsibleSection("morph.mask", "Vertex Mask",
+                                   /*defaultExpanded=*/true)) {
+            {
+                MvStyle::ScopedFont f(MvStyle::Font.BodySm);
+                ImGui::PushStyleColor(ImGuiCol_Text, MvStyle::MvFg3);
+                ImGui::TextWrapped("Paint to exclude vertices from the next "
+                                   "Process — useful for eyes, mouths, and "
+                                   "interior cavities.");
+                ImGui::PopStyleColor();
+            }
+            ImGui::Dummy(ImVec2(0.0f, 4.0f));
+
+            ImGui::Checkbox("Paint mask", &maskPaintingActive_);
+            ImGui::SameLine();
+            ImGui::Checkbox("Show mask", &maskShowMask_);
+
+            ImGui::BeginDisabled(!maskPaintingActive_);
+            ImGui::PushItemWidth(ImGui::GetContentRegionAvail().x * 0.55f);
+            ImGui::SliderFloat("Mask radius", &maskBrushRadius_, 0.5f, 50.0f, "%.1f");
+            ImGui::PopItemWidth();
+            ImGui::Checkbox("Erase", &maskEraseMode_);
+            ImGui::EndDisabled();
+
+            const bool hasMaskData = !morph.vertexMask.empty();
+            ImGui::Dummy(ImVec2(0.0f, 4.0f));
+            ImGui::BeginDisabled(!hasMaskData);
+            if (ImGui::BeginTable("##maskActions", 2,
+                                  ImGuiTableFlags_SizingStretchSame |
+                                  ImGuiTableFlags_NoPadOuterX)) {
+                ImGui::TableNextRow();
+                ImGui::TableNextColumn();
+                if (ImGui::Button("Clear mask", ImVec2(-FLT_MIN, 28.0f))) {
+                    out.clearMaskRequested = true;
+                }
+                ImGui::TableNextColumn();
+                if (ImGui::Button("Invert mask", ImVec2(-FLT_MIN, 28.0f))) {
+                    out.invertMaskRequested = true;
+                }
+                ImGui::EndTable();
+            }
+            ImGui::EndDisabled();
+        }
+        if (morphMeshReady) {
+            // Mirror the current mask controls onto the primary viewport
+            // (also while the section is collapsed, so state is kept).
+            out.maskPaintingActive = maskPaintingActive_;
+            out.maskShow           = maskShowMask_ || maskPaintingActive_;
+            out.maskEraseMode      = maskEraseMode_;
+            out.maskBrushRadius    = maskBrushRadius_;
+        } else {
+            // Ensure the viewport doesn't treat LMB as mask painting when
+            // no mesh is loaded yet.
+            out.maskPaintingActive = false;
+            out.maskShow           = false;
+        }
+
+
         // ---- Reset to Defaults (Story 5.1 — relocated outside Advanced) -
-        // Previously hidden inside the collapsed Advanced section; now
-        // always visible so a tweaked-too-far parameter set is one click
-        // from a known-good baseline regardless of which sections are open.
+        // Always visible so a tweaked-too-far parameter set is one click
+        // from a known-good baseline. Sprint 10.6: resets parameters only
+        // (to the Quick Wrap project default) — the processed result,
+        // vertex mask and accepted flag are kept.
         ImGui::Dummy(ImVec2(0.0f, 4.0f));
         if (ImGui::Button("Reset to defaults", ImVec2(-FLT_MIN, 30.0f))) {
-            morph = MorphData();
+            WrapPreset::QuickWrap().ApplyTo(morph);
             activePresetId_.clear();
         }
 
@@ -1359,6 +1363,19 @@ void StageSidebar::RenderMorph(Project& project, bool processing, float progress
             ImGui::Text("Max disp.  %.3f mm", morph.maxDisplacement);
             ImGui::Text("Avg disp.  %.3f mm", morph.avgDisplacement);
             ImGui::PopStyleColor();
+        }
+
+        // ---- Reset to source mesh (Sprint 10.6) ------------------------
+        // Discards the processed result and shows the source mesh again.
+        // AppWindow runs it as an undoable command (and confirms first if
+        // the result was accepted). Parameters and mask are untouched.
+        if (!processing) {
+            ImGui::Dummy(ImVec2(0.0f, 4.0f));
+            ImGui::BeginDisabled(!morph.isProcessed);
+            if (ImGui::Button("Reset to source mesh", ImVec2(-FLT_MIN, 30.0f))) {
+                out.resetMorphResultRequested = true;
+            }
+            ImGui::EndDisabled();
         }
 
         ImGui::Dummy(ImVec2(0.0f, 12.0f));

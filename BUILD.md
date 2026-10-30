@@ -74,6 +74,16 @@ The helper accepts `-MinGWPath`, `-VcpkgToolchain`, `-BuildType`, `-Clean`, and
 runtime staging. It does not run `windeployqt`. Standalone MinGW validation is
 still pending; do not reuse an MSVC-configured build directory for MinGW.
 
+## App icon
+
+`MetaVisage.exe` embeds `assets/icons/metavisage.ico` through
+`resources/metavisage.rc.in`. The resource is named `GLFW_ICON`, so GLFW also
+uses it for the window and taskbar. After changing the
+`assets/icons/Windows/Square44x44Logo.targetsize-*.png` files, regenerate the
+icon with `.\resources\build-ico.ps1`. MinGW builds compile the resource in a
+separate `windres` step because windres cannot handle include paths that
+contain spaces.
+
 ## Test
 
 ```powershell

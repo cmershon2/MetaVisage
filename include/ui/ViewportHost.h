@@ -47,6 +47,15 @@ public:
     Viewport* GetSecondaryViewport() { return right_.get(); }
     Camera* GetActiveCamera();
 
+    // Viewport that keyboard camera keys and the View menu act on: the
+    // active pane in dual mode, otherwise the primary one. Cameras are
+    // synced in dual mode, so the other pane follows.
+    Viewport* GetKeyboardViewport();
+
+    // Sprint 10.3 — View > Show Grid applies to both panes.
+    void SetShowGrid(bool show);
+    bool GetShowGrid() const;
+
     void SetSelectedPointIndex(int index);
     void SetPointSize(float size);
 

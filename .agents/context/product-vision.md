@@ -64,3 +64,13 @@ rail, transform fields accept typed values, and target textures survive a mesh
 swap. The orthographic top view is also fixed. The UI smoke lane now has eleven
 scenarios. Sprint 10 covers the shell and Morph-stage feedback from the same
 triage. See `retrospectives/retro-sprint-09.md`.
+
+Sprint 10 completes the 2026-10-29 feedback triage. Every visible menu item
+now works: the stub Mesh menu is gone, the View menu drives the grid and the
+camera presets, and developer aids (Debug HUD, Icon Glyph Explorer) are hidden
+under Help. A viewport-toolbar projection toggle and Blender-style Auto
+Perspective keep users from getting stuck in orthographic views. The EXE,
+window and taskbar show the MetaVisage icon. In the Morph stage, the processed
+result can be reset to the source mesh (undoable), and the vertex mask has its
+own section. The UI smoke lane has thirteen scenarios. See
+`retrospectives/retro-sprint-10.md`.
