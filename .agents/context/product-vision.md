@@ -74,3 +74,13 @@ window and taskbar show the MetaVisage icon. In the Morph stage, the processed
 result can be reset to the source mesh (undoable), and the vertex mask has its
 own section. The UI smoke lane has thirteen scenarios. See
 `retrospectives/retro-sprint-10.md`.
+
+Sprint 11 starts Auto Point Reference (Sprints 11-14, see
+`design/auto-point-reference.md`). Stage 1 now picks a Source Profile instead
+of a bare mesh: a source mesh plus its topology fingerprint, default transform,
+symmetry, named landmarks and default mask. The built-in MetaHuman profile
+ships with 52 authored landmarks and a mouth-interior mask; importing a mesh
+with a known topology attaches its profile automatically. Projects save the
+profile id (format v3), and reopening a project now keeps the painted mask and
+all wrap parameters. Sprint 12 adds the auto-map solver that places the
+landmarks on the target. See `retrospectives/retro-sprint-11.md`.

@@ -81,6 +81,7 @@ SerializationResult ProjectSerializer::Save(const Project& project, const std::s
     }
     root["lastModified"] = IsoNow();
     root["currentStage"] = static_cast<int>(project.GetCurrentStage());
+    root["sourceProfileId"] = project.GetSourceProfileId();   // v3+
 
     // Mesh references
     root["morphMesh"] = SerializeMeshReference(project.GetMorphMesh(), projectDir);
@@ -155,6 +156,7 @@ SerializationResult ProjectSerializer::Load(Project& project, const std::string&
     // Project metadata
     project.SetName(GetStr(root, "projectName", "Untitled Project"));
     project.SetCurrentStage(static_cast<WorkflowStage>(GetOr<int>(root, "currentStage", 0)));
+    project.SetSourceProfileId(GetStr(root, "sourceProfileId"));   // v3+; empty before
 
     // Mesh references
     if (Has(root, "morphMesh")) {
@@ -199,6 +201,18 @@ SerializationResult ProjectSerializer::Load(Project& project, const std::string&
         morphData.nricpEpsilon = loaded.nricpEpsilon;
         morphData.nricpEnableBoundaryExclusion = loaded.nricpEnableBoundaryExclusion;
         morphData.nricpBoundaryExclusionHops = loaded.nricpBoundaryExclusionHops;
+        // Sprint 11 — these were serialized but never copied back, so a
+        // reopened project lost its painted mask and the optimization /
+        // rigidity / sampling parameters.
+        morphData.nricpOptimizationIterations = loaded.nricpOptimizationIterations;
+        morphData.nricpDpInitial = loaded.nricpDpInitial;
+        morphData.nricpDpFinal = loaded.nricpDpFinal;
+        morphData.nricpGammaInitial = loaded.nricpGammaInitial;
+        morphData.nricpGammaFinal = loaded.nricpGammaFinal;
+        morphData.nricpSamplingInitial = loaded.nricpSamplingInitial;
+        morphData.nricpSamplingFinal = loaded.nricpSamplingFinal;
+        morphData.nricpNormalizeSampling = loaded.nricpNormalizeSampling;
+        morphData.vertexMask = std::move(loaded.vertexMask);
     }
 
     // Texture data (v2+, backward compatible)

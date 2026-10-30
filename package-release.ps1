@@ -54,7 +54,8 @@ try {
         }
     }
     $AssetsSource = Join-Path $ExeDir "assets"
-    foreach ($asset in @("models/MetaHumanHeadLod0.obj", "fonts/lucide.ttf",
+    foreach ($asset in @("models/MetaHumanHeadLod0.obj", "profiles/metahuman-head-lod0.mvprofile.json",
+                          "fonts/lucide.ttf",
                           "shaders/basic.vert", "shaders/basic.frag", "brushes/smooth_preview.png")) {
         Require-File (Join-Path $AssetsSource $asset)
     }

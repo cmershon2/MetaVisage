@@ -1,6 +1,7 @@
 #ifndef APPWINDOW_H
 #define APPWINDOW_H
 
+#include "core/SourceProfile.h"
 #include "core/WrapPreset.h"
 #include "ui/Modals.h"
 #include "ui/StageSidebar.h"
@@ -39,7 +40,9 @@ public:
         ImportTargetMesh,
         ExportMesh,
         ShowKeyboardShortcuts,
-        ShowAbout
+        ShowAbout,
+        ExportSourceProfileDraft,  // Help > Export Source Profile Draft (Dev)
+        ShowProfileLandmarks       // Help > Show Profile Landmarks (Dev)
     };
 
     AppWindow();
@@ -92,13 +95,32 @@ private:
     void OnFileExit();
     void OnEditUndo();
     void OnEditRedo();
+    void RefreshMaskOverlay();
 
     // Story 3.6.3 handlers
     void OpenProjectFromDisk(const std::string& path);
     void SaveProjectToDisk(const std::string& path);
     void ImportMorphMeshFromDisk(const std::string& path);
     void ImportTargetMeshFromDisk(const std::string& path);
-    void UseDefaultMorphMesh();
+
+    // Sprint 11 — Source Profiles. Picking a profile or importing a source
+    // mesh replaces everything tied to the source's vertex indices (points,
+    // mask, morph result), so both paths confirm first when that would
+    // discard work, then commit through CommitSourceMesh as one undo step.
+    // Importing a mesh whose topology fingerprint matches a profile attaches
+    // that profile (landmarks and mask) but keeps the current transform.
+    bool SourceSwapDiscardsWork() const;
+    void RunAfterSourceSwapConfirm(std::function<void()> swap);
+    void RequestSelectSourceProfile(const std::string& profileId);
+    void SelectSourceProfile(const SourceProfile& profile);
+    std::shared_ptr<Mesh> LoadProfileMesh(const SourceProfile& profile);
+    void CommitSourceMesh(std::shared_ptr<Mesh> mesh, const std::string& path,
+                          const SourceProfile* profile, bool applyProfileDefaults);
+    void ExportSourceProfileDraft();
+    // Replaces the Stage 2 points with the source profile's landmarks as
+    // named, source-only points so authored placement can be reviewed. One
+    // undo step restores the previous points.
+    void ShowProfileLandmarks();
     void ImportTextureForSlot(const std::string& slot);
     // Sprint 9.4 — uploads the project's Albedo to the current target mesh's
     // renderer. Textures live on the project but the GPU copy is per mesh, so
@@ -141,6 +163,10 @@ private:
     // this vector — they live in WrapPreset::BuiltIns(). The sidebar is
     // handed a const reference each Render() call.
     std::vector<WrapPreset> userPresets_;
+
+    // Sprint 11 — built-in then user Source Profiles, loaded once on
+    // Initialize from assets/profiles and %APPDATA%\MetaVisage\profiles.
+    std::vector<SourceProfile> sourceProfiles_;
 
     PendingAction pendingAction_ = PendingAction::None;
     std::string statusMessage_;

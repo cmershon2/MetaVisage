@@ -929,8 +929,14 @@ void Viewport::DrawPointLabelsOverlay(float x, float y, float w, float h) {
         Vector3 screenPos = RayCaster::WorldToScreen(worldPos, iw, ih, *camera_);
         if (screenPos.z < 0.0f || screenPos.z > 1.0f) continue;
 
-        char buf[16];
-        std::snprintf(buf, sizeof(buf), "%d", corr.pointID);
+        // Profile landmarks (Sprint 11 dev viewer) name the selected point
+        // only; naming all of them would bury the face in labels.
+        char buf[96];
+        if (isSelected && !corr.landmarkName.empty()) {
+            std::snprintf(buf, sizeof(buf), "%d  %s", corr.pointID, corr.landmarkName.c_str());
+        } else {
+            std::snprintf(buf, sizeof(buf), "%d", corr.pointID);
+        }
         ImVec2 textSize = font->CalcTextSizeA(fontSize, FLT_MAX, 0.0f, buf);
 
         float sx = x + screenPos.x;

@@ -27,6 +27,7 @@
 #include "io/ProjectSerializer.h"
 #include "io/MeshExporter.h"
 #include "io/PresetStore.h"
+#include "io/ProfileStore.h"
 #include "baking/TextureBaker.h"
 #include "baking/TextureWriter.h"
 #include "utils/Config.h"
@@ -48,6 +49,7 @@
 #include <filesystem>
 #include <format>
 #include <string>
+#include <unordered_map>
 
 // Sprint 3.8 follow-up — frameless OS window + custom title bar. We expose
 // the Win32 HWND so our WM_NCHITTEST handler can tell Windows where the
@@ -361,6 +363,8 @@ bool AppWindow::Initialize(int width, int height, const char* title) {
     viewportHost_->SetProject(project_.get());
 
     userPresets_ = PresetStore::LoadAll();
+    sourceProfiles_ = ProfileStore::LoadAll();
+    MV_LOG_INFO(std::format("Loaded {} source profile(s)", sourceProfiles_.size()));
     statusMessage_ = "Ready";
 
     // Stage 2 point placement: both viewports fire OnPointPlaced when the user
@@ -747,6 +751,7 @@ void AppWindow::TickOnce(int fbWidth, int fbHeight) {
                                             morphRunning_.load(),
                                             morphProgress_.load(),
                                             userPresets_,
+                                            sourceProfiles_,
                                             selectedPointIdx);
 
         if (actions.selectPointIndex && viewportHost_) {
@@ -773,7 +778,7 @@ void AppWindow::TickOnce(int fbWidth, int fbHeight) {
         if (actions.importMorphMeshRequested)  pendingAction_ = PendingAction::ImportMorphMesh;
         if (actions.importTargetMeshRequested) pendingAction_ = PendingAction::ImportTargetMesh;
         if (actions.exportMeshRequested)       pendingAction_ = PendingAction::ExportMesh;
-        if (actions.useDefaultMorphMeshRequested) UseDefaultMorphMesh();
+        if (actions.selectSourceProfileId) RequestSelectSourceProfile(*actions.selectSourceProfileId);
         if (!actions.importTextureSlot.empty()) ImportTextureForSlot(actions.importTextureSlot);
         if (actions.resetTransformRequested && project_) {
             if (undoStack_) {
@@ -1457,6 +1462,16 @@ void AppWindow::RenderMainMenuBar() {
         // (Sprint 10.1).
         ImGui::MenuItem("Icon Glyph Explorer (Dev)", nullptr, &showIconExplorer_);
         ImGui::MenuItem("Debug HUD (Dev)", nullptr, &showDebugHud_);
+        // Sprint 11 — writes the source mesh's points and mask as a Source
+        // Profile draft; used to author the built-in profiles.
+        if (ImGui::MenuItem("Export Source Profile Draft (Dev)")) {
+            pendingAction_ = PendingAction::ExportSourceProfileDraft;
+        }
+        // Loads the source profile's landmarks as named Stage 2 points so
+        // the authored placement can be checked on the mesh.
+        if (ImGui::MenuItem("Show Profile Landmarks (Dev)")) {
+            pendingAction_ = PendingAction::ShowProfileLandmarks;
+        }
         EndStyledMenu();
     }
 
@@ -1617,7 +1632,8 @@ void AppWindow::DispatchPendingAction() {
         }
         case PendingAction::ImportMorphMesh: {
             if (auto picked = FileDialogs::OpenFile(MeshImportFilters())) {
-                ImportMorphMeshFromDisk(*picked);
+                const std::string path = *picked;
+                RunAfterSourceSwapConfirm([this, path]() { ImportMorphMeshFromDisk(path); });
             }
             break;
         }
@@ -1637,6 +1653,12 @@ void AppWindow::DispatchPendingAction() {
             break;
         case PendingAction::ShowAbout:
             showAbout_ = true;
+            break;
+        case PendingAction::ExportSourceProfileDraft:
+            ExportSourceProfileDraft();
+            break;
+        case PendingAction::ShowProfileLandmarks:
+            ShowProfileLandmarks();
             break;
     }
 }
@@ -1939,6 +1961,12 @@ void AppWindow::OpenProjectFromDisk(const std::string& path) {
     project_ = std::move(fresh);
     projectPath_ = path;
     project_->SetPath(path);
+    // Points and mask live in the project, so a missing profile only matters
+    // to features that read the profile itself (auto-map, Sprint 12+).
+    const std::string& profileId = project_->GetSourceProfileId();
+    if (!profileId.empty() && !ProfileStore::FindById(sourceProfiles_, profileId)) {
+        MV_LOG_WARNING(std::format("Project source profile '{}' is not installed", profileId));
+    }
 
     // Reconstruct the deformed morph mesh from saved vertex/normal data —
     // ProjectSerializer parks the arrays in MorphData::savedDeformed*; the
@@ -2024,23 +2052,21 @@ void AppWindow::SaveProjectToDisk(const std::string& path) {
 
 void AppWindow::ImportMorphMeshFromDisk(const std::string& path) {
     if (!project_ || path.empty()) return;
-    MeshReference& ref = project_->GetMorphMesh();
-    ref.mesh = std::make_shared<Mesh>();
-    if (!ref.mesh->Load(path)) {
-        ref.mesh.reset();
-        ref.isLoaded = false;
-        errorModal_.Open(std::format("Failed to load morph mesh:\n{}", path));
+    auto mesh = std::make_shared<Mesh>();
+    if (!mesh->Load(path)) {
+        errorModal_.Open(std::format("Failed to load source mesh:\n{}", path));
         return;
     }
-    ref.filepath = path;
-    ref.isLoaded = true;
-    // Renderer lazy-uploads on first RenderMesh(); framing the bounds triggers
-    // a paint and gives the user immediate visual feedback.
-    if (viewportHost_ && viewportHost_->GetPrimaryViewport()) {
-        viewportHost_->GetPrimaryViewport()->GetCamera()->FocusOnBounds(ref.mesh->GetBounds());
-    }
-    statusMessage_ = std::format("Loaded morph mesh: {}", FileName(path));
-    MV_LOG_INFO(std::format("Loaded morph mesh: {}", path));
+    // A mesh with a known topology (for example the MetaHuman head exported
+    // to FBX) picks up that profile's landmarks and mask automatically.
+    const SourceProfile* match =
+        ProfileStore::FindByFingerprint(sourceProfiles_, TopologyFingerprint::FromMesh(*mesh));
+    CommitSourceMesh(mesh, path, match, /*applyProfileDefaults=*/false);
+    statusMessage_ = match
+        ? std::format("Loaded source mesh: {} (matched profile '{}')", FileName(path), match->name)
+        : std::format("Loaded source mesh: {}", FileName(path));
+    MV_LOG_INFO(std::format("Loaded source mesh: {}{}", path,
+                            match ? std::format(" (profile {})", match->id) : std::string()));
 }
 
 void AppWindow::ImportTargetMeshFromDisk(const std::string& path) {
@@ -2074,27 +2100,242 @@ void AppWindow::ImportTargetMeshFromDisk(const std::string& path) {
     MV_LOG_INFO(std::format("Loaded target mesh: {}", path));
 }
 
-void AppWindow::UseDefaultMorphMesh() {
+bool AppWindow::SourceSwapDiscardsWork() const {
+    if (!project_) return false;
+    if (!project_->GetPointReferenceData().correspondences.empty()) return true;
+    const MorphData& morph = project_->GetMorphData();
+    if (morph.isProcessed) return true;
+    // A mask counts as work only when it differs from what the current
+    // profile would apply again by default.
+    if (std::none_of(morph.vertexMask.begin(), morph.vertexMask.end(),
+                     [](bool masked) { return masked; })) {
+        return false;
+    }
+    const SourceProfile* current =
+        ProfileStore::FindById(sourceProfiles_, project_->GetSourceProfileId());
+    return !current || morph.vertexMask != current->BuildMask();
+}
+
+void AppWindow::RunAfterSourceSwapConfirm(std::function<void()> swap) {
     if (!project_) return;
+    if (morphRunning_.load()) {
+        statusMessage_ = "Wait for processing to finish before changing the source mesh";
+        return;
+    }
+    if (!SourceSwapDiscardsWork()) {
+        swap();
+        return;
+    }
+    confirmModal_.Open(
+        "Replace source mesh?",
+        "Changing the source mesh clears the reference points, vertex mask and "
+        "morph result, which all depend on the current source. Undo (Ctrl+Z) "
+        "restores them.",
+        std::move(swap),
+        "Replace");
+}
+
+void AppWindow::RequestSelectSourceProfile(const std::string& profileId) {
+    const SourceProfile* profile = ProfileStore::FindById(sourceProfiles_, profileId);
+    if (!profile) return;
+    // Copy: the confirm callback may run after sourceProfiles_ is reloaded.
+    const SourceProfile chosen = *profile;
+    RunAfterSourceSwapConfirm([this, chosen]() { SelectSourceProfile(chosen); });
+}
+
+void AppWindow::SelectSourceProfile(const SourceProfile& profile) {
+    if (!project_) return;
+    auto mesh = LoadProfileMesh(profile);
+    if (!mesh) return;
+    CommitSourceMesh(mesh, profile.resolvedMeshPath, &profile, /*applyProfileDefaults=*/true);
+    statusMessage_ = std::format("Source profile: {}", profile.name);
+    MV_LOG_INFO(std::format("Selected source profile {} ({})", profile.id,
+                            profile.resolvedMeshPath));
+}
+
+std::shared_ptr<Mesh> AppWindow::LoadProfileMesh(const SourceProfile& profile) {
+    std::error_code ec;
+    if (profile.resolvedMeshPath.empty() ||
+        !std::filesystem::exists(profile.resolvedMeshPath, ec)) {
+        errorModal_.Open(std::format("The mesh for source profile '{}' was not found at:\n{}",
+                                     profile.name, profile.resolvedMeshPath));
+        return nullptr;
+    }
+    auto mesh = std::make_shared<Mesh>();
+    if (!mesh->Load(profile.resolvedMeshPath)) {
+        errorModal_.Open(std::format("Failed to load the mesh for source profile '{}':\n{}",
+                                     profile.name, profile.resolvedMeshPath));
+        return nullptr;
+    }
+    const TopologyFingerprint fp = TopologyFingerprint::FromMesh(*mesh);
+    if (fp != profile.fingerprint) {
+        // Landmark and mask indices would land on the wrong vertices.
+        errorModal_.Open(std::format(
+            "{} does not have the topology source profile '{}' was made for.\n\n"
+            "Profile: {} vertices, {} faces (topology {}).\n"
+            "Mesh: {} vertices, {} faces (topology {}).",
+            FileName(profile.resolvedMeshPath), profile.name,
+            profile.fingerprint.vertexCount, profile.fingerprint.faceCount,
+            profile.fingerprint.HashHex(), fp.vertexCount, fp.faceCount, fp.HashHex()));
+        MV_LOG_WARNING(std::format("Source profile {} fingerprint mismatch for {}",
+                                   profile.id, profile.resolvedMeshPath));
+        return nullptr;
+    }
+    return mesh;
+}
+
+void AppWindow::CommitSourceMesh(std::shared_ptr<Mesh> mesh, const std::string& path,
+                                 const SourceProfile* profile, bool applyProfileDefaults) {
+    if (!project_ || !mesh) return;
+    auto before = SourceSwapUndoAction::SourceState::Capture(*project_);
+
+    MeshReference& ref = project_->GetMorphMesh();
+    MorphData& morph = project_->GetMorphData();
+    // Renderers cache GPU buffers by Mesh*. The replaced meshes stay alive in
+    // the undo action and re-upload lazily if it restores them.
+    if (viewportHost_) {
+        for (Viewport* vp : {viewportHost_->GetPrimaryViewport(),
+                             viewportHost_->GetSecondaryViewport()}) {
+            if (!vp) continue;
+            if (ref.mesh) vp->InvalidateMesh(ref.mesh.get());
+            if (morph.deformedMorphMesh) vp->InvalidateMesh(morph.deformedMorphMesh.get());
+        }
+    }
+
+    ref.mesh = mesh;
+    ref.filepath = path;
+    ref.isLoaded = true;
+    if (profile && applyProfileDefaults) ref.transform = profile->defaultTransform;
+    project_->SetSourceProfileId(profile ? profile->id : std::string());
+
+    // Everything indexed by source vertices starts over.
+    project_->GetPointReferenceData().correspondences.clear();
+    project_->GetPointReferenceData().activeSelection.Clear();
+    morph.vertexMask = profile ? profile->BuildMask() : std::vector<bool>();
+    morph.originalMorphMesh.reset();
+    morph.deformedMorphMesh.reset();
+    morph.isProcessed = false;
+    morph.isAccepted = false;
+    morph.displacementMagnitudes.clear();
+    morph.maxDisplacement = 0.0f;
+    morph.avgDisplacement = 0.0f;
+
+    if (profile && applyProfileDefaults && !profile->defaultWrapPresetId.empty()) {
+        const WrapPreset* preset = nullptr;
+        const auto builtIns = WrapPreset::BuiltIns();
+        for (const auto& p : builtIns) {
+            if (p.id == profile->defaultWrapPresetId) { preset = &p; break; }
+        }
+        for (const auto& p : userPresets_) {
+            if (!preset && p.id == profile->defaultWrapPresetId) { preset = &p; break; }
+        }
+        if (preset) {
+            preset->ApplyTo(morph);
+        } else {
+            MV_LOG_WARNING(std::format("Source profile {} names unknown wrap preset '{}'",
+                                       profile->id, profile->defaultWrapPresetId));
+        }
+    }
+
+    if (undoStack_) {
+        undoStack_->Push(std::make_unique<SourceSwapUndoAction>(
+            project_.get(), std::move(before),
+            SourceSwapUndoAction::SourceState::Capture(*project_)));
+    }
+
+    if (viewportHost_) {
+        viewportHost_->SetSelectedPointIndex(-1);
+        if (Viewport* vp = viewportHost_->GetPrimaryViewport()) {
+            if (!morph.vertexMask.empty()) vp->UploadMaskColors(mesh.get(), morph.vertexMask);
+            vp->GetCamera()->FocusOnBounds(mesh->GetBounds());
+        }
+    }
+}
+
+void AppWindow::ExportSourceProfileDraft() {
+    if (!project_ || !project_->GetMorphMesh().isLoaded || !project_->GetMorphMesh().mesh) {
+        errorModal_.Open("Load a source mesh before exporting a source profile draft.");
+        return;
+    }
     const std::string exeDir = Paths::ExecutableDir();
-    if (exeDir.empty()) {
-        errorModal_.Open("Could not locate the application directory.");
+    const std::string assetsDir = exeDir.empty()
+        ? std::string()
+        : (std::filesystem::path(exeDir) / "assets").generic_string();
+    const SourceProfile draft = SourceProfile::DraftFromProject(*project_, assetsDir);
+
+    auto picked = FileDialogs::SaveFile({{"Source profile", "json"}},
+                                        draft.id + ".mvprofile.json");
+    if (!picked) return;
+    if (!ProfileStore::WriteFile(draft, *picked)) {
+        errorModal_.Open(std::format("Could not write source profile draft:\n{}", *picked));
         return;
     }
-    const std::string path = exeDir + "/assets/models/MetaHumanHeadLod0.obj";
-    if (!std::filesystem::exists(path)) {
-        errorModal_.Open(std::format("Default MetaHuman head not found at:\n{}", path));
+    const auto problems = draft.Validate();
+    errorModal_.OpenInfo(
+        std::format("Wrote {} landmark(s) and {} mask range(s) to:\n{}{}",
+                    draft.landmarks.size(), draft.maskRanges.size(), *picked,
+                    problems.empty()
+                        ? std::string()
+                        : std::format("\n\nValidation: {} problem(s), first: {}",
+                                      problems.size(), problems.front())),
+        "Profile Draft Exported");
+    MV_LOG_INFO(std::format("Exported source profile draft {} to {}", draft.id, *picked));
+}
+
+void AppWindow::ShowProfileLandmarks() {
+    if (!project_) return;
+    const MeshReference& source = project_->GetMorphMesh();
+    const SourceProfile* profile =
+        ProfileStore::FindById(sourceProfiles_, project_->GetSourceProfileId());
+    if (!source.isLoaded || !source.mesh || !profile) {
+        errorModal_.Open("Pick a source profile in Stage 1 before showing its landmarks.");
         return;
     }
-    ImportMorphMeshFromDisk(path);
-    // -90° Y-axis rotation orients the bundled head to face camera-forward.
-    // Uses FromAxisAngle to side-step the param-order quirk in FromEulerAngles
-    // (the second arg — documented as yaw/Y — produces a Z-axis rotation in
-    // the current implementation).
-    if (project_->GetMorphMesh().isLoaded) {
-        project_->GetMorphMesh().transform.SetRotation(
-            Quaternion::FromAxisAngle(Vector3(1.0f, 0.0f, 0.0f), -90.0f));
+    if (!profile->HasLandmarks()) {
+        errorModal_.Open(std::format("{} has no landmarks yet.", profile->name));
+        return;
     }
+    if (project_->GetCurrentStage() != WorkflowStage::PointReference) {
+        errorModal_.Open("Open Stage 2 (Point Reference) to show profile landmarks.");
+        return;
+    }
+
+    // Point ids follow profile order, so mirrors resolve by landmark id.
+    std::unordered_map<std::string, int> pointIdByLandmark;
+    for (size_t i = 0; i < profile->landmarks.size(); ++i) {
+        pointIdByLandmark[profile->landmarks[i].id] = static_cast<int>(i) + 1;
+    }
+    const auto& vertices = source.mesh->GetVertices();
+    const Matrix4x4 model = source.transform.GetMatrix();
+    std::vector<PointCorrespondence> points;
+    points.reserve(profile->landmarks.size());
+    for (const auto& lm : profile->landmarks) {
+        if (lm.vertexIndex < 0 || lm.vertexIndex >= static_cast<int>(vertices.size())) continue;
+        PointCorrespondence pc;
+        pc.pointID              = pointIdByLandmark[lm.id];
+        pc.morphMeshVertexIndex = lm.vertexIndex;
+        pc.morphMeshPosition    = RayCaster::TransformPoint(vertices[lm.vertexIndex], model);
+        pc.landmarkName         = lm.name;
+        if (const auto it = pointIdByLandmark.find(lm.mirrorId);
+            !lm.mirrorId.empty() && it != pointIdByLandmark.end()) {
+            pc.isSymmetric     = true;
+            pc.symmetricPairID = it->second;
+        }
+        points.push_back(std::move(pc));
+    }
+
+    auto& correspondences = project_->GetPointReferenceData().correspondences;
+    const std::vector<PointCorrespondence> before = correspondences;
+    correspondences = points;
+    if (undoStack_) {
+        undoStack_->Push(std::make_unique<PointPlacementUndoAction>(
+            project_.get(), before, correspondences, "Show Profile Landmarks"));
+    }
+    if (viewportHost_) viewportHost_->SetSelectedPointIndex(-1);
+    statusMessage_ = std::format("Showing {} landmarks from {}. Ctrl+Z restores your points.",
+                                 points.size(), profile->name);
+    MV_LOG_INFO(std::format("Showing {} landmarks from source profile {}",
+                            points.size(), profile->id));
 }
 
 void AppWindow::ImportTextureForSlot(const std::string& slot) {
@@ -2255,6 +2496,7 @@ void AppWindow::OnEditUndo() {
     // takes them back to Stage 2). Sync the viewport host's dual-pane
     // state to match the new current stage.
     ApplyStageViewportMode();
+    RefreshMaskOverlay();
     statusMessage_ = "Undo";
 }
 
@@ -2262,7 +2504,24 @@ void AppWindow::OnEditRedo() {
     if (!undoStack_ || !undoStack_->CanRedo()) return;
     undoStack_->Redo();
     ApplyStageViewportMode();
+    RefreshMaskOverlay();
     statusMessage_ = "Redo";
+}
+
+void AppWindow::RefreshMaskOverlay() {
+    // Mask colours reach the GPU only when painted, so an undone stroke or
+    // source change would otherwise keep showing the replaced mask.
+    if (!project_ || !viewportHost_) return;
+    const MorphData& morph = project_->GetMorphData();
+    if (morph.vertexMask.empty()) return;
+    Viewport* vp = viewportHost_->GetPrimaryViewport();
+    if (!vp) return;
+    const Mesh* shown = (morph.isProcessed && morph.deformedMorphMesh)
+        ? morph.deformedMorphMesh.get()
+        : project_->GetMorphMesh().mesh.get();
+    if (shown && shown->GetVertexCount() == morph.vertexMask.size()) {
+        vp->UploadMaskColors(shown, morph.vertexMask);
+    }
 }
 
 void AppWindow::RenderFrame(int /*fbWidth*/, int /*fbHeight*/) {

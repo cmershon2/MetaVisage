@@ -1,6 +1,7 @@
 #ifndef METAVISAGE_UI_STAGESIDEBAR_H
 #define METAVISAGE_UI_STAGESIDEBAR_H
 
+#include "core/SourceProfile.h"
 #include "core/Transform.h"
 #include "core/WrapPreset.h"
 
@@ -44,7 +45,9 @@ public:
         std::string targetPresetId;
 
         // Stage 1 extras
-        bool useDefaultMorphMeshRequested = false;
+        // Sprint 11 — the user picked a Source Profile in the source picker.
+        // AppWindow confirms if the swap would discard work, then loads it.
+        std::optional<std::string> selectSourceProfileId;
         // When non-empty, AppWindow opens an NFD picker, loads the texture,
         // and adds it to Project::GetTargetTextures() under this slot name.
         std::string importTextureSlot;
@@ -83,12 +86,17 @@ public:
     // so the active row stays highlighted when the user picks a point in
     // the viewport. `userPresets` is read by Stage 3's preset card row;
     // built-ins live in WrapPreset::BuiltIns() and are not in this list.
+    // `sourceProfiles` (built-ins first) feeds Stage 1's source picker.
     Actions Render(Project* project, bool morphProcessing, float morphProgress,
                    const std::vector<WrapPreset>& userPresets,
+                   const std::vector<SourceProfile>& sourceProfiles,
                    int selectedPointIndex = -1);
 
 private:
-    void RenderAlignment(Project& project, Actions& out);
+    void RenderAlignment(Project& project, const std::vector<SourceProfile>& sourceProfiles,
+                         Actions& out);
+    void RenderSourcePicker(Project& project, const std::vector<SourceProfile>& sourceProfiles,
+                            Actions& out);
     void RenderPointReference(Project& project, Actions& out);
     void RenderMorph(Project& project, bool processing, float progress,
                      const std::vector<WrapPreset>& userPresets, Actions& out);

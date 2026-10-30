@@ -63,7 +63,7 @@ ctest --test-dir build -C Release -L ui --output-on-failure
 
 `VCPKG_ROOT` or `-DCMAKE_TOOLCHAIN_FILE=...` is required for configure.
 No API credentials, environment profiles, account, or license keys are required.
-The full smoke suite has four targets; `smoke_wrap_parity`
+The full smoke suite has five targets; `smoke_wrap_parity`
 can take about 70 seconds on development machines and has a 120-second CTest
 timeout.
 
@@ -79,7 +79,8 @@ Keep the layered architecture intact:
 ```text
 Presentation    -> ImGui shell, sidebars, modals, viewport
 Application     -> Project, StageManager, UndoStack
-Domain          -> Mesh engine, deformation algorithm, sculpting, WrapPreset
+Domain          -> Mesh engine, deformation algorithm, sculpting, WrapPreset,
+                   SourceProfile
 Infrastructure  -> File I/O, renderer, config, single-instance, storage
 ```
 
@@ -131,7 +132,7 @@ docs may use the internal name.
 - v1.0.0 feedback: `.agents/context/Version 1.0.0 Feedback.md`
 - Product backlog: `.agents/context/development/product_backlog.md`
 - Standalone transition: `.agents/context/open-source-transition.md`
-- Latest retrospective: `.agents/context/retrospectives/retro-sprint-10.md`
+- Latest retrospective: `.agents/context/retrospectives/retro-sprint-11.md`
 
 ## Repository Map
 
