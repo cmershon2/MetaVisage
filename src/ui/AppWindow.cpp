@@ -643,8 +643,7 @@ bool AppWindow::Initialize(int width, int height, const char* title) {
         // Application-global shortcuts (Ctrl-modified) are intercepted before
         // the viewport so they fire regardless of keyboard focus. Text-editing
         // ImGui widgets still receive character input through the char callback
-        // above, so Ctrl+Z inside a text field would need its own guard — but
-        // no editable text widget currently exists in Sprint 3.6.1.
+        // above; HandleGlobalShortcut leaves Ctrl+Z to them while typing.
         if (self->HandleGlobalShortcut(key, action, mods)) return;
         if (!self->viewportHost_) return;
         if (ImGui::GetIO().WantCaptureKeyboard) return;
@@ -1883,6 +1882,10 @@ bool AppWindow::HandleGlobalShortcut(int key, int action, int mods) {
             }
             return false;
         case GLFW_KEY_Z:
+            // Leave Ctrl+Z to the text field while one is being typed in
+            // (Sprint 9.3 typed transform entry); otherwise an app undo would
+            // run underneath an open typing gesture.
+            if (ImGui::GetIO().WantTextInput) return false;
             if (shift) OnEditRedo(); else OnEditUndo();
             return true;
         default:
@@ -1955,6 +1958,8 @@ void AppWindow::OpenProjectFromDisk(const std::string& path) {
         }
     }
 
+    RefreshTargetTexturePreview();
+
     // Aim the camera at whatever mesh is on screen so a freshly loaded
     // project doesn't open with the model parked off-frame.
     if (viewportHost_) {
@@ -2019,6 +2024,15 @@ void AppWindow::ImportMorphMeshFromDisk(const std::string& path) {
 void AppWindow::ImportTargetMeshFromDisk(const std::string& path) {
     if (!project_ || path.empty()) return;
     MeshReference& ref = project_->GetTargetMesh();
+    // Drop the replaced mesh's GPU buffers and texture. Renderers cache by
+    // Mesh pointer, so a stale entry would also be reused if the new mesh
+    // were allocated at the old address.
+    if (ref.mesh && viewportHost_) {
+        for (Viewport* vp : {viewportHost_->GetPrimaryViewport(),
+                             viewportHost_->GetSecondaryViewport()}) {
+            if (vp) vp->InvalidateMesh(ref.mesh.get());
+        }
+    }
     ref.mesh = std::make_shared<Mesh>();
     if (!ref.mesh->Load(path)) {
         ref.mesh.reset();
@@ -2031,6 +2045,9 @@ void AppWindow::ImportTargetMeshFromDisk(const std::string& path) {
     if (viewportHost_ && viewportHost_->GetPrimaryViewport()) {
         viewportHost_->GetPrimaryViewport()->GetCamera()->FocusOnBounds(ref.mesh->GetBounds());
     }
+    // Textures belong to the project, not the mesh — re-apply them so the
+    // new target isn't rendered untextured while the sidebar lists them.
+    RefreshTargetTexturePreview();
     statusMessage_ = std::format("Loaded target mesh: {}", FileName(path));
     MV_LOG_INFO(std::format("Loaded target mesh: {}", path));
 }
@@ -2073,16 +2090,21 @@ void AppWindow::ImportTextureForSlot(const std::string& slot) {
         return;
     }
     project_->GetTargetTextures().Add(slot, tex);
-    // Mirror Qt-era behaviour: only Albedo is uploaded as the active mesh
-    // texture for preview; other slots are stored for baking/export use.
-    if (slot == "Albedo" &&
-        viewportHost_ && viewportHost_->GetPrimaryViewport() &&
-        project_->GetTargetMesh().mesh) {
-        viewportHost_->GetPrimaryViewport()->UploadMeshTexture(
-            project_->GetTargetMesh().mesh.get(), *tex);
-    }
+    if (slot == "Albedo") RefreshTargetTexturePreview();
     statusMessage_ = std::format("Loaded {} texture: {}", slot, FileName(*picked));
     MV_LOG_INFO(std::format("Loaded {} texture: {}", slot, *picked));
+}
+
+void AppWindow::RefreshTargetTexturePreview() {
+    // Mirror Qt-era behaviour: only Albedo is uploaded as the active mesh
+    // texture for preview; other slots are stored for baking/export use.
+    if (!project_ || !viewportHost_) return;
+    const MeshReference& target = project_->GetTargetMesh();
+    const TextureSet& textures = project_->GetTargetTextures();
+    if (!target.isLoaded || !target.mesh || !textures.HasAlbedo()) return;
+    if (Viewport* vp = viewportHost_->GetPrimaryViewport()) {
+        vp->UploadMeshTexture(target.mesh.get(), *textures.GetAlbedo());
+    }
 }
 
 void AppWindow::ApplyStageViewportMode() {

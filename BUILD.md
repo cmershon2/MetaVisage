@@ -102,3 +102,36 @@ Settings, recent projects, and inspector preferences live under
 `%APPDATA%/MetaVisage`. Legacy account fields are ignored and omitted when
 settings are saved. The standalone application does not register browser URL
 handlers, contact a web service, or report exports.
+
+## Package a release
+
+After the Release build and tests pass, run from the repository root:
+
+```powershell
+.\package-release.ps1
+```
+
+The default version comes from `vcpkg.json` (currently `2.0.0`). Use
+`-Version 2.0.0-rc.1` to label a release candidate. Packaging uses the existing
+`build/bin/Release` output; it does not rebuild, rerun tests, create a Git tag,
+or upload a release.
+
+Outputs are under the ignored `release/` directory:
+
+- `MetaVisage-2.0.0-win-x64/`: executable, staged runtime DLLs and assets,
+  run instructions, project license, and dependency notices.
+- `MetaVisage-2.0.0-win-x64.zip`: upload this as the Windows binary asset.
+- `MetaVisage-2.0.0-win-x64.zip.sha256`: upload alongside the ZIP for verification.
+
+The script requires staged assets and DLLs and copies notices from the vcpkg
+installation identified by `build/CMakeCache.txt`, plus embedded stb licenses.
+It excludes test executables, fixtures, logs, and developer configuration. It
+never deletes prior packages or overwrites an existing output; move an existing
+version's outputs aside or choose another version before rerunning.
+
+Before publishing, extract the ZIP on a clean Windows machine and verify launch,
+mesh loading, wrapping, project save/reopen, and FBX export. The package requires
+the Microsoft Visual C++ x64 Redistributable; its installer is not bundled.
+Bundled head/font/icon provenance and notices still need verification as recorded
+in the [documentation review](.agents/context/reviews/open-source-documentation.md).
+Collecting dependency notices does not resolve those asset-specific items.

@@ -248,6 +248,59 @@ DragEditResult DrawAxisInput(const char* axisLetter,
 
     ImGui::PushID(axisLetter);
 
+    // Sprint 9.3 — typed entry. Double-click or Ctrl+click swaps the drag
+    // field for an InputFloat; Enter / focus loss commits, Esc cancels. The
+    // whole typing session is one gesture: editStarted fires on the click
+    // that opened it, editFinished when it closes, so callers keep their
+    // one-undo-per-gesture contract. State lives in ImGui storage keyed by
+    // this widget's ID stack, so no caller-side bookkeeping is needed.
+    enum TypingState : int { NotTyping = 0, FocusPending = 1, Typing = 2 };
+    ImGuiStorage* storage = ImGui::GetStateStorage();
+    const ImGuiID stateKey = ImGui::GetID("##typingState");
+    const ImGuiID valueKey = ImGui::GetID("##typingValue");
+    const ImGuiID frameKey = ImGui::GetID("##typingOpenedFrame");
+    const int typingState = disabled ? NotTyping : storage->GetInt(stateKey, NotTyping);
+
+    if (typingState != NotTyping) {
+        float typed = storage->GetFloat(valueKey, valueInOut);
+        if (typingState == FocusPending) ImGui::SetKeyboardFocusHere();
+
+        MvStyle::ScopedFont f(MvStyle::Font.Mono);
+        ImGui::PushStyleVar(ImGuiStyleVar_FramePadding,
+                            ImVec2(8.0f, (FrameH - ImGui::GetFontSize()) * 0.5f));
+        ImGui::PushStyleVar(ImGuiStyleVar_FrameRounding, 4.0f);
+        ImGui::PushStyleVar(ImGuiStyleVar_FrameBorderSize, 1.0f);
+        ImGui::PushStyleColor(ImGuiCol_FrameBg, MvStyle::MvBg3);
+        ImGui::PushStyleColor(ImGuiCol_Border,  MvStyle::MvBlue500);
+        ImGui::SetNextItemWidth(availW);
+        ImGui::InputFloat("##axisType", &typed, 0.0f, 0.0f, "%.2f",
+                          ImGuiInputTextFlags_AutoSelectAll);
+        ImGui::PopStyleColor(2);
+        ImGui::PopStyleVar(3);
+
+        // Close if focus never lands (e.g. the window lost focus), so the
+        // field can't get stuck in typing mode.
+        const bool focusTimedOut = typingState == FocusPending &&
+            !ImGui::IsItemActive() &&
+            ImGui::GetFrameCount() - storage->GetInt(frameKey, 0) > 3;
+        const bool cancelled = ImGui::IsKeyPressed(ImGuiKey_Escape, false);
+        const bool closed = ImGui::IsItemDeactivated() || focusTimedOut ||
+                            (typingState == Typing && !ImGui::IsItemActive());
+        if (closed || cancelled) {
+            if (!cancelled && typed != valueInOut) {
+                valueInOut = typed;
+                result.changed = true;
+            }
+            result.editFinished = true;
+            storage->SetInt(stateKey, NotTyping);
+        } else {
+            storage->SetFloat(valueKey, typed);
+            if (ImGui::IsItemActive()) storage->SetInt(stateKey, Typing);
+        }
+        ImGui::PopID();
+        return result;
+    }
+
     const ImVec2 framePos = ImGui::GetCursorScreenPos();
     const ImVec2 frameMax(framePos.x + availW, framePos.y + FrameH);
 
@@ -266,8 +319,22 @@ DragEditResult DrawAxisInput(const char* axisLetter,
     active  = ImGui::IsItemActive();
     result.editStarted  = ImGui::IsItemActivated();
     result.editFinished = ImGui::IsItemDeactivated();
+    if (!disabled) {
+        ImGui::SetItemTooltip("Drag to adjust. Double-click or Ctrl+click to type.");
+    }
     if (disabled) {
         ImGui::EndDisabled();
+    }
+
+    const bool openTyping = !disabled && result.editStarted &&
+        (ImGui::GetIO().KeyCtrl || ImGui::IsMouseDoubleClicked(ImGuiMouseButton_Left));
+    if (openTyping) {
+        // The click that opened typing stays this gesture's editStarted;
+        // the drag button stops being submitted, so suppress its delta.
+        storage->SetInt(stateKey, FocusPending);
+        storage->SetFloat(valueKey, valueInOut);
+        storage->SetInt(frameKey, ImGui::GetFrameCount());
+        active = false;
     }
 
     if (active && !disabled) {
@@ -357,6 +424,9 @@ DragEditResult DrawTransformGroup(const char* label,
     const ImGuiTableFlags tableFlags =
         ImGuiTableFlags_SizingStretchSame | ImGuiTableFlags_NoPadInnerX |
         ImGuiTableFlags_NoPadOuterX;
+    // Scope axis IDs per group so Position / Rotation / Scale "X" fields
+    // never share drag or typing state.
+    ImGui::PushID(label ? label : "");
     if (ImGui::BeginTable("##xform", 3, tableFlags)) {
         ImGui::TableNextRow();
 
@@ -392,6 +462,7 @@ DragEditResult DrawTransformGroup(const char* label,
 
         ImGui::EndTable();
     }
+    ImGui::PopID();
     return result;
 }
 

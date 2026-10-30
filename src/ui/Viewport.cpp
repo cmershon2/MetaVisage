@@ -31,6 +31,58 @@
 
 namespace MetaVisage {
 
+namespace {
+
+// Sprint 9.1 — world-space translation for a gizmo drag of (dx, dy) pixels so
+// the target mesh stays under the cursor. World units per pixel are measured
+// at the gizmo's depth (perspective) or from the ortho half-height, which
+// Camera::GetProjectionMatrix sets to the orbit distance. Constrained moves
+// project the pixel delta onto the axis's on-screen direction.
+Vector3 ComputeGizmoTranslation(const Camera& camera, const Vector3& gizmoPos,
+                                float viewportH, AxisConstraint constraint,
+                                float dx, float dy) {
+    if (viewportH <= 0.0f) return Vector3(0.0f, 0.0f, 0.0f);
+
+    const Vector3 forward  = (camera.GetTarget() - camera.GetPosition()).Normalized();
+    const Vector3 right    = forward.Cross(camera.GetUp()).Normalized();
+    const Vector3 cameraUp = right.Cross(forward).Normalized();
+
+    float worldPerPixel;
+    if (camera.GetProjectionMode() == ProjectionMode::Perspective) {
+        constexpr float kDegToRad = 3.14159265359f / 180.0f;
+        const float depth = std::max((gizmoPos - camera.GetPosition()).Dot(forward), 1e-4f);
+        worldPerPixel = 2.0f * depth * std::tan(camera.GetFOV() * 0.5f * kDegToRad) / viewportH;
+    } else {
+        worldPerPixel = 2.0f * camera.GetDistance() / viewportH;
+    }
+
+    if (constraint == AxisConstraint::None) {
+        // Screen Y grows downward; world "up" on screen is -dy.
+        return (right * dx + cameraUp * -dy) * worldPerPixel;
+    }
+
+    Vector3 axis(0.0f, 0.0f, 0.0f);
+    switch (constraint) {
+        case AxisConstraint::X: axis.x = 1.0f; break;
+        case AxisConstraint::Y: axis.y = 1.0f; break;
+        case AxisConstraint::Z: axis.z = 1.0f; break;
+        default: break;
+    }
+    // On-screen direction (pixels per world unit, scaled by worldPerPixel)
+    // of a unit step along the axis.
+    const float sx =  axis.Dot(right);
+    const float sy = -axis.Dot(cameraUp);
+    const float lenSq = sx * sx + sy * sy;
+    // Axis pointing (nearly) straight at the camera has no usable screen
+    // direction — fall back to horizontal drag so the handle still responds.
+    const float amount = lenSq > 1e-4f
+        ? (dx * sx + dy * sy) / lenSq * worldPerPixel
+        : dx * worldPerPixel;
+    return axis * amount;
+}
+
+} // namespace
+
 Viewport::Viewport()
     : camera_(std::make_unique<Camera>()),
       smoothBrush_(std::make_unique<SmoothBrush>()),
@@ -117,6 +169,10 @@ void Viewport::UploadHeatMapColors(const Mesh* mesh,
 
 void Viewport::UploadMeshTexture(const Mesh* mesh, const TextureData& texture) {
     if (renderer_) renderer_->UploadMeshTexture(mesh, texture);
+}
+
+bool Viewport::HasMeshTexture(const Mesh* mesh) const {
+    return renderer_ && renderer_->HasMeshTexture(mesh);
 }
 
 void Viewport::SetBrushType(BrushType type) {
@@ -333,22 +389,13 @@ void Viewport::OnMouseMove(float x, float y) {
     if (isTransforming_ && project_ && project_->GetTargetMesh().isLoaded) {
         Transform& transform = project_->GetTargetMesh().transform;
 
-        const float moveSensitivity   = 0.01f;
         const float rotateSensitivity = 0.5f;  // deg/pixel
         const float scaleSensitivity  = 0.005f;
 
         switch (transformMode_) {
             case TransformMode::Move: {
-                float ax =  dx * moveSensitivity;
-                float ay = -dy * moveSensitivity;   // invert Y for natural feel
-                Vector3 t(0.0f, 0.0f, 0.0f);
-                switch (axisConstraint_) {
-                    case AxisConstraint::X: t.x = ax; break;
-                    case AxisConstraint::Y: t.y = ay; break;
-                    case AxisConstraint::Z: t.z = -ax; break;
-                    default:                t.x = ax; t.y = ay; break;
-                }
-                transform.Translate(t);
+                transform.Translate(ComputeGizmoTranslation(
+                    *camera_, GetGizmoPosition(), lastH_, axisConstraint_, dx, dy));
                 break;
             }
             case TransformMode::Rotate: {
@@ -550,27 +597,29 @@ void Viewport::OnKey(int key, int /*scancode*/, int action, int mods) {
             if (OnCameraChanged) OnCameraChanged();
             break;
 
+        // Numpad views keep the current target and distance (like Blender),
+        // and go through yaw/pitch so a later orbit continues from them.
         case GLFW_KEY_KP_1:
             if (noMods) {
                 camera_->SetProjectionMode(ProjectionMode::OrthographicFront);
-                camera_->SetPosition(Vector3(0.0f, 0.0f, 5.0f));
-                camera_->SetTarget(Vector3(0.0f, 0.0f, 0.0f));
+                camera_->SetYaw(0.0f);
+                camera_->SetPitch(0.0f);
                 if (OnCameraChanged) OnCameraChanged();
             }
             break;
         case GLFW_KEY_KP_3:
             if (noMods) {
                 camera_->SetProjectionMode(ProjectionMode::OrthographicRight);
-                camera_->SetPosition(Vector3(5.0f, 0.0f, 0.0f));
-                camera_->SetTarget(Vector3(0.0f, 0.0f, 0.0f));
+                camera_->SetYaw(90.0f);
+                camera_->SetPitch(0.0f);
                 if (OnCameraChanged) OnCameraChanged();
             }
             break;
         case GLFW_KEY_KP_7:
             if (noMods) {
                 camera_->SetProjectionMode(ProjectionMode::OrthographicTop);
-                camera_->SetPosition(Vector3(0.0f, 5.0f, 0.0f));
-                camera_->SetTarget(Vector3(0.0f, 0.0f, 0.0f));
+                camera_->SetYaw(0.0f);
+                camera_->SetPitch(90.0f);
                 if (OnCameraChanged) OnCameraChanged();
             }
             break;
@@ -1278,7 +1327,7 @@ void Viewport::DrawBottomLeftHud(float x, float y, float w, float h) {
     StageHud hud = { "/ Stage 1 \xC2\xB7 Alignment",
                      "Position the source roughly over the MetaHuman target. "
                      "Hit F to focus, drag the gizmo handles to translate.",
-                     {"W,move", "E,rotate", "R,scale", nullptr} };
+                     {"G,move", "R,rotate", "S,scale", nullptr} };
     switch (stage) {
         case WorkflowStage::Alignment:
             // Already in default initializer.

@@ -100,6 +100,10 @@ private:
     void ImportTargetMeshFromDisk(const std::string& path);
     void UseDefaultMorphMesh();
     void ImportTextureForSlot(const std::string& slot);
+    // Sprint 9.4 — uploads the project's Albedo to the current target mesh's
+    // renderer. Textures live on the project but the GPU copy is per mesh, so
+    // this runs after texture import, target mesh replacement and project open.
+    void RefreshTargetTexturePreview();
     void DoExport();
 
     // Keep ViewportHost dual-mode flag in sync with the current stage — dual

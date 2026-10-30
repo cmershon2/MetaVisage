@@ -67,6 +67,11 @@ The full smoke suite has four targets; `smoke_wrap_parity`
 can take about 70 seconds on development machines and has a 120-second CTest
 timeout.
 
+Package an already-tested MSVC Release build with `.\package-release.ps1`.
+It reads the version from `vcpkg.json` and writes the portable Windows ZIP and
+SHA-256 checksum under ignored `release/`. It preserves prior packages and
+rejects existing output names. See `BUILD.md` for package validation and notices.
+
 ## Architecture
 
 Keep the layered architecture intact:
@@ -126,7 +131,7 @@ docs may use the internal name.
 - v1.0.0 feedback: `.agents/context/Version 1.0.0 Feedback.md`
 - Product backlog: `.agents/context/development/product_backlog.md`
 - Standalone transition: `.agents/context/open-source-transition.md`
-- Latest retrospective: `.agents/context/retrospectives/retro-sprint-08.md`
+- Latest retrospective: `.agents/context/retrospectives/retro-sprint-09.md`
 
 ## Repository Map
 

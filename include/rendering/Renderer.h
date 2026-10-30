@@ -54,6 +54,7 @@ public:
     // Texture support
     void UploadMeshTexture(const Mesh* mesh, const TextureData& texture);
     void ClearMeshTexture(const Mesh* mesh);
+    bool HasMeshTexture(const Mesh* mesh) const;
 
     // Transform gizmo
     void RenderTransformGizmo(TransformMode mode, const Vector3& position,

@@ -564,6 +564,11 @@ void Renderer::ClearMeshTexture(const Mesh* mesh) {
     }
 }
 
+bool Renderer::HasMeshTexture(const Mesh* mesh) const {
+    auto it = meshRenderers_.find(mesh);
+    return it != meshRenderers_.end() && it->second->HasTexture();
+}
+
 void Renderer::UploadHeatMapColors(const Mesh* mesh, const std::vector<float>& displacements, float maxDisplacement) {
     MeshRenderer* renderer = GetOrCreateMeshRenderer(*mesh);
     if (!renderer->HasMesh()) return;

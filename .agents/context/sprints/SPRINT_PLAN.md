@@ -4,6 +4,10 @@
 supersedes the commercial distribution/auto-update roadmap below. Sprints 1-7
 remain historical records. The current application is MIT licensed and offline.
 
+**Latest**: [Sprint 9 - Alignment Stage Usability Fixes](sprint-09.md), complete 2026-10-30.
+**Next (planned 2026-10-29, pending approval)**:
+[Sprint 10 - App Shell & Morph Stage Polish](sprint-10.md), from the same user feedback triage.
+
 **Version:** 2.0  
 **Date:** April 19, 2026  
 **Total Duration:** 20 weeks (10 sprints @ 2 weeks each)  
