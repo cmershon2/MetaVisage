@@ -52,6 +52,10 @@ See [BUILD.md](BUILD.md) for vcpkg setup, tests, and troubleshooting. MSVC is
 the validated toolchain; the retained MinGW helper requires a compatible vcpkg
 triplet and has not been validated for the standalone release.
 
+To package a tested Release build, run `.\package-release.ps1`. It creates a
+Windows ZIP and SHA-256 checksum under `release/`. See
+[release packaging](BUILD.md#package-a-release) for contents and validation.
+
 ## Workflow
 
 1. **Alignment**: Load a source MetaHuman head and your target head, then align

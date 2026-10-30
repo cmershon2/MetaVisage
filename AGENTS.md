@@ -67,6 +67,11 @@ The full smoke suite has four targets; `smoke_wrap_parity`
 can take about 70 seconds on development machines and has a 120-second CTest
 timeout.
 
+Package an already-tested MSVC Release build with `.\package-release.ps1`.
+It reads the version from `vcpkg.json` and writes the portable Windows ZIP and
+SHA-256 checksum under ignored `release/`. It preserves prior packages and
+rejects existing output names. See `BUILD.md` for package validation and notices.
+
 ## Architecture
 
 Keep the layered architecture intact:

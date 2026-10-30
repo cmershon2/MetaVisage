@@ -1,684 +1,324 @@
 {
   "schemaVersion": 2,
   "plugin": "codex-agent-boilerplate",
-  "version": "0.1.3",
-  "syncedAt": "2026-05-25",
+  "version": "0.5.2",
+  "syncedAt": "2026-10-28",
   "manifest": ".agents/boilerplate-manifest.json",
-  "vendorRoot": ".agents/vendor/codex-agent-boilerplate",
   "managedFiles": {
+    "AGENTS.md": {
+      "sha256": "17b910b5806769dc13291d97e8b8c981293fe3238c06036261260688f555e416",
+      "sourceVersion": "0.5.2",
+      "source": "AGENTS.md",
+      "role": "active",
+      "activation": "project",
+      "ownership": "merge",
+      "sourceSha256": "6d0c6bdd8ac1d4c9488129fcda99d378de54b65796b2799bfc28f29df1ba2cdf"
+    },
     ".agents/boilerplate-manifest.json": {
-      "sha256": "b1f8d6089defa89d23a27305cb573f2df38cffd421f8d082fcf0acb288b78865",
-      "sourceVersion": "0.1.3",
+      "sha256": "84560510e03ced27f3b614a5d65132f70662f43e5ecaf5cf0d522c3d07d8e98d",
+      "sourceVersion": "0.5.2",
       "source": ".agents/boilerplate-manifest.json",
       "role": "active",
       "activation": "project",
       "ownership": "managed"
     },
-    ".agents/context/campaigns/campaign-template.md": {
-      "sha256": "d549485176935177f1afbbdd498a4b656eb909bd487981d3ca3ff03f50b19180",
-      "sourceVersion": "0.1.3",
-      "source": ".agents/context/campaigns/campaign-template.md",
-      "role": "active",
-      "activation": "project",
-      "ownership": "merge"
-    },
-    ".agents/context/campaigns/handoff-template.md": {
-      "sha256": "f850289f64165803ab2f420c67a4f53875f12b7880ac545141322efa12304faf",
-      "sourceVersion": "0.1.3",
-      "source": ".agents/context/campaigns/handoff-template.md",
-      "role": "active",
-      "activation": "project",
-      "ownership": "merge"
-    },
-    ".agents/context/campaigns/readiness-template.md": {
-      "sha256": "e9ed36f74c8e212ccf82d83e09b138bf28a21e2f94e5ba65224077257104ea00",
-      "sourceVersion": "0.1.3",
-      "source": ".agents/context/campaigns/readiness-template.md",
-      "role": "active",
-      "activation": "project",
-      "ownership": "merge"
-    },
-    ".agents/context/development/backlog_changelog.md": {
-      "sha256": "8f4911f6c90bad7e5921413edf49832b54d5c6228481c4e7092f7b5f84f18ae0",
-      "sourceVersion": "0.1.3",
-      "source": ".agents/context/development/backlog_changelog.md",
-      "role": "active",
-      "activation": "project",
-      "ownership": "preserve"
-    },
-    ".agents/context/development/product_backlog.md": {
-      "sha256": "f9e0d9759e5df92adf382ba0027f5f3a50507a7c6adc5b8c512e1ea2acb49c41",
-      "sourceVersion": "0.1.3",
-      "source": ".agents/context/development/product_backlog.md",
-      "role": "active",
-      "activation": "project",
-      "ownership": "preserve"
-    },
-    ".agents/context/product-vision.md": {
-      "sha256": "d460fb91008990a04051383df9b9d370f4ef341e1c69345917ef3c28ab0c97a1",
-      "sourceVersion": "0.1.3",
-      "source": ".agents/context/product-vision.md",
-      "role": "active",
-      "activation": "project",
-      "ownership": "preserve"
-    },
-    ".agents/context/retrospectives/retro-template.md": {
-      "sha256": "5733eedaec3938bb059cd5978698f3b867c1a520d68986c4c0546f4a72b287ff",
-      "sourceVersion": "0.1.3",
-      "source": ".agents/context/retrospectives/retro-template.md",
-      "role": "active",
-      "activation": "project",
-      "ownership": "merge"
-    },
-    ".agents/context/sprints/sprint-template.md": {
-      "sha256": "5d6cd50098f86b43f39b57300ba5904c6f975cdb549176f43912952112146f57",
-      "sourceVersion": "0.1.3",
-      "source": ".agents/context/sprints/sprint-template.md",
-      "role": "active",
-      "activation": "project",
-      "ownership": "merge"
-    },
-    ".agents/rules/campaign-workflow.md": {
-      "sha256": "b527d4f3e6595fa791cdcbe0d3d5670a834a92fcc0257d9af398554b289f6ae5",
-      "sourceVersion": "0.1.3",
-      "source": ".agents/rules/campaign-workflow.md",
-      "role": "active",
-      "activation": "project",
-      "ownership": "managed"
-    },
-    ".agents/rules/code-style.md": {
-      "sha256": "85af2f443eb389b16391af2122e9d041b1178957c7e0163e45f9a07ce762d2c3",
-      "sourceVersion": "0.1.3",
-      "source": ".agents/rules/code-style.md",
-      "role": "active",
-      "activation": "project",
-      "ownership": "managed"
-    },
-    ".agents/rules/design-workflow.md": {
-      "sha256": "a8912a2d999991ddf1d42b801f1f149523c1b50c55447ebdd0e62ff1bc36e466",
-      "sourceVersion": "0.1.3",
-      "source": ".agents/rules/design-workflow.md",
-      "role": "active",
-      "activation": "project",
-      "ownership": "managed"
-    },
-    ".agents/rules/git-workflow.md": {
-      "sha256": "412fdaf92b5ee8ed105de2e9018fe592d59383481b26d8798c7b1116a11eada1",
-      "sourceVersion": "0.1.3",
-      "source": ".agents/rules/git-workflow.md",
-      "role": "active",
-      "activation": "project",
-      "ownership": "managed"
-    },
-    ".agents/rules/security.md": {
-      "sha256": "fb25efec78229bc33ea101bc369017c973ccb27667760b31d00b59e42ad4487c",
-      "sourceVersion": "0.1.3",
-      "source": ".agents/rules/security.md",
-      "role": "active",
-      "activation": "project",
-      "ownership": "managed"
-    },
-    ".agents/rules/sprint-workflow.md": {
-      "sha256": "7f7c689baece44882dad16d84fdfea22e42efbe70af8f4be87503afe4b5aa46f",
-      "sourceVersion": "0.1.3",
-      "source": ".agents/rules/sprint-workflow.md",
-      "role": "active",
-      "activation": "project",
-      "ownership": "managed"
-    },
-    ".agents/rules/testing.md": {
-      "sha256": "e4dbe4132fa5392165d66ac969dd5241fbd0c051219b1eac0f691e5d03f1b0f9",
-      "sourceVersion": "0.1.3",
-      "source": ".agents/rules/testing.md",
-      "role": "active",
-      "activation": "project",
-      "ownership": "managed"
-    },
     ".agents/skills/boilerplate-upgrade/SKILL.md": {
-      "sha256": "0cba22976c507237d11b513b4aa7d1b1c8c21e37b7c4e9c0f6c35eeff6f069c5",
-      "sourceVersion": "0.1.3",
+      "sha256": "d1630376c820736dfd3fb6022204f067131bed76dccf4746be979b667a6a0ffc",
+      "sourceVersion": "0.5.2",
       "source": ".agents/skills/boilerplate-upgrade/SKILL.md",
       "role": "active",
       "activation": "project",
       "ownership": "managed"
     },
     ".agents/skills/boilerplate-upgrade/scripts/upgrade.py": {
-      "sha256": "a70a41a9f6053aa77aecde3f99f9aee9caca96f71bd308a39defcd93469c1432",
-      "sourceVersion": "0.1.3",
+      "sha256": "9839ea9b2b312cd4d70dbf32a4a16ad7be896e9c8ab93f76ca7d12396adfe838",
+      "sourceVersion": "0.5.2",
       "source": ".agents/skills/boilerplate-upgrade/scripts/upgrade.py",
       "role": "active",
       "activation": "project",
       "ownership": "managed"
     },
     ".agents/skills/campaign-executor/SKILL.md": {
-      "sha256": "b8bdf8dc4ea765667d3d74d298702e4d90bf12bdf89657f1028da9111384685c",
-      "sourceVersion": "0.1.3",
+      "sha256": "44ca07047f6de24d5b5b2f5e88a00d7a49690e43931056b0ffa256d198e2b5ad",
+      "sourceVersion": "0.5.2",
       "source": ".agents/skills/campaign-executor/SKILL.md",
       "role": "active",
       "activation": "project",
       "ownership": "managed"
     },
     ".agents/skills/campaign-readiness/SKILL.md": {
-      "sha256": "36228221898071f1d322af8c165a9eae0d5c70793990c230a96ac390b3747b66",
-      "sourceVersion": "0.1.3",
+      "sha256": "a0a869c5dad6df1c826749406a70e5d6094722ceb850f5b4718130716b465c22",
+      "sourceVersion": "0.5.2",
       "source": ".agents/skills/campaign-readiness/SKILL.md",
       "role": "active",
       "activation": "project",
       "ownership": "managed"
     },
     ".agents/skills/commit/SKILL.md": {
-      "sha256": "9670f77819a75f0f0e22491df9fe10c799db8c7d5830162461fd99fe5698f184",
-      "sourceVersion": "0.1.3",
+      "sha256": "56adb4d4206233176d3fe55a1bccaaef7d3e579624af5acee0aaa77c9f822710",
+      "sourceVersion": "0.5.2",
       "source": ".agents/skills/commit/SKILL.md",
       "role": "active",
       "activation": "project",
       "ownership": "managed"
     },
     ".agents/skills/product-backlog/SKILL.md": {
-      "sha256": "c29a4f33f7e1e11e627086f0af583301f69715f67d956942ed59e32c5c0aa870",
-      "sourceVersion": "0.1.3",
+      "sha256": "abd6f4d90005edf205c9a4cd7871a98c8e3c0ec06d31db9003638104f8a1fb6f",
+      "sourceVersion": "0.5.2",
       "source": ".agents/skills/product-backlog/SKILL.md",
       "role": "active",
       "activation": "project",
       "ownership": "managed"
     },
     ".agents/skills/project-onboarding/SKILL.md": {
-      "sha256": "ffb32116d4b1965046cc3edcf4015a4243626aed1baaec92cd59093db2aefa8a",
-      "sourceVersion": "0.1.3",
+      "sha256": "6613b2cb9c0c43d4d338973030bf223f13b39f03da4429c56c94c78d0142074e",
+      "sourceVersion": "0.5.2",
       "source": ".agents/skills/project-onboarding/SKILL.md",
       "role": "active",
       "activation": "project",
       "ownership": "managed"
     },
-    ".agents/skills/project-onboarding/templates/generic.md": {
-      "sha256": "78a834fe3ecb31d08bcdb8f737144641c11d8cb5386b61bb16ba9837a648c5bd",
-      "sourceVersion": "0.1.3",
-      "source": ".agents/skills/project-onboarding/templates/generic.md",
-      "role": "active",
-      "activation": "project",
-      "ownership": "managed"
-    },
-    ".agents/skills/project-onboarding/templates/go.md": {
-      "sha256": "fbf2deda106b730183370726fab6906fdd0f4cfa3bb567e73f86ad1c9175b2f7",
-      "sourceVersion": "0.1.3",
-      "source": ".agents/skills/project-onboarding/templates/go.md",
-      "role": "active",
-      "activation": "project",
-      "ownership": "managed"
-    },
-    ".agents/skills/project-onboarding/templates/node-ts.md": {
-      "sha256": "7be7d80bd2a1ceeb0895efb55be3fb8fe553dcfa50f6d5b5853cda03b5f10422",
-      "sourceVersion": "0.1.3",
-      "source": ".agents/skills/project-onboarding/templates/node-ts.md",
-      "role": "active",
-      "activation": "project",
-      "ownership": "managed"
-    },
-    ".agents/skills/project-onboarding/templates/python.md": {
-      "sha256": "3476ef654b98ecd786570447f52fee025ef40c4972fa6150d7b58945a907b75b",
-      "sourceVersion": "0.1.3",
-      "source": ".agents/skills/project-onboarding/templates/python.md",
-      "role": "active",
-      "activation": "project",
-      "ownership": "managed"
-    },
     ".agents/skills/review-pr/SKILL.md": {
-      "sha256": "f1d281aefcb129793a4822ddb33a43b3f771e75d5e07a74c40e8683eedf723ad",
-      "sourceVersion": "0.1.3",
+      "sha256": "d5ad5177ee79f7574c6d5d2bb611f160eaff970683168b1bb59655ca19d9ae2c",
+      "sourceVersion": "0.5.2",
       "source": ".agents/skills/review-pr/SKILL.md",
       "role": "active",
       "activation": "project",
       "ownership": "managed"
     },
     ".agents/skills/sprint-planner/SKILL.md": {
-      "sha256": "550f29637645ed8f1636af33d2b30f94583b6a563c2dc79fb2f0676b0d4083eb",
-      "sourceVersion": "0.1.3",
+      "sha256": "8d4d0d9e7e7c88be020e14405ad2990c6a69ec745b94f7114db31f6a22935465",
+      "sourceVersion": "0.5.2",
       "source": ".agents/skills/sprint-planner/SKILL.md",
       "role": "active",
       "activation": "project",
       "ownership": "managed"
     },
     ".agents/skills/sprint-retrospective/SKILL.md": {
-      "sha256": "2f97ac227ef2a64d225a47fddaa8700e97ac9df171685a380dab9362b1776720",
-      "sourceVersion": "0.1.3",
+      "sha256": "ea5caebe4c20c34c9e45ef1d35da69f6ed40deb9ad6dc2b0572da578d718d278",
+      "sourceVersion": "0.5.2",
       "source": ".agents/skills/sprint-retrospective/SKILL.md",
       "role": "active",
       "activation": "project",
       "ownership": "managed"
     },
     ".agents/skills/update-context/SKILL.md": {
-      "sha256": "e1869982fc0b579de7abc86245fa44e7685b3727d259c111fb875700f2be7fd5",
-      "sourceVersion": "0.1.3",
+      "sha256": "f52ab6ae216c7f6ee8a995bd9404b30607e977e672815f5a3d3ef236cc3e2bf4",
+      "sourceVersion": "0.5.2",
       "source": ".agents/skills/update-context/SKILL.md",
       "role": "active",
       "activation": "project",
       "ownership": "managed"
     },
     ".agents/skills/write-pr/SKILL.md": {
-      "sha256": "fce9eb901ca5be7a54f7db053b7cc82c992d8cd2802341728440539cdcd8255a",
-      "sourceVersion": "0.1.3",
+      "sha256": "d6ec131beea22e516e5addc807823dfd231f628fbd5b86afdb034d382406bc8e",
+      "sourceVersion": "0.5.2",
       "source": ".agents/skills/write-pr/SKILL.md",
       "role": "active",
       "activation": "project",
       "ownership": "managed"
     },
-    ".agents/vendor/codex-agent-boilerplate/.agents/boilerplate-manifest.json": {
-      "sha256": "b1f8d6089defa89d23a27305cb573f2df38cffd421f8d082fcf0acb288b78865",
-      "sourceVersion": "0.1.3",
-      "source": ".agents/boilerplate-manifest.json",
-      "role": "reference",
-      "activation": "reference",
-      "ownership": "managed"
-    },
-    ".agents/vendor/codex-agent-boilerplate/.agents/context/campaigns/campaign-template.md": {
-      "sha256": "d549485176935177f1afbbdd498a4b656eb909bd487981d3ca3ff03f50b19180",
-      "sourceVersion": "0.1.3",
-      "source": ".agents/context/campaigns/campaign-template.md",
-      "role": "reference",
-      "activation": "reference",
-      "ownership": "managed"
-    },
-    ".agents/vendor/codex-agent-boilerplate/.agents/context/campaigns/handoff-template.md": {
-      "sha256": "f850289f64165803ab2f420c67a4f53875f12b7880ac545141322efa12304faf",
-      "sourceVersion": "0.1.3",
-      "source": ".agents/context/campaigns/handoff-template.md",
-      "role": "reference",
-      "activation": "reference",
-      "ownership": "managed"
-    },
-    ".agents/vendor/codex-agent-boilerplate/.agents/context/campaigns/readiness-template.md": {
-      "sha256": "e9ed36f74c8e212ccf82d83e09b138bf28a21e2f94e5ba65224077257104ea00",
-      "sourceVersion": "0.1.3",
-      "source": ".agents/context/campaigns/readiness-template.md",
-      "role": "reference",
-      "activation": "reference",
-      "ownership": "managed"
-    },
-    ".agents/vendor/codex-agent-boilerplate/.agents/context/development/backlog_changelog.md": {
-      "sha256": "1afde8990551ec2f1669f1bd64f4c614337a9d3a2746e1b963d0e99ccf80b86d",
-      "sourceVersion": "0.1.3",
-      "source": ".agents/context/development/backlog_changelog.md",
-      "role": "reference",
-      "activation": "reference",
-      "ownership": "managed"
-    },
-    ".agents/vendor/codex-agent-boilerplate/.agents/context/development/product_backlog.md": {
-      "sha256": "fe7d83dfcdf8cb05733f19b33435b654884385dcb50a96d43e669c7f3ca479bc",
-      "sourceVersion": "0.1.3",
-      "source": ".agents/context/development/product_backlog.md",
-      "role": "reference",
-      "activation": "reference",
-      "ownership": "managed"
-    },
-    ".agents/vendor/codex-agent-boilerplate/.agents/context/product-vision.md": {
-      "sha256": "811bb95012a11d983db5bd44b81d2ae8217998b3a5776900368d8dd441d176c3",
-      "sourceVersion": "0.1.3",
-      "source": ".agents/context/product-vision.md",
-      "role": "reference",
-      "activation": "reference",
-      "ownership": "managed"
-    },
-    ".agents/vendor/codex-agent-boilerplate/.agents/context/retrospectives/retro-template.md": {
-      "sha256": "5733eedaec3938bb059cd5978698f3b867c1a520d68986c4c0546f4a72b287ff",
-      "sourceVersion": "0.1.3",
-      "source": ".agents/context/retrospectives/retro-template.md",
-      "role": "reference",
-      "activation": "reference",
-      "ownership": "managed"
-    },
-    ".agents/vendor/codex-agent-boilerplate/.agents/context/sprints/sprint-template.md": {
-      "sha256": "ae42959f46cd9bcc6524855f3bbd67bf06ee8fd6361c62fe652193dbb5bebfbc",
-      "sourceVersion": "0.1.3",
-      "source": ".agents/context/sprints/sprint-template.md",
-      "role": "reference",
-      "activation": "reference",
-      "ownership": "managed"
-    },
-    ".agents/vendor/codex-agent-boilerplate/.agents/rules/campaign-workflow.md": {
-      "sha256": "b527d4f3e6595fa791cdcbe0d3d5670a834a92fcc0257d9af398554b289f6ae5",
-      "sourceVersion": "0.1.3",
-      "source": ".agents/rules/campaign-workflow.md",
-      "role": "reference",
-      "activation": "reference",
-      "ownership": "managed"
-    },
-    ".agents/vendor/codex-agent-boilerplate/.agents/rules/code-style.md": {
-      "sha256": "85af2f443eb389b16391af2122e9d041b1178957c7e0163e45f9a07ce762d2c3",
-      "sourceVersion": "0.1.3",
+    ".agents/rules/code-style.md": {
+      "sha256": "6ffa0a727901a159f39ad4033e1baaf0fed13c0bfefed45484eb8756912a531c",
+      "sourceVersion": "0.5.2",
       "source": ".agents/rules/code-style.md",
-      "role": "reference",
-      "activation": "reference",
+      "role": "active",
+      "activation": "project",
       "ownership": "managed"
     },
-    ".agents/vendor/codex-agent-boilerplate/.agents/rules/design-workflow.md": {
-      "sha256": "a8912a2d999991ddf1d42b801f1f149523c1b50c55447ebdd0e62ff1bc36e466",
-      "sourceVersion": "0.1.3",
+    ".agents/rules/design-workflow.md": {
+      "sha256": "73aee6b5d913d00336187ec0f6b04fd7447fab6f797ca2e933bb09cde87ab5fc",
+      "sourceVersion": "0.5.2",
       "source": ".agents/rules/design-workflow.md",
-      "role": "reference",
-      "activation": "reference",
+      "role": "active",
+      "activation": "project",
       "ownership": "managed"
     },
-    ".agents/vendor/codex-agent-boilerplate/.agents/rules/git-workflow.md": {
-      "sha256": "412fdaf92b5ee8ed105de2e9018fe592d59383481b26d8798c7b1116a11eada1",
-      "sourceVersion": "0.1.3",
+    ".agents/rules/git-workflow.md": {
+      "sha256": "5750185ba7f5c6dc6f9717ab4398a8f43ec96ace47020c53589ebe8cb21ed083",
+      "sourceVersion": "0.5.2",
       "source": ".agents/rules/git-workflow.md",
-      "role": "reference",
-      "activation": "reference",
+      "role": "active",
+      "activation": "project",
       "ownership": "managed"
     },
-    ".agents/vendor/codex-agent-boilerplate/.agents/rules/security.md": {
-      "sha256": "fb25efec78229bc33ea101bc369017c973ccb27667760b31d00b59e42ad4487c",
-      "sourceVersion": "0.1.3",
+    ".agents/rules/language.md": {
+      "sha256": "0526bc3da572bdfefd2217941b5b83622830a228e315321bac0a6fb07384cc9d",
+      "sourceVersion": "0.5.2",
+      "source": ".agents/rules/language.md",
+      "role": "active",
+      "activation": "project",
+      "ownership": "managed"
+    },
+    ".agents/rules/security.md": {
+      "sha256": "24af3dadd2e31e2353088b96a7440a4f90957ce37c565b1e8a87ce8624a6992f",
+      "sourceVersion": "0.5.2",
       "source": ".agents/rules/security.md",
-      "role": "reference",
-      "activation": "reference",
+      "role": "active",
+      "activation": "project",
       "ownership": "managed"
     },
-    ".agents/vendor/codex-agent-boilerplate/.agents/rules/sprint-workflow.md": {
-      "sha256": "7f7c689baece44882dad16d84fdfea22e42efbe70af8f4be87503afe4b5aa46f",
-      "sourceVersion": "0.1.3",
+    ".agents/rules/sprint-workflow.md": {
+      "sha256": "6a6fde8ef5fc4fd5cb4144ff2883dd259f94eba3b832651f7606dca88ba92ef7",
+      "sourceVersion": "0.5.2",
       "source": ".agents/rules/sprint-workflow.md",
-      "role": "reference",
-      "activation": "reference",
+      "role": "active",
+      "activation": "project",
       "ownership": "managed"
     },
-    ".agents/vendor/codex-agent-boilerplate/.agents/rules/testing.md": {
-      "sha256": "e4dbe4132fa5392165d66ac969dd5241fbd0c051219b1eac0f691e5d03f1b0f9",
-      "sourceVersion": "0.1.3",
+    ".agents/rules/testing.md": {
+      "sha256": "2fc198c768fa8b10f6230e150eec9b167725a60416e810b0e88d71a510636fd5",
+      "sourceVersion": "0.5.2",
       "source": ".agents/rules/testing.md",
-      "role": "reference",
-      "activation": "reference",
+      "role": "active",
+      "activation": "project",
       "ownership": "managed"
     },
-    ".agents/vendor/codex-agent-boilerplate/.agents/skills/boilerplate-upgrade/SKILL.md": {
-      "sha256": "0cba22976c507237d11b513b4aa7d1b1c8c21e37b7c4e9c0f6c35eeff6f069c5",
-      "sourceVersion": "0.1.3",
-      "source": ".agents/skills/boilerplate-upgrade/SKILL.md",
-      "role": "reference",
-      "activation": "reference",
-      "ownership": "managed"
+    ".agents/context/campaigns/campaign-template.md": {
+      "sha256": "6491f0ac703d9769c2fb8275806e8c06f034f7a882a4cd030ddc465d520d6c4e",
+      "sourceVersion": "0.5.2",
+      "source": ".agents/context/campaigns/campaign-template.md",
+      "role": "active",
+      "activation": "project",
+      "ownership": "merge",
+      "sourceSha256": "5f55870cdfec82feaf27fc4c3657f4c8243d9824fa44c69fca61f84d0b65b6aa"
     },
-    ".agents/vendor/codex-agent-boilerplate/.agents/skills/boilerplate-upgrade/scripts/upgrade.py": {
-      "sha256": "a70a41a9f6053aa77aecde3f99f9aee9caca96f71bd308a39defcd93469c1432",
-      "sourceVersion": "0.1.3",
-      "source": ".agents/skills/boilerplate-upgrade/scripts/upgrade.py",
-      "role": "reference",
-      "activation": "reference",
-      "ownership": "managed"
+    ".agents/context/campaigns/handoff-template.md": {
+      "sha256": "e5466743590662662542f55daf18e815fda8e905435e329477bcc0823a11f487",
+      "sourceVersion": "0.5.2",
+      "source": ".agents/context/campaigns/handoff-template.md",
+      "role": "active",
+      "activation": "project",
+      "ownership": "merge",
+      "sourceSha256": "4dcbf0afb569275bcca321c739c1c0387d06dee4ff4a56750d3df92f70a0fe30"
     },
-    ".agents/vendor/codex-agent-boilerplate/.agents/skills/campaign-executor/SKILL.md": {
-      "sha256": "b8bdf8dc4ea765667d3d74d298702e4d90bf12bdf89657f1028da9111384685c",
-      "sourceVersion": "0.1.3",
-      "source": ".agents/skills/campaign-executor/SKILL.md",
-      "role": "reference",
-      "activation": "reference",
-      "ownership": "managed"
+    ".agents/context/campaigns/readiness-template.md": {
+      "sha256": "bb1298f14e3e0b8954cb6a2d7e2aa5fa71a765a59f09a2dd1fd181627e019f6f",
+      "sourceVersion": "0.5.2",
+      "source": ".agents/context/campaigns/readiness-template.md",
+      "role": "active",
+      "activation": "project",
+      "ownership": "merge",
+      "sourceSha256": "6c99d7682429529b86dc8aeed61cc0938aeb804f0d5b56c65b155178d495a901"
     },
-    ".agents/vendor/codex-agent-boilerplate/.agents/skills/campaign-readiness/SKILL.md": {
-      "sha256": "36228221898071f1d322af8c165a9eae0d5c70793990c230a96ac390b3747b66",
-      "sourceVersion": "0.1.3",
-      "source": ".agents/skills/campaign-readiness/SKILL.md",
-      "role": "reference",
-      "activation": "reference",
-      "ownership": "managed"
+    ".agents/context/retrospectives/retro-template.md": {
+      "sha256": "bb8132563f27321f7f2209e9207a7b204cfb9fdf18d3b746c45356342f11fcbd",
+      "sourceVersion": "0.5.2",
+      "source": ".agents/context/retrospectives/retro-template.md",
+      "role": "active",
+      "activation": "project",
+      "ownership": "merge",
+      "sourceSha256": "920772a8bdb7d743aa51f23390dbbee5da0b5bd900e567c21a18fecaac74adc7"
     },
-    ".agents/vendor/codex-agent-boilerplate/.agents/skills/commit/SKILL.md": {
-      "sha256": "9670f77819a75f0f0e22491df9fe10c799db8c7d5830162461fd99fe5698f184",
-      "sourceVersion": "0.1.3",
-      "source": ".agents/skills/commit/SKILL.md",
-      "role": "reference",
-      "activation": "reference",
-      "ownership": "managed"
+    ".agents/context/sprints/sprint-template.md": {
+      "sha256": "612e4bdc1a5533b1e9493218d859b4fa100dcfa8923e48e6d713c45525bc16d1",
+      "sourceVersion": "0.5.2",
+      "source": ".agents/context/sprints/sprint-template.md",
+      "role": "active",
+      "activation": "project",
+      "ownership": "merge",
+      "sourceSha256": "d69d2255d0c33ebefcbe9863acace0384ad32fb5e4d05fbdfc4f14249ff8a3b4"
     },
-    ".agents/vendor/codex-agent-boilerplate/.agents/skills/product-backlog/SKILL.md": {
-      "sha256": "c29a4f33f7e1e11e627086f0af583301f69715f67d956942ed59e32c5c0aa870",
-      "sourceVersion": "0.1.3",
-      "source": ".agents/skills/product-backlog/SKILL.md",
-      "role": "reference",
-      "activation": "reference",
-      "ownership": "managed"
+    ".agents/context/development/backlog_changelog.md": {
+      "sha256": "33a806c113b55641d75e38869a61d5a8cf7f3e9c70b7217786c33f35587c99a1",
+      "sourceVersion": "0.5.2",
+      "source": ".agents/context/development/backlog_changelog.md",
+      "role": "active",
+      "activation": "project",
+      "ownership": "preserve"
     },
-    ".agents/vendor/codex-agent-boilerplate/.agents/skills/project-onboarding/SKILL.md": {
-      "sha256": "ffb32116d4b1965046cc3edcf4015a4243626aed1baaec92cd59093db2aefa8a",
-      "sourceVersion": "0.1.3",
-      "source": ".agents/skills/project-onboarding/SKILL.md",
-      "role": "reference",
-      "activation": "reference",
-      "ownership": "managed"
+    ".agents/context/development/product_backlog.md": {
+      "sha256": "ff3fff56dfb3e4f1e05eae342c25ba5873615188bbdb11a1938e0934f4d7cc71",
+      "sourceVersion": "0.5.2",
+      "source": ".agents/context/development/product_backlog.md",
+      "role": "active",
+      "activation": "project",
+      "ownership": "preserve"
     },
-    ".agents/vendor/codex-agent-boilerplate/.agents/skills/project-onboarding/templates/generic.md": {
-      "sha256": "78a834fe3ecb31d08bcdb8f737144641c11d8cb5386b61bb16ba9837a648c5bd",
-      "sourceVersion": "0.1.3",
-      "source": ".agents/skills/project-onboarding/templates/generic.md",
-      "role": "reference",
-      "activation": "reference",
-      "ownership": "managed"
-    },
-    ".agents/vendor/codex-agent-boilerplate/.agents/skills/project-onboarding/templates/go.md": {
-      "sha256": "fbf2deda106b730183370726fab6906fdd0f4cfa3bb567e73f86ad1c9175b2f7",
-      "sourceVersion": "0.1.3",
-      "source": ".agents/skills/project-onboarding/templates/go.md",
-      "role": "reference",
-      "activation": "reference",
-      "ownership": "managed"
-    },
-    ".agents/vendor/codex-agent-boilerplate/.agents/skills/project-onboarding/templates/node-ts.md": {
-      "sha256": "7be7d80bd2a1ceeb0895efb55be3fb8fe553dcfa50f6d5b5853cda03b5f10422",
-      "sourceVersion": "0.1.3",
-      "source": ".agents/skills/project-onboarding/templates/node-ts.md",
-      "role": "reference",
-      "activation": "reference",
-      "ownership": "managed"
-    },
-    ".agents/vendor/codex-agent-boilerplate/.agents/skills/project-onboarding/templates/python.md": {
-      "sha256": "3476ef654b98ecd786570447f52fee025ef40c4972fa6150d7b58945a907b75b",
-      "sourceVersion": "0.1.3",
-      "source": ".agents/skills/project-onboarding/templates/python.md",
-      "role": "reference",
-      "activation": "reference",
-      "ownership": "managed"
-    },
-    ".agents/vendor/codex-agent-boilerplate/.agents/skills/review-pr/SKILL.md": {
-      "sha256": "f1d281aefcb129793a4822ddb33a43b3f771e75d5e07a74c40e8683eedf723ad",
-      "sourceVersion": "0.1.3",
-      "source": ".agents/skills/review-pr/SKILL.md",
-      "role": "reference",
-      "activation": "reference",
-      "ownership": "managed"
-    },
-    ".agents/vendor/codex-agent-boilerplate/.agents/skills/sprint-planner/SKILL.md": {
-      "sha256": "550f29637645ed8f1636af33d2b30f94583b6a563c2dc79fb2f0676b0d4083eb",
-      "sourceVersion": "0.1.3",
-      "source": ".agents/skills/sprint-planner/SKILL.md",
-      "role": "reference",
-      "activation": "reference",
-      "ownership": "managed"
-    },
-    ".agents/vendor/codex-agent-boilerplate/.agents/skills/sprint-retrospective/SKILL.md": {
-      "sha256": "2f97ac227ef2a64d225a47fddaa8700e97ac9df171685a380dab9362b1776720",
-      "sourceVersion": "0.1.3",
-      "source": ".agents/skills/sprint-retrospective/SKILL.md",
-      "role": "reference",
-      "activation": "reference",
-      "ownership": "managed"
-    },
-    ".agents/vendor/codex-agent-boilerplate/.agents/skills/update-context/SKILL.md": {
-      "sha256": "e1869982fc0b579de7abc86245fa44e7685b3727d259c111fb875700f2be7fd5",
-      "sourceVersion": "0.1.3",
-      "source": ".agents/skills/update-context/SKILL.md",
-      "role": "reference",
-      "activation": "reference",
-      "ownership": "managed"
-    },
-    ".agents/vendor/codex-agent-boilerplate/.agents/skills/write-pr/SKILL.md": {
-      "sha256": "fce9eb901ca5be7a54f7db053b7cc82c992d8cd2802341728440539cdcd8255a",
-      "sourceVersion": "0.1.3",
-      "source": ".agents/skills/write-pr/SKILL.md",
-      "role": "reference",
-      "activation": "reference",
-      "ownership": "managed"
-    },
-    ".agents/vendor/codex-agent-boilerplate/.codex/agents/architect.toml": {
-      "sha256": "1e8510944224c6b69447943518ed99af91e1b6c24bd9dda489ff64230b8da1b5",
-      "sourceVersion": "0.1.3",
-      "source": ".codex/agents/architect.toml",
-      "role": "reference",
-      "activation": "reference",
-      "ownership": "managed"
-    },
-    ".agents/vendor/codex-agent-boilerplate/.codex/agents/code-reviewer.toml": {
-      "sha256": "48cad6eedb7a135f5bd7867342d8e1ba1c0346ffafda5748cb8ae00ae6f614b3",
-      "sourceVersion": "0.1.3",
-      "source": ".codex/agents/code-reviewer.toml",
-      "role": "reference",
-      "activation": "reference",
-      "ownership": "managed"
-    },
-    ".agents/vendor/codex-agent-boilerplate/.codex/agents/dependency-auditor.toml": {
-      "sha256": "33580b4ffea4683788137360e16ace589f6d64a352931e91d0c6d2d481bf6ac3",
-      "sourceVersion": "0.1.3",
-      "source": ".codex/agents/dependency-auditor.toml",
-      "role": "reference",
-      "activation": "reference",
-      "ownership": "managed"
-    },
-    ".agents/vendor/codex-agent-boilerplate/.codex/agents/test-writer.toml": {
-      "sha256": "cf521bd23a5ad31f714b5668e967737824f1d4a5f8eeab8f0c0a3aa4e6d446c0",
-      "sourceVersion": "0.1.3",
-      "source": ".codex/agents/test-writer.toml",
-      "role": "reference",
-      "activation": "reference",
-      "ownership": "managed"
-    },
-    ".agents/vendor/codex-agent-boilerplate/.codex/config.toml": {
-      "sha256": "44cdab4eee26e7769cb30acf2caeff6657b9aa846e726b5904eccdd855bf987e",
-      "sourceVersion": "0.1.3",
-      "source": ".codex/config.toml",
-      "role": "reference",
-      "activation": "reference",
-      "ownership": "managed"
-    },
-    ".agents/vendor/codex-agent-boilerplate/.codex/hooks.json": {
-      "sha256": "de8c8aa331c21ee062c7f55d2bce63aec5abce4e01b6ee1b76ec3cd6d7cd5dd9",
-      "sourceVersion": "0.1.3",
-      "source": ".codex/hooks.json",
-      "role": "reference",
-      "activation": "reference",
-      "ownership": "managed"
-    },
-    ".agents/vendor/codex-agent-boilerplate/.codex/hooks/post_tool_use_advisory.py": {
-      "sha256": "99b11e47d8c03c3dc5041e93821f0e6cd6937b5abfd564d40037da7fb53bbf56",
-      "sourceVersion": "0.1.3",
-      "source": ".codex/hooks/post_tool_use_advisory.py",
-      "role": "reference",
-      "activation": "reference",
-      "ownership": "managed"
-    },
-    ".agents/vendor/codex-agent-boilerplate/.codex/hooks/pre_tool_use_policy.py": {
-      "sha256": "82fa5f1f9ee8ea9b0baed961769910ec047774d100c61eaa83e58acf45cb6cb5",
-      "sourceVersion": "0.1.3",
-      "source": ".codex/hooks/pre_tool_use_policy.py",
-      "role": "reference",
-      "activation": "reference",
-      "ownership": "managed"
-    },
-    ".agents/vendor/codex-agent-boilerplate/.codex/hooks/session_start.py": {
-      "sha256": "036ad585ca4dec7adf1e718d267b79d6bb7ac47a3b3e3c63975a7d2316c5ce5d",
-      "sourceVersion": "0.1.3",
-      "source": ".codex/hooks/session_start.py",
-      "role": "reference",
-      "activation": "reference",
-      "ownership": "managed"
-    },
-    ".agents/vendor/codex-agent-boilerplate/AGENTS.md": {
-      "sha256": "368732f405afafea8d70e1d4f3077ff6fd35e9adb1ddf28f90c6b2d742a8b8c8",
-      "sourceVersion": "0.1.3",
-      "source": "AGENTS.md",
-      "role": "reference",
-      "activation": "reference",
-      "ownership": "managed"
+    ".agents/context/product-vision.md": {
+      "sha256": "bccdefabebe4f858ace994ac159f4d81ff8a7e584704585b9adfe4e640a90a9c",
+      "sourceVersion": "0.5.2",
+      "source": ".agents/context/product-vision.md",
+      "role": "active",
+      "activation": "project",
+      "ownership": "preserve"
     },
     ".codex/agents/architect.toml": {
-      "sha256": "1e8510944224c6b69447943518ed99af91e1b6c24bd9dda489ff64230b8da1b5",
-      "sourceVersion": "0.1.3",
+      "sha256": "238d443458dae096df2c2e1351e815e570b60da9c99ca26b89fa3344ad4c804b",
+      "sourceVersion": "0.5.2",
       "source": ".codex/agents/architect.toml",
+      "role": "active",
+      "activation": "project",
+      "ownership": "managed"
+    },
+    ".codex/agents/campaign-planner.toml": {
+      "sha256": "b37f71f44f23679b6de18bd8c0a127b42c9bcb13173ed3f9ef14d3d5d39207ce",
+      "sourceVersion": "0.5.2",
+      "source": ".codex/agents/campaign-planner.toml",
       "role": "active",
       "activation": "project",
       "ownership": "managed"
     },
     ".codex/agents/code-reviewer.toml": {
-      "sha256": "48cad6eedb7a135f5bd7867342d8e1ba1c0346ffafda5748cb8ae00ae6f614b3",
-      "sourceVersion": "0.1.3",
+      "sha256": "68abc40b47ceb1c926bd6ab14eb12799400fcc079ed3b01855318b2c6c4dbea5",
+      "sourceVersion": "0.5.2",
       "source": ".codex/agents/code-reviewer.toml",
       "role": "active",
       "activation": "project",
       "ownership": "managed"
     },
     ".codex/agents/dependency-auditor.toml": {
-      "sha256": "33580b4ffea4683788137360e16ace589f6d64a352931e91d0c6d2d481bf6ac3",
-      "sourceVersion": "0.1.3",
+      "sha256": "acccba44729c7252f5bbbb74bc0f43cece102f17fde778c6bd4a936a8da6ec08",
+      "sourceVersion": "0.5.2",
       "source": ".codex/agents/dependency-auditor.toml",
       "role": "active",
       "activation": "project",
       "ownership": "managed"
     },
+    ".codex/agents/implementation-worker.toml": {
+      "sha256": "024a293983279fee79706308139bae4da2cb7c608e972672750bd66a33ff73a2",
+      "sourceVersion": "0.5.2",
+      "source": ".codex/agents/implementation-worker.toml",
+      "role": "active",
+      "activation": "project",
+      "ownership": "managed"
+    },
     ".codex/agents/test-writer.toml": {
-      "sha256": "cf521bd23a5ad31f714b5668e967737824f1d4a5f8eeab8f0c0a3aa4e6d446c0",
-      "sourceVersion": "0.1.3",
+      "sha256": "c4851c4c80a8fc3051a50cbee427f357d05e55f83f47172c3433978063564537",
+      "sourceVersion": "0.5.2",
       "source": ".codex/agents/test-writer.toml",
       "role": "active",
       "activation": "project",
       "ownership": "managed"
     },
-    ".codex/config.toml": {
-      "sha256": "44cdab4eee26e7769cb30acf2caeff6657b9aa846e726b5904eccdd855bf987e",
-      "sourceVersion": "0.1.3",
-      "source": ".codex/config.toml",
+    ".codex/agents/ui-inspector.toml": {
+      "sha256": "773e312f7559c902af5519162dbe08cef069ed46963d85ec4236dbda51d9080d",
+      "sourceVersion": "0.5.2",
+      "source": ".codex/agents/ui-inspector.toml",
       "role": "active",
       "activation": "project",
-      "ownership": "merge"
+      "ownership": "managed"
     },
     ".codex/hooks.json": {
-      "sha256": "de8c8aa331c21ee062c7f55d2bce63aec5abce4e01b6ee1b76ec3cd6d7cd5dd9",
-      "sourceVersion": "0.1.3",
+      "sha256": "640d7fd7904c68215c763791b19eeef803541842de6a0ec0abee6d0bb91f8fa5",
+      "sourceVersion": "0.5.2",
       "source": ".codex/hooks.json",
       "role": "active",
       "activation": "project",
-      "ownership": "merge"
+      "ownership": "merge",
+      "sourceSha256": "91dd52285b28cc53ec6dd91dcaf8af868ac5abc3cb09b0082363a3e732033c16"
     },
-    ".codex/hooks/post_tool_use_advisory.py": {
-      "sha256": "99b11e47d8c03c3dc5041e93821f0e6cd6937b5abfd564d40037da7fb53bbf56",
-      "sourceVersion": "0.1.3",
-      "source": ".codex/hooks/post_tool_use_advisory.py",
+    ".codex/config.toml": {
+      "sha256": "78927018414fa8900b1361e271e1b254f56387db644b37719c3c4bcd5233f0ad",
+      "sourceVersion": "0.5.2",
+      "source": ".codex/config.toml",
       "role": "active",
       "activation": "project",
-      "ownership": "merge"
-    },
-    ".codex/hooks/pre_tool_use_policy.py": {
-      "sha256": "82fa5f1f9ee8ea9b0baed961769910ec047774d100c61eaa83e58acf45cb6cb5",
-      "sourceVersion": "0.1.3",
-      "source": ".codex/hooks/pre_tool_use_policy.py",
-      "role": "active",
-      "activation": "project",
-      "ownership": "merge"
-    },
-    ".codex/hooks/session_start.py": {
-      "sha256": "036ad585ca4dec7adf1e718d267b79d6bb7ac47a3b3e3c63975a7d2316c5ce5d",
-      "sourceVersion": "0.1.3",
-      "source": ".codex/hooks/session_start.py",
-      "role": "active",
-      "activation": "project",
-      "ownership": "merge"
-    },
-    "AGENTS.md": {
-      "sha256": "67d875002b4867920b2106ec522bfeece638a9dce15021a77fa523c8e6ad96e3",
-      "sourceVersion": "0.1.3",
-      "source": "AGENTS.md",
-      "role": "active",
-      "activation": "project",
-      "ownership": "merge"
+      "ownership": "merge",
+      "sourceSha256": "f7ba2862eb74fe475121713ce52804762d9b2c758bd27f6fd4908d6600101e74"
     }
   },
+  "sourceChecksumsTracked": true,
   "preserved": [
     ".agents/boilerplate.lock.json",
     ".agents/context/product-vision.md",
@@ -686,5 +326,257 @@
     ".agents/context/campaigns/**",
     ".agents/context/sprints/**",
     ".agents/context/retrospectives/**"
-  ]
+  ],
+  "retiredFiles": {
+    ".agents/rules/campaign-workflow.md": {
+      "baselineSha256": "b527d4f3e6595fa791cdcbe0d3d5670a834a92fcc0257d9af398554b289f6ae5",
+      "removedIn": "0.4.4",
+      "reason": "Campaign procedure is now owned by the campaign skills instead of a globally loaded rule."
+    },
+    ".agents/vendor/codex-agent-boilerplate/.agents/rules/campaign-workflow.md": {
+      "baselineSha256": "b527d4f3e6595fa791cdcbe0d3d5670a834a92fcc0257d9af398554b289f6ae5",
+      "removedIn": "0.4.4",
+      "reason": "Retired reference copy of the duplicated campaign workflow rule."
+    },
+    ".agents/skills/project-onboarding/templates/generic.md": {
+      "baselineSha256": "78a834fe3ecb31d08bcdb8f737144641c11d8cb5386b61bb16ba9837a648c5bd",
+      "removedIn": "0.4.4",
+      "reason": "Project onboarding no longer owns automatic application scaffolding."
+    },
+    ".agents/vendor/codex-agent-boilerplate/.agents/skills/project-onboarding/templates/generic.md": {
+      "baselineSha256": "78a834fe3ecb31d08bcdb8f737144641c11d8cb5386b61bb16ba9837a648c5bd",
+      "removedIn": "0.4.4",
+      "reason": "Retired reference copy of the generic scaffold template."
+    },
+    ".agents/skills/project-onboarding/templates/go.md": {
+      "baselineSha256": "fbf2deda106b730183370726fab6906fdd0f4cfa3bb567e73f86ad1c9175b2f7",
+      "removedIn": "0.4.4",
+      "reason": "Project onboarding no longer selects or scaffolds a Go stack."
+    },
+    ".agents/vendor/codex-agent-boilerplate/.agents/skills/project-onboarding/templates/go.md": {
+      "baselineSha256": "fbf2deda106b730183370726fab6906fdd0f4cfa3bb567e73f86ad1c9175b2f7",
+      "removedIn": "0.4.4",
+      "reason": "Retired reference copy of the Go scaffold template."
+    },
+    ".agents/skills/project-onboarding/templates/node-ts.md": {
+      "baselineSha256": "7be7d80bd2a1ceeb0895efb55be3fb8fe553dcfa50f6d5b5853cda03b5f10422",
+      "removedIn": "0.4.4",
+      "reason": "Project onboarding no longer selects or scaffolds a Node and TypeScript stack."
+    },
+    ".agents/vendor/codex-agent-boilerplate/.agents/skills/project-onboarding/templates/node-ts.md": {
+      "baselineSha256": "7be7d80bd2a1ceeb0895efb55be3fb8fe553dcfa50f6d5b5853cda03b5f10422",
+      "removedIn": "0.4.4",
+      "reason": "Retired reference copy of the Node and TypeScript scaffold template."
+    },
+    ".agents/skills/project-onboarding/templates/python.md": {
+      "baselineSha256": "3476ef654b98ecd786570447f52fee025ef40c4972fa6150d7b58945a907b75b",
+      "removedIn": "0.4.4",
+      "reason": "Project onboarding no longer selects or scaffolds a Python stack."
+    },
+    ".agents/vendor/codex-agent-boilerplate/.agents/skills/project-onboarding/templates/python.md": {
+      "baselineSha256": "3476ef654b98ecd786570447f52fee025ef40c4972fa6150d7b58945a907b75b",
+      "removedIn": "0.4.4",
+      "reason": "Retired reference copy of the Python scaffold template."
+    },
+    ".agents/vendor/codex-agent-boilerplate/.agents/boilerplate-manifest.json": {
+      "baselineSha256": "b1f8d6089defa89d23a27305cb573f2df38cffd421f8d082fcf0acb288b78865",
+      "removedIn": "0.4.4",
+      "reason": "The payload and active-file lock hashes replace the project-local vendor baseline."
+    },
+    ".agents/vendor/codex-agent-boilerplate/.agents/context/campaigns/campaign-template.md": {
+      "baselineSha256": "d549485176935177f1afbbdd498a4b656eb909bd487981d3ca3ff03f50b19180",
+      "removedIn": "0.4.4",
+      "reason": "The payload and active-file lock hashes replace the project-local vendor baseline."
+    },
+    ".agents/vendor/codex-agent-boilerplate/.agents/context/campaigns/handoff-template.md": {
+      "baselineSha256": "f850289f64165803ab2f420c67a4f53875f12b7880ac545141322efa12304faf",
+      "removedIn": "0.4.4",
+      "reason": "The payload and active-file lock hashes replace the project-local vendor baseline."
+    },
+    ".agents/vendor/codex-agent-boilerplate/.agents/context/campaigns/readiness-template.md": {
+      "baselineSha256": "e9ed36f74c8e212ccf82d83e09b138bf28a21e2f94e5ba65224077257104ea00",
+      "removedIn": "0.4.4",
+      "reason": "The payload and active-file lock hashes replace the project-local vendor baseline."
+    },
+    ".agents/vendor/codex-agent-boilerplate/.agents/context/development/backlog_changelog.md": {
+      "baselineSha256": "1afde8990551ec2f1669f1bd64f4c614337a9d3a2746e1b963d0e99ccf80b86d",
+      "removedIn": "0.4.4",
+      "reason": "The payload and active-file lock hashes replace the project-local vendor baseline."
+    },
+    ".agents/vendor/codex-agent-boilerplate/.agents/context/development/product_backlog.md": {
+      "baselineSha256": "fe7d83dfcdf8cb05733f19b33435b654884385dcb50a96d43e669c7f3ca479bc",
+      "removedIn": "0.4.4",
+      "reason": "The payload and active-file lock hashes replace the project-local vendor baseline."
+    },
+    ".agents/vendor/codex-agent-boilerplate/.agents/context/product-vision.md": {
+      "baselineSha256": "811bb95012a11d983db5bd44b81d2ae8217998b3a5776900368d8dd441d176c3",
+      "removedIn": "0.4.4",
+      "reason": "The payload and active-file lock hashes replace the project-local vendor baseline."
+    },
+    ".agents/vendor/codex-agent-boilerplate/.agents/context/retrospectives/retro-template.md": {
+      "baselineSha256": "5733eedaec3938bb059cd5978698f3b867c1a520d68986c4c0546f4a72b287ff",
+      "removedIn": "0.4.4",
+      "reason": "The payload and active-file lock hashes replace the project-local vendor baseline."
+    },
+    ".agents/vendor/codex-agent-boilerplate/.agents/context/sprints/sprint-template.md": {
+      "baselineSha256": "ae42959f46cd9bcc6524855f3bbd67bf06ee8fd6361c62fe652193dbb5bebfbc",
+      "removedIn": "0.4.4",
+      "reason": "The payload and active-file lock hashes replace the project-local vendor baseline."
+    },
+    ".agents/vendor/codex-agent-boilerplate/.agents/rules/code-style.md": {
+      "baselineSha256": "85af2f443eb389b16391af2122e9d041b1178957c7e0163e45f9a07ce762d2c3",
+      "removedIn": "0.4.4",
+      "reason": "The payload and active-file lock hashes replace the project-local vendor baseline."
+    },
+    ".agents/vendor/codex-agent-boilerplate/.agents/rules/design-workflow.md": {
+      "baselineSha256": "a8912a2d999991ddf1d42b801f1f149523c1b50c55447ebdd0e62ff1bc36e466",
+      "removedIn": "0.4.4",
+      "reason": "The payload and active-file lock hashes replace the project-local vendor baseline."
+    },
+    ".agents/vendor/codex-agent-boilerplate/.agents/rules/git-workflow.md": {
+      "baselineSha256": "412fdaf92b5ee8ed105de2e9018fe592d59383481b26d8798c7b1116a11eada1",
+      "removedIn": "0.4.4",
+      "reason": "The payload and active-file lock hashes replace the project-local vendor baseline."
+    },
+    ".agents/vendor/codex-agent-boilerplate/.agents/rules/security.md": {
+      "baselineSha256": "fb25efec78229bc33ea101bc369017c973ccb27667760b31d00b59e42ad4487c",
+      "removedIn": "0.4.4",
+      "reason": "The payload and active-file lock hashes replace the project-local vendor baseline."
+    },
+    ".agents/vendor/codex-agent-boilerplate/.agents/rules/sprint-workflow.md": {
+      "baselineSha256": "7f7c689baece44882dad16d84fdfea22e42efbe70af8f4be87503afe4b5aa46f",
+      "removedIn": "0.4.4",
+      "reason": "The payload and active-file lock hashes replace the project-local vendor baseline."
+    },
+    ".agents/vendor/codex-agent-boilerplate/.agents/rules/testing.md": {
+      "baselineSha256": "e4dbe4132fa5392165d66ac969dd5241fbd0c051219b1eac0f691e5d03f1b0f9",
+      "removedIn": "0.4.4",
+      "reason": "The payload and active-file lock hashes replace the project-local vendor baseline."
+    },
+    ".agents/vendor/codex-agent-boilerplate/.agents/skills/boilerplate-upgrade/SKILL.md": {
+      "baselineSha256": "0cba22976c507237d11b513b4aa7d1b1c8c21e37b7c4e9c0f6c35eeff6f069c5",
+      "removedIn": "0.4.4",
+      "reason": "The payload and active-file lock hashes replace the project-local vendor baseline."
+    },
+    ".agents/vendor/codex-agent-boilerplate/.agents/skills/boilerplate-upgrade/scripts/upgrade.py": {
+      "baselineSha256": "a70a41a9f6053aa77aecde3f99f9aee9caca96f71bd308a39defcd93469c1432",
+      "removedIn": "0.4.4",
+      "reason": "The payload and active-file lock hashes replace the project-local vendor baseline."
+    },
+    ".agents/vendor/codex-agent-boilerplate/.agents/skills/campaign-executor/SKILL.md": {
+      "baselineSha256": "b8bdf8dc4ea765667d3d74d298702e4d90bf12bdf89657f1028da9111384685c",
+      "removedIn": "0.4.4",
+      "reason": "The payload and active-file lock hashes replace the project-local vendor baseline."
+    },
+    ".agents/vendor/codex-agent-boilerplate/.agents/skills/campaign-readiness/SKILL.md": {
+      "baselineSha256": "36228221898071f1d322af8c165a9eae0d5c70793990c230a96ac390b3747b66",
+      "removedIn": "0.4.4",
+      "reason": "The payload and active-file lock hashes replace the project-local vendor baseline."
+    },
+    ".agents/vendor/codex-agent-boilerplate/.agents/skills/commit/SKILL.md": {
+      "baselineSha256": "9670f77819a75f0f0e22491df9fe10c799db8c7d5830162461fd99fe5698f184",
+      "removedIn": "0.4.4",
+      "reason": "The payload and active-file lock hashes replace the project-local vendor baseline."
+    },
+    ".agents/vendor/codex-agent-boilerplate/.agents/skills/product-backlog/SKILL.md": {
+      "baselineSha256": "c29a4f33f7e1e11e627086f0af583301f69715f67d956942ed59e32c5c0aa870",
+      "removedIn": "0.4.4",
+      "reason": "The payload and active-file lock hashes replace the project-local vendor baseline."
+    },
+    ".agents/vendor/codex-agent-boilerplate/.agents/skills/project-onboarding/SKILL.md": {
+      "baselineSha256": "ffb32116d4b1965046cc3edcf4015a4243626aed1baaec92cd59093db2aefa8a",
+      "removedIn": "0.4.4",
+      "reason": "The payload and active-file lock hashes replace the project-local vendor baseline."
+    },
+    ".agents/vendor/codex-agent-boilerplate/.agents/skills/review-pr/SKILL.md": {
+      "baselineSha256": "f1d281aefcb129793a4822ddb33a43b3f771e75d5e07a74c40e8683eedf723ad",
+      "removedIn": "0.4.4",
+      "reason": "The payload and active-file lock hashes replace the project-local vendor baseline."
+    },
+    ".agents/vendor/codex-agent-boilerplate/.agents/skills/sprint-planner/SKILL.md": {
+      "baselineSha256": "550f29637645ed8f1636af33d2b30f94583b6a563c2dc79fb2f0676b0d4083eb",
+      "removedIn": "0.4.4",
+      "reason": "The payload and active-file lock hashes replace the project-local vendor baseline."
+    },
+    ".agents/vendor/codex-agent-boilerplate/.agents/skills/sprint-retrospective/SKILL.md": {
+      "baselineSha256": "2f97ac227ef2a64d225a47fddaa8700e97ac9df171685a380dab9362b1776720",
+      "removedIn": "0.4.4",
+      "reason": "The payload and active-file lock hashes replace the project-local vendor baseline."
+    },
+    ".agents/vendor/codex-agent-boilerplate/.agents/skills/update-context/SKILL.md": {
+      "baselineSha256": "e1869982fc0b579de7abc86245fa44e7685b3727d259c111fb875700f2be7fd5",
+      "removedIn": "0.4.4",
+      "reason": "The payload and active-file lock hashes replace the project-local vendor baseline."
+    },
+    ".agents/vendor/codex-agent-boilerplate/.agents/skills/write-pr/SKILL.md": {
+      "baselineSha256": "fce9eb901ca5be7a54f7db053b7cc82c992d8cd2802341728440539cdcd8255a",
+      "removedIn": "0.4.4",
+      "reason": "The payload and active-file lock hashes replace the project-local vendor baseline."
+    },
+    ".agents/vendor/codex-agent-boilerplate/.codex/agents/architect.toml": {
+      "baselineSha256": "1e8510944224c6b69447943518ed99af91e1b6c24bd9dda489ff64230b8da1b5",
+      "removedIn": "0.4.4",
+      "reason": "The payload and active-file lock hashes replace the project-local vendor baseline."
+    },
+    ".agents/vendor/codex-agent-boilerplate/.codex/agents/code-reviewer.toml": {
+      "baselineSha256": "48cad6eedb7a135f5bd7867342d8e1ba1c0346ffafda5748cb8ae00ae6f614b3",
+      "removedIn": "0.4.4",
+      "reason": "The payload and active-file lock hashes replace the project-local vendor baseline."
+    },
+    ".agents/vendor/codex-agent-boilerplate/.codex/agents/dependency-auditor.toml": {
+      "baselineSha256": "33580b4ffea4683788137360e16ace589f6d64a352931e91d0c6d2d481bf6ac3",
+      "removedIn": "0.4.4",
+      "reason": "The payload and active-file lock hashes replace the project-local vendor baseline."
+    },
+    ".agents/vendor/codex-agent-boilerplate/.codex/agents/test-writer.toml": {
+      "baselineSha256": "cf521bd23a5ad31f714b5668e967737824f1d4a5f8eeab8f0c0a3aa4e6d446c0",
+      "removedIn": "0.4.4",
+      "reason": "The payload and active-file lock hashes replace the project-local vendor baseline."
+    },
+    ".agents/vendor/codex-agent-boilerplate/.codex/config.toml": {
+      "baselineSha256": "44cdab4eee26e7769cb30acf2caeff6657b9aa846e726b5904eccdd855bf987e",
+      "removedIn": "0.4.4",
+      "reason": "The payload and active-file lock hashes replace the project-local vendor baseline."
+    },
+    ".agents/vendor/codex-agent-boilerplate/.codex/hooks.json": {
+      "baselineSha256": "de8c8aa331c21ee062c7f55d2bce63aec5abce4e01b6ee1b76ec3cd6d7cd5dd9",
+      "removedIn": "0.4.4",
+      "reason": "The payload and active-file lock hashes replace the project-local vendor baseline."
+    },
+    ".agents/vendor/codex-agent-boilerplate/.codex/hooks/post_tool_use_advisory.py": {
+      "baselineSha256": "99b11e47d8c03c3dc5041e93821f0e6cd6937b5abfd564d40037da7fb53bbf56",
+      "removedIn": "0.4.4",
+      "reason": "The payload and active-file lock hashes replace the project-local vendor baseline."
+    },
+    ".agents/vendor/codex-agent-boilerplate/.codex/hooks/pre_tool_use_policy.py": {
+      "baselineSha256": "82fa5f1f9ee8ea9b0baed961769910ec047774d100c61eaa83e58acf45cb6cb5",
+      "removedIn": "0.4.4",
+      "reason": "The payload and active-file lock hashes replace the project-local vendor baseline."
+    },
+    ".agents/vendor/codex-agent-boilerplate/.codex/hooks/session_start.py": {
+      "baselineSha256": "036ad585ca4dec7adf1e718d267b79d6bb7ac47a3b3e3c63975a7d2316c5ce5d",
+      "removedIn": "0.4.4",
+      "reason": "The payload and active-file lock hashes replace the project-local vendor baseline."
+    },
+    ".agents/vendor/codex-agent-boilerplate/AGENTS.md": {
+      "baselineSha256": "368732f405afafea8d70e1d4f3077ff6fd35e9adb1ddf28f90c6b2d742a8b8c8",
+      "removedIn": "0.4.4",
+      "reason": "The payload and active-file lock hashes replace the project-local vendor baseline."
+    },
+    ".codex/hooks/post_tool_use_advisory.py": {
+      "baselineSha256": "99b11e47d8c03c3dc5041e93821f0e6cd6937b5abfd564d40037da7fb53bbf56",
+      "removedIn": "undeclared",
+      "reason": ""
+    },
+    ".codex/hooks/pre_tool_use_policy.py": {
+      "baselineSha256": "82fa5f1f9ee8ea9b0baed961769910ec047774d100c61eaa83e58acf45cb6cb5",
+      "removedIn": "undeclared",
+      "reason": ""
+    },
+    ".codex/hooks/session_start.py": {
+      "baselineSha256": "036ad585ca4dec7adf1e718d267b79d6bb7ac47a3b3e3c63975a7d2316c5ce5d",
+      "removedIn": "undeclared",
+      "reason": ""
+    }
+  }
 }
