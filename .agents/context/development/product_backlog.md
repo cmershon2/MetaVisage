@@ -3,11 +3,32 @@
 **Project**: MetaVisage
 **Last Updated**: October 30, 2026
 
-> Active v2.0 work is tracked in `.agents/context/sprints/SPRINT_PLAN.md` and individual sprint files seeded via `$sprint-planner`. Sprint 8 closes the standalone transition; Sprints 9 and 10 deliver the 2026-10-29 feedback triage. This backlog holds items **not yet committed to a sprint** — candidates pulled from v1.0.0 feedback that fell out of v2.0 scope, and post-v2.0 enhancements from the PRD.
+> Active v2.0 work is tracked in `.agents/context/sprints/SPRINT_PLAN.md` and individual sprint files seeded via `$sprint-planner`. Sprint 8 closes the standalone transition; Sprints 9 and 10 deliver the 2026-10-29 feedback triage. Sprints 11–14 are reserved for Auto Point Reference; Sprint 11 is complete. This backlog holds items **not yet committed to a sprint** — candidates pulled from v1.0.0 feedback that fell out of v2.0 scope, and post-v2.0 enhancements from the PRD.
 
 ---
 
 ## 🔥 High Priority
+
+### Auto Point Reference
+
+Design: [auto-point-reference.md](../design/auto-point-reference.md). Replaces the former lower-priority "Automated point placement (ML)" item. Sprints run in order; each depends on the one before. Source Profiles shipped in Sprint 11 (see the changelog).
+
+- [ ] **Auto-map landmark solver**
+  - Add a headless `LandmarkSolver` interface and a geometric template-fit solver: similarity refinement, coarse wrap, projection, symmetry and confidence scoring. Runs on a worker thread, is cancellable, and has a smoke target with accuracy thresholds on transformed and perturbed MetaHuman targets.
+  - **Effort**: ~1 sprint
+  - **Value**: The core of auto point placement
+  - **Needs**: Design decisions 1 and 3 confirmed
+
+- [ ] **Stage 2 auto-map workflow**
+  - Add the Auto / Manual prompt after Stage 1, a progress modal with cancel, confidence-coloured points, moving placed points, a re-run that replaces or fills in points, and auto-map as one undo step. Serialize `landmarkId` / `confidence` / `isAuto`. Update the PRD (FR-2 / FR-3) and the user docs.
+  - **Effort**: ~1 sprint
+  - **Value**: Brings Stage 2 in line with Unreal's Mesh to MetaHuman flow
+
+- [ ] **Custom source profiles**
+  - Add a profile editor (landmark checklist with mirroring, mask brush), library management (rename, duplicate, delete), "Save source as profile" from a project, and profile import/export.
+  - **Effort**: ~1 sprint
+  - **Value**: Auto-mapping for any source mesh, not just the bundled MetaHuman head
+  - **Needs**: Design decision 2 confirmed
 
 ### Other
 
@@ -23,6 +44,10 @@
 - [ ] **Separate MinGW build directory**
   - `build-mingw.ps1` builds into the same `build\` folder as `build-msvc.ps1`, so a full MinGW build can't run without overwriting the MSVC cache. Give it its own directory (for example `build-mingw\`) and validate the full MinGW build, including the Sprint 10 icon resource step. Found in Sprint 10.
   - **Effort**: ~0.5 day
+
+- [ ] **Load meshes off the UI thread**
+  - `AppWindow::ImportMorphMeshFromDisk` / `ImportTargetMeshFromDisk` call `Mesh::Load` on the UI thread, so large meshes freeze the window. AGENTS.md requires worker threads for mesh loading. Load on a worker, show progress, and upload to the GPU on the UI thread when done. Found while planning Sprint 11.
+  - **Effort**: ~1–2 days
 
 - [ ] **Ctrl+Y redo shortcut**
   - The Keyboard Shortcuts dialog lists Ctrl+Y for redo, but `HandleGlobalShortcut` only handles Ctrl+Shift+Z. Bind it or drop it from the dialog. Found in Sprint 9.
@@ -56,10 +81,10 @@
 
 ## 🟢 Lower Priority
 
-- [ ] **Automated point placement (ML)**
-  - Use a facial-landmark model to pre-place correspondence points, letting the user adjust rather than place from scratch.
-  - **Effort**: ~3–4 weeks (model selection, integration, UX)
-  - **Value**: Significant time savings for Stage 2; differentiates from commercial tools
+- [ ] **ML landmark solver (evaluate)**
+  - A second `LandmarkSolver` that renders the target and runs a local 2D face-landmark model (for example via ONNX Runtime), then projects the results onto the mesh. Build it only if the geometric solver from the Auto Point Reference work falls short on realistic heads. It must stay offline, with a model license compatible with MIT.
+  - **Effort**: ~2–3 weeks (model selection, runtime integration, accuracy comparison)
+  - **Value**: May improve accuracy on realistic human faces; unlikely to help on stylized heads
 
 - [ ] **Batch processing**
   - Queue multiple target meshes against a single morph mesh with shared point correspondences.

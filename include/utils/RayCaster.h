@@ -39,15 +39,15 @@ public:
                                  int viewportWidth, int viewportHeight,
                                  const Camera& camera);
 
+    // Transform a point by a Matrix4x4
+    static Vector3 TransformPoint(const Vector3& point, const Matrix4x4& matrix);
+
 private:
     // Moller-Trumbore ray-triangle intersection
     // Returns true if hit, sets t (distance along ray), u, v (barycentric coords)
     static bool RayTriangleIntersect(const Ray& ray,
                                      const Vector3& v0, const Vector3& v1, const Vector3& v2,
                                      float& t, float& u, float& v);
-
-    // Transform a point by a Matrix4x4
-    static Vector3 TransformPoint(const Vector3& point, const Matrix4x4& matrix);
 
     // Transform a direction by a Matrix4x4 (no translation)
     static Vector3 TransformDirection(const Vector3& dir, const Matrix4x4& matrix);

@@ -16,6 +16,7 @@
 #include <algorithm>
 #include <array>
 #include <filesystem>
+#include <format>
 
 namespace MetaVisage {
 
@@ -76,6 +77,7 @@ StageSidebar::Actions StageSidebar::Render(Project* project,
                                            bool morphProcessing,
                                            float morphProgress,
                                            const std::vector<WrapPreset>& userPresets,
+                                           const std::vector<SourceProfile>& sourceProfiles,
                                            int selectedPointIndex) {
     Actions out;
     selectedPointIndexExternal_ = selectedPointIndex;
@@ -127,7 +129,7 @@ StageSidebar::Actions StageSidebar::Render(Project* project,
 
     // Per-stage body
     switch (stage) {
-        case WorkflowStage::Alignment:      RenderAlignment(*project, out); break;
+        case WorkflowStage::Alignment:      RenderAlignment(*project, sourceProfiles, out); break;
         case WorkflowStage::PointReference: RenderPointReference(*project, out); break;
         case WorkflowStage::Morph:          RenderMorph(*project, morphProcessing, morphProgress, userPresets, out); break;
         case WorkflowStage::TouchUp:        RenderTouchUp(*project, out); break;
@@ -156,7 +158,9 @@ StageSidebar::Actions StageSidebar::Render(Project* project,
 // Stage 1 — Alignment
 // ---------------------------------------------------------------------------
 
-void StageSidebar::RenderAlignment(Project& project, Actions& out) {
+void StageSidebar::RenderAlignment(Project& project,
+                                   const std::vector<SourceProfile>& sourceProfiles,
+                                   Actions& out) {
     namespace I = MvInspector;
 
     auto& morph  = project.GetMorphMesh();
@@ -183,9 +187,13 @@ void StageSidebar::RenderAlignment(Project& project, Actions& out) {
         {
             MvStyle::ScopedFont f(MvStyle::Font.BodySm);
             ImGui::PushStyleColor(ImGuiCol_Text, MvStyle::MvFg3);
-            ImGui::TextWrapped("The MetaHuman head being wrapped.");
+            ImGui::TextWrapped("The MetaHuman head being wrapped. Pick a source "
+                               "profile, or import a mesh file.");
             ImGui::PopStyleColor();
         }
+        ImGui::Dummy(ImVec2(0.0f, 6.0f));
+        RenderSourcePicker(project, sourceProfiles, out);
+
         ImGui::Dummy(ImVec2(0.0f, 6.0f));
         const std::string srcName = FileNameOrEmpty(morph.filepath);
         {
@@ -193,14 +201,10 @@ void StageSidebar::RenderAlignment(Project& project, Actions& out) {
                 srcName.c_str(),
                 "No source mesh",
                 morph.isLoaded,
-                /*isPrimary=*/true,
-                morph.isLoaded ? "Source mesh loaded" : nullptr);
+                /*isPrimary=*/false,
+                morph.isLoaded ? "Source mesh loaded" : nullptr,
+                "Import mesh");
             if (srcSlot.importClicked) out.importMorphMeshRequested = true;
-        }
-
-        ImGui::Dummy(ImVec2(0.0f, 4.0f));
-        if (ImGui::Button("Use Default MetaHuman Head", ImVec2(-FLT_MIN, 30.0f))) {
-            out.useDefaultMorphMeshRequested = true;
         }
 
         // ---- Target mesh ------------------------------------------------
@@ -386,6 +390,63 @@ void StageSidebar::RenderAlignment(Project& project, Actions& out) {
         "Continue", /*finishStyle=*/false);
     if (footer.continueClicked) out.nextStageRequested = true;
     if (footer.previousClicked) out.previousStageRequested = true;
+}
+
+// Sprint 11 — Source Profile picker. Built-ins come first (ProfileStore
+// order), then user profiles after a separator. Selecting a profile only
+// emits a request; AppWindow decides whether to confirm and loads the mesh.
+void StageSidebar::RenderSourcePicker(Project& project,
+                                      const std::vector<SourceProfile>& sourceProfiles,
+                                      Actions& out) {
+    const auto& morph = project.GetMorphMesh();
+    const std::string& activeId = project.GetSourceProfileId();
+    const SourceProfile* active = nullptr;
+    for (const auto& p : sourceProfiles) {
+        if (p.id == activeId) { active = &p; break; }
+    }
+
+    std::string preview;
+    if (active)                     preview = active->name;
+    else if (morph.isLoaded)        preview = "Custom mesh (no profile)";
+    else if (sourceProfiles.empty()) preview = "No source profiles found";
+    else                            preview = "Select a source profile";
+
+    ImGui::SetNextItemWidth(-FLT_MIN);
+    ImGui::BeginDisabled(sourceProfiles.empty());
+    if (ImGui::BeginCombo("##sourceProfile", preview.c_str())) {
+        bool separated = false;
+        for (const auto& p : sourceProfiles) {
+            if (!p.isBuiltIn && !separated) {
+                if (&p != &sourceProfiles.front()) ImGui::Separator();
+                separated = true;
+            }
+            const std::string label = p.name + "##" + p.id;
+            const bool selected = (active == &p);
+            if (ImGui::Selectable(label.c_str(), selected) && !selected) {
+                out.selectSourceProfileId = p.id;
+            }
+            if (selected) ImGui::SetItemDefaultFocus();
+        }
+        ImGui::EndCombo();
+    }
+    ImGui::EndDisabled();
+
+    // One-line summary of what the profile brings with it.
+    std::string summary;
+    if (active) {
+        const size_t n = active->landmarks.size();
+        summary = n == 0 ? std::string("No landmarks yet")
+                         : std::format("{} landmark{}", n, n == 1 ? "" : "s");
+        summary += active->HasMask() ? " · default mask" : " · no default mask";
+    } else if (morph.isLoaded) {
+        summary = "No profile matches this mesh's topology.";
+    }
+    if (!summary.empty()) {
+        MvStyle::ScopedFont f(MvStyle::Font.BodySm);
+        ImGui::PushStyleColor(ImGuiCol_Text, MvStyle::MvFg4);
+        ImGui::TextWrapped("%s", summary.c_str());
+        ImGui::PopStyleColor();
+    }
 }
 
 // ---------------------------------------------------------------------------
@@ -610,14 +671,21 @@ void StageSidebar::RenderPointReference(Project& project, Actions& out) {
                     const float textX = bMax.x + 12.0f;
                     {
                         // Body label
-                        char nameBuf[32];
-                        std::snprintf(nameBuf, sizeof(nameBuf), "Point %d", corr.pointID);
+                        char nameBuf[96];
+                        if (!corr.landmarkName.empty()) {
+                            std::snprintf(nameBuf, sizeof(nameBuf), "%s", corr.landmarkName.c_str());
+                        } else {
+                            std::snprintf(nameBuf, sizeof(nameBuf), "Point %d", corr.pointID);
+                        }
                         MvStyle::ScopedFont f(MvStyle::Font.BodyMd);
                         const float fs = ImGui::GetFontSize();
                         const float yTop = rowMin.y + (RowH * 0.5f) - fs - 1.0f;
-                        dl->AddText(ImVec2(textX, yTop),
+                        // Landmark names can be long; stop short of the
+                        // source/target squares drawn at the right edge.
+                        const ImVec4 clip(textX, rowMin.y, delMin.x - 48.0f, rowMin.y + RowH);
+                        dl->AddText(ImGui::GetFont(), fs, ImVec2(textX, yTop),
                                     ImGui::ColorConvertFloat4ToU32(MvStyle::MvFg1),
-                                    nameBuf);
+                                    nameBuf, nullptr, 0.0f, &clip);
                     }
                     {
                         // Status sub-label.

@@ -59,8 +59,8 @@ Windows ZIP and SHA-256 checksum under `release/`. See
 
 ## Workflow
 
-1. **Alignment**: Load a source MetaHuman head and your target head, then align
-   them with move (`G`), rotate (`R`), and scale (`S`).
+1. **Alignment**: Pick a source profile (the built-in MetaHuman head, or import
+   your own source mesh), load your target head, then align them with move (`G`), rotate (`R`), and scale (`S`).
 2. **Point Reference**: Place corresponding landmarks on both meshes in the
    dual viewports. Use symmetry for matching features.
 3. **Morph**: Choose a wrap preset, process the mesh, inspect the result, and

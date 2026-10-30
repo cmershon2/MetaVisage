@@ -32,6 +32,7 @@
 #include "core/Types.h"
 #include "core/UndoStack.h"
 #include "core/WrapPreset.h"
+#include "io/ProfileStore.h"
 #include "ui/AppWindow.h"
 #include "ui/Viewport.h"
 #include "ui/ViewportHost.h"
@@ -66,6 +67,7 @@ struct AppWindowTestAccess {
         app.ImportTargetMeshFromDisk(path);
     }
     static void RefreshTargetTexturePreview(AppWindow& app) { app.RefreshTargetTexturePreview(); }
+    static std::vector<SourceProfile>& SourceProfiles(AppWindow& app) { return app.sourceProfiles_; }
 };
 
 } // namespace MetaVisage
@@ -748,6 +750,142 @@ void RegisterScenario_MorphResetToSource(ImGuiTestEngine* engine) {
         AppWindowTestAccess::NewProject(*g_app);
     };
 }
+
+// Sprint 11 — Stage 1 source picker. Picking the built-in profile loads the
+// bundled head with the profile's transform and a full-size mask; swapping
+// away while points exist confirms first and is one undo step; a profile
+// whose fingerprint doesn't match its mesh is refused without changes.
+void RegisterScenario_SourceProfilePicker(ImGuiTestEngine* engine) {
+    ImGuiTest* t = IM_REGISTER_TEST(engine, "smoke", "source_profile_picker");
+    t->TestFunc = [](ImGuiTestContext* ctx) {
+        if (!g_app || !g_app->GetUndoStack()) { IM_CHECK(false); return; }
+        DismissWelcomeModalIfOpen(ctx);
+        AppWindowTestAccess::NewProject(*g_app);
+        auto& profiles = AppWindowTestAccess::SourceProfiles(*g_app);
+        const std::vector<SourceProfile> savedProfiles = profiles;
+        const SourceProfile* found = ProfileStore::FindById(profiles, "metahuman-head-lod0");
+        IM_CHECK(found != nullptr);
+        const SourceProfile builtIn = *found;
+
+        // Test-only profiles on the same mesh: one with a default mask, one
+        // with a fingerprint that can't match.
+        SourceProfile masked = builtIn;
+        masked.id = "test-masked";
+        masked.name = "Test Masked";
+        masked.isBuiltIn = false;
+        masked.maskRanges = {{0, 9}};
+        SourceProfile wrong = builtIn;
+        wrong.id = "test-wrong";
+        wrong.name = "Test Wrong";
+        wrong.isBuiltIn = false;
+        wrong.fingerprint.faceHash ^= 1;
+        profiles.push_back(masked);
+        profiles.push_back(wrong);
+
+        Project* project = g_app->GetProject();
+        UndoStack* undo = g_app->GetUndoStack();
+        project->SetCurrentStage(WorkflowStage::Alignment);
+        ctx->Yield(2);
+        const int undoBefore = undo->Size();
+        auto stage1 = [ctx] { ctx->SetRef(ctx->WindowInfo("//Stage/##stage1body").Window); };
+
+        stage1();
+        ctx->ComboClick(("##sourceProfile/" + builtIn.name + "##" + builtIn.id).c_str());
+        ctx->Yield(2);
+        IM_CHECK(project->GetMorphMesh().isLoaded && project->GetMorphMesh().mesh);
+        IM_CHECK_STR_EQ(project->GetSourceProfileId().c_str(), "metahuman-head-lod0");
+        IM_CHECK_EQ(project->GetMorphData().vertexMask.size(),
+                    project->GetMorphMesh().mesh->GetVertexCount());
+        IM_CHECK_FLOAT_NEAR(project->GetMorphMesh().transform.GetRotation().x, -0.70710677f, 1e-5f);
+        IM_CHECK_EQ(undo->Size(), undoBefore + 1);
+        const auto headMesh = project->GetMorphMesh().mesh;
+
+        // Points exist: confirm first, and Cancel keeps everything.
+        PointCorrespondence pc;
+        pc.pointID = 1;
+        pc.morphMeshVertexIndex = 5;
+        project->GetPointReferenceData().correspondences = {pc};
+        stage1();
+        ctx->ComboClick("##sourceProfile/Test Masked##test-masked");
+        ctx->Yield(2);
+        ctx->SetRef("//##ConfirmModal");
+        ctx->ItemClick("Cancel");
+        ctx->Yield(2);
+        IM_CHECK_STR_EQ(project->GetSourceProfileId().c_str(), "metahuman-head-lod0");
+        IM_CHECK_EQ(project->GetPointReferenceData().correspondences.size(), (size_t)1);
+
+        stage1();
+        ctx->ComboClick("##sourceProfile/Test Masked##test-masked");
+        ctx->Yield(2);
+        ctx->SetRef("//##ConfirmModal");
+        ctx->ItemClick("Replace");
+        ctx->Yield(2);
+        IM_CHECK_STR_EQ(project->GetSourceProfileId().c_str(), "test-masked");
+        IM_CHECK(project->GetPointReferenceData().correspondences.empty());
+        IM_CHECK(project->GetMorphData().vertexMask[9]);
+        IM_CHECK(!project->GetMorphData().vertexMask[10]);
+
+        // One undo restores the previous source, profile, points and mask.
+        undo->Undo();
+        ctx->Yield();
+        IM_CHECK_STR_EQ(project->GetSourceProfileId().c_str(), "metahuman-head-lod0");
+        IM_CHECK(project->GetMorphMesh().mesh == headMesh);
+        IM_CHECK_EQ(project->GetPointReferenceData().correspondences.size(), (size_t)1);
+        IM_CHECK(!project->GetMorphData().vertexMask[0]);
+
+        // Fingerprint mismatch: error modal, nothing changes. No points or
+        // painted mask, so no confirm step first.
+        project->GetPointReferenceData().correspondences.clear();
+        stage1();
+        ctx->ComboClick("##sourceProfile/Test Wrong##test-wrong");
+        ctx->Yield(2);
+        ctx->SetRef("//##ErrorModal");
+        ctx->ItemClick("OK");
+        ctx->Yield(2);
+        IM_CHECK_STR_EQ(project->GetSourceProfileId().c_str(), "metahuman-head-lod0");
+        IM_CHECK(project->GetMorphMesh().mesh == headMesh);
+
+        // Help > Show Profile Landmarks (Dev): refused outside Stage 2, then
+        // loads the profile's landmarks as named source-only points, with
+        // mirrors linked, as one undo step.
+        ctx->SetRef("//##AppHostWindow");
+        ctx->MenuClick("Help/Show Profile Landmarks (Dev)");
+        ctx->Yield(2);
+        ctx->SetRef("//##ErrorModal");
+        ctx->ItemClick("OK");
+        ctx->Yield(2);
+        IM_CHECK(project->GetPointReferenceData().correspondences.empty());
+
+        project->SetCurrentStage(WorkflowStage::PointReference);
+        ctx->Yield(2);
+        ctx->SetRef("//##AppHostWindow");
+        ctx->MenuClick("Help/Show Profile Landmarks (Dev)");
+        ctx->Yield(2);
+        const auto& shown = project->GetPointReferenceData().correspondences;
+        IM_CHECK_EQ(shown.size(), builtIn.landmarks.size());
+        IM_CHECK_STR_EQ(undo->UndoDescription().c_str(), "Show Profile Landmarks");
+        for (size_t i = 0; i < shown.size() && i < builtIn.landmarks.size(); ++i) {
+            IM_CHECK_STR_EQ(shown[i].landmarkName.c_str(), builtIn.landmarks[i].name.c_str());
+            IM_CHECK_EQ(shown[i].morphMeshVertexIndex, builtIn.landmarks[i].vertexIndex);
+            IM_CHECK_EQ(shown[i].targetMeshVertexIndex, -1);
+            IM_CHECK_EQ(shown[i].isSymmetric, !builtIn.landmarks[i].mirrorId.empty());
+            if (shown[i].isSymmetric) {
+                const int pair = shown[i].symmetricPairID;
+                IM_CHECK(pair >= 1 && pair <= static_cast<int>(shown.size()));
+                if (pair >= 1 && pair <= static_cast<int>(shown.size())) {
+                    IM_CHECK_EQ(shown[pair - 1].symmetricPairID, shown[i].pointID);
+                }
+            }
+        }
+        undo->Undo();
+        ctx->Yield();
+        IM_CHECK(project->GetPointReferenceData().correspondences.empty());
+
+        profiles = savedProfiles;
+        ctx->SetRef("");
+        AppWindowTestAccess::NewProject(*g_app);
+    };
+}
 } // namespace
 
 int main(int /*argc*/, char** /*argv*/) {
@@ -783,6 +921,7 @@ int main(int /*argc*/, char** /*argv*/) {
     RegisterScenario_AlignmentTypedTransformEntry(engine);
     RegisterScenario_ShellMenus(engine);
     RegisterScenario_MorphResetToSource(engine);
+    RegisterScenario_SourceProfilePicker(engine);
 
     ImGuiTestEngine_Start(engine, ImGui::GetCurrentContext());
     ImGuiTestEngine_QueueTests(engine, ImGuiTestGroup_Tests, /*filter=*/nullptr,

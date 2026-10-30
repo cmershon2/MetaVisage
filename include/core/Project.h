@@ -32,6 +32,10 @@ struct PointCorrespondence {
     int targetMeshVertexIndex;
     bool isSymmetric;
     int symmetricPairID;
+    // Sprint 11 — source profile landmark name, shown in place of "Point N"
+    // when the point came from Help > Show Profile Landmarks (Dev). Not
+    // serialized; Sprint 13 adds landmark ids to the project format.
+    std::string landmarkName;
 
     PointCorrespondence() : pointID(-1), morphMeshVertexIndex(-1),
                             targetMeshVertexIndex(-1), isSymmetric(false),
@@ -159,6 +163,9 @@ public:
     const TimePoint& GetCreated() const { return created_; }
     const TimePoint& GetLastModified() const { return lastModified_; }
     WorkflowStage GetCurrentStage() const { return currentStage_; }
+    // Sprint 11 — id of the Source Profile the source mesh came from (or was
+    // matched to by fingerprint). Empty when the source has no profile.
+    const std::string& GetSourceProfileId() const { return sourceProfileId_; }
 
     MeshReference& GetMorphMesh() { return morphMesh_; }
     MeshReference& GetTargetMesh() { return targetMesh_; }
@@ -180,6 +187,7 @@ public:
     void SetName(const std::string& name) { projectName_ = name; }
     void SetPath(const std::string& path) { projectPath_ = path; }
     void SetCurrentStage(WorkflowStage stage) { currentStage_ = stage; }
+    void SetSourceProfileId(const std::string& id) { sourceProfileId_ = id; }
 
     // Validation
     bool CanProceedToNextStage() const;
@@ -190,6 +198,7 @@ private:
     TimePoint created_;
     TimePoint lastModified_;
     WorkflowStage currentStage_;
+    std::string sourceProfileId_;
 
     MeshReference morphMesh_;
     MeshReference targetMesh_;

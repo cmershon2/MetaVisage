@@ -4,9 +4,14 @@
 supersedes the commercial distribution/auto-update roadmap below. Sprints 1-7
 remain historical records. The current application is MIT licensed and offline.
 
-**Latest**: [Sprint 10 - App Shell & Morph Stage Polish](sprint-10.md), complete 2026-10-30
-(after [Sprint 9 - Alignment Stage Usability Fixes](sprint-09.md)). The 2026-10-29
-feedback triage is fully delivered; the next sprint is not yet planned.
+**Latest**: [Sprint 11 - Source Profiles](sprint-11.md), complete 2026-10-30. Before it,
+[Sprint 10 - App Shell & Morph Stage Polish](sprint-10.md) and
+[Sprint 9 - Alignment Stage Usability Fixes](sprint-09.md) delivered the 2026-10-29
+feedback triage.
+
+**Next**: Sprint 12 - Auto-map landmark solver, not yet planned. It needs design decisions 1
+and 3 confirmed first. Sprint 11 was the first of four Auto Point Reference sprints (11–14); see
+[auto-point-reference.md](../design/auto-point-reference.md) for the design and roadmap.
 
 **Version:** 2.0  
 **Date:** April 19, 2026  

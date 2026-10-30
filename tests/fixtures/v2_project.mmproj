@@ -1,0 +1,76 @@
+{
+  "formatVersion": 2,
+  "projectName": "v2_fixture",
+  "created": "2026-10-30T12:00:00",
+  "lastModified": "2026-10-30T12:00:00",
+  "currentStage": 2,
+  "morphMesh": {
+    "filepath": "",
+    "isLoaded": false,
+    "transform": {
+      "position": { "x": 0.0, "y": 0.0, "z": 0.0 },
+      "rotation": { "x": -0.7071068, "y": 0.0, "z": 0.0, "w": 0.7071068 },
+      "scale": { "x": 1.0, "y": 1.0, "z": 1.0 }
+    }
+  },
+  "targetMesh": {
+    "filepath": "",
+    "isLoaded": false,
+    "transform": {
+      "position": { "x": 0.0, "y": 0.0, "z": 0.0 },
+      "rotation": { "x": 0.0, "y": 0.0, "z": 0.0, "w": 1.0 },
+      "scale": { "x": 1.0, "y": 1.0, "z": 1.0 }
+    }
+  },
+  "alignment": {
+    "targetMeshTransform": {
+      "position": { "x": 0.0, "y": 0.0, "z": 0.0 },
+      "rotation": { "x": 0.0, "y": 0.0, "z": 0.0, "w": 1.0 },
+      "scale": { "x": 1.0, "y": 1.0, "z": 1.0 }
+    }
+  },
+  "pointReference": {
+    "symmetryEnabled": true,
+    "symmetryAxis": 0,
+    "symmetryPlaneOffset": 0.0,
+    "correspondences": [
+      {
+        "pointID": 1,
+        "morphMeshPosition": { "x": 0.0, "y": 1.0, "z": 0.0 },
+        "morphMeshVertexIndex": 3,
+        "targetMeshPosition": { "x": 0.0, "y": 1.1, "z": 0.0 },
+        "targetMeshVertexIndex": 7,
+        "isSymmetric": false,
+        "symmetricPairID": -1
+      }
+    ]
+  },
+  "morph": {
+    "algorithm": 4,
+    "stiffness": 0.5,
+    "smoothness": 0.5,
+    "previewMode": 0,
+    "isProcessed": false,
+    "isAccepted": false,
+    "nricpStiffnessSteps": 5,
+    "nricpAlphaInitial": 100.0,
+    "nricpAlphaFinal": 50.0,
+    "nricpIcpIterations": 7,
+    "nricpNormalThreshold": 60.0,
+    "nricpLandmarkWeight": 10.0,
+    "nricpEpsilon": 0.0001,
+    "nricpEnableBoundaryExclusion": true,
+    "nricpBoundaryExclusionHops": 3,
+    "nricpOptimizationIterations": 3,
+    "nricpDpInitial": 0.8,
+    "nricpDpFinal": 0.6,
+    "nricpGammaInitial": 2.0,
+    "nricpGammaFinal": 1.0,
+    "nricpSamplingInitial": 0.2,
+    "nricpSamplingFinal": 0.05,
+    "nricpNormalizeSampling": false,
+    "vertexMaskRLE": [-2, 3, -1],
+    "vertexMaskSize": 6
+  },
+  "targetTextures": {}
+}

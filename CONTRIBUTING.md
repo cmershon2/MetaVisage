@@ -52,7 +52,7 @@ git diff --check
 ```
 
 The UI test opens a real window and needs OpenGL 4.3+. The full suite contains
-four targets; wrap parity has a 120-second timeout. For mesh changes, check
+five targets; wrap parity has a 120-second timeout. For mesh changes, check
 round-trip topology and UV preservation. For UI changes, exercise the affected
 workflow and include screenshots when useful. Documentation-only changes need
 link and content checks rather than a full application rebuild.

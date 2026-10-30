@@ -112,3 +112,11 @@ implemented or counted as completed delivery.
 - **Effort (Estimated)**: 12 points.
 - **Completed**: Sprint 10, 2026-10-30.
 - **Notes**: Casey confirmed by hand, including a full Stage 1 -> 4 -> Export run. This completes the 2026-10-29 feedback triage. See `retrospectives/retro-sprint-10.md`.
+
+### 2026-10-30 - Sprint 11 Source Profiles
+
+- ✅ **Source Profiles and built-in MetaHuman profile**
+  - Added a Source Profile (source mesh, topology fingerprint, landmarks, default mask, default transform), a `ProfileStore`, and the authored built-in MetaHuman profile. The Stage 1 source picker selects a profile, and projects store `sourceProfileId` (format v3).
+  - **Effort (Estimated)**: ~1 sprint (13 pts)
+  - **Completed**: Sprint 11, 2026-10-30
+  - **Notes**: Casey authored the 52 landmarks and the mouth-interior mask. Also fixed: reopened projects lost the vertex mask and newer wrap parameters; a new source import kept the old `originalMorphMesh`; undo did not refresh the mask overlay. See [retro-sprint-11.md](../retrospectives/retro-sprint-11.md).

@@ -6,6 +6,7 @@
 #include "core/Transform.h"
 #include "core/Project.h"
 #include "core/Mesh.h"
+#include "core/WrapPreset.h"
 #include "sculpting/BrushStroke.h"
 #include <functional>
 #include <map>
@@ -108,6 +109,87 @@ private:
     Project* project_;
     MorphState before_;
     MorphState after_;
+    WorkflowStage originatingStage_;
+};
+
+// Sprint 11 — undo for replacing the source mesh (picking a Source Profile
+// or importing a mesh). Everything that depends on the source's vertex
+// indices changes together: the mesh reference, the profile id, the vertex
+// mask, the point pairs, the morph result, and the wrap parameters a
+// profile's default preset may have set. Meshes are held by shared_ptr, so
+// no geometry is copied.
+class SourceSwapUndoAction : public UndoableAction {
+public:
+    struct SourceState {
+        MeshReference morphMesh;
+        std::string sourceProfileId;
+        std::vector<bool> vertexMask;
+        std::vector<PointCorrespondence> correspondences;
+        WrapParams wrapParams;
+        std::shared_ptr<Mesh> originalMorphMesh;
+        std::shared_ptr<Mesh> deformedMorphMesh;
+        bool isProcessed = false;
+        bool isAccepted = false;
+        std::vector<float> displacementMagnitudes;
+        float maxDisplacement = 0.0f;
+        float avgDisplacement = 0.0f;
+
+        static SourceState Capture(const Project& project) {
+            const MorphData& m = project.GetMorphData();
+            SourceState s;
+            s.morphMesh              = project.GetMorphMesh();
+            s.sourceProfileId        = project.GetSourceProfileId();
+            s.vertexMask             = m.vertexMask;
+            s.correspondences        = project.GetPointReferenceData().correspondences;
+            s.wrapParams             = WrapParams::FromMorphData(m);
+            s.originalMorphMesh      = m.originalMorphMesh;
+            s.deformedMorphMesh      = m.deformedMorphMesh;
+            s.isProcessed            = m.isProcessed;
+            s.isAccepted             = m.isAccepted;
+            s.displacementMagnitudes = m.displacementMagnitudes;
+            s.maxDisplacement        = m.maxDisplacement;
+            s.avgDisplacement        = m.avgDisplacement;
+            return s;
+        }
+
+        void ApplyTo(Project& project) const {
+            MorphData& m = project.GetMorphData();
+            project.GetMorphMesh() = morphMesh;
+            project.SetSourceProfileId(sourceProfileId);
+            m.vertexMask = vertexMask;
+            project.GetPointReferenceData().correspondences = correspondences;
+            project.GetPointReferenceData().activeSelection.Clear();
+            WrapPreset preset;
+            preset.params = wrapParams;
+            preset.ApplyTo(m);
+            m.originalMorphMesh      = originalMorphMesh;
+            m.deformedMorphMesh      = deformedMorphMesh;
+            m.isProcessed            = isProcessed;
+            m.isAccepted             = isAccepted;
+            m.displacementMagnitudes = displacementMagnitudes;
+            m.maxDisplacement        = maxDisplacement;
+            m.avgDisplacement        = avgDisplacement;
+        }
+    };
+
+    SourceSwapUndoAction(Project* project, SourceState before, SourceState after)
+        : project_(project), before_(std::move(before)), after_(std::move(after)),
+          originatingStage_(project->GetCurrentStage()) {}
+
+    void Undo() override {
+        before_.ApplyTo(*project_);
+        project_->SetCurrentStage(originatingStage_);
+    }
+    void Redo() override {
+        after_.ApplyTo(*project_);
+        project_->SetCurrentStage(originatingStage_);
+    }
+    std::string Description() const override { return "Change Source Mesh"; }
+
+private:
+    Project* project_;
+    SourceState before_;
+    SourceState after_;
     WorkflowStage originatingStage_;
 };
 

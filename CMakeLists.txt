@@ -98,6 +98,7 @@ set(CORE_SOURCES
     src/core/UndoStack.cpp
     src/core/TextureData.cpp
     src/core/WrapPreset.cpp
+    src/core/SourceProfile.cpp
     src/rendering/Renderer.cpp
     src/rendering/MeshRenderer.cpp
     src/rendering/ShaderManager.cpp
@@ -130,6 +131,7 @@ set(CORE_SOURCES
     src/io/MeshExporter.cpp
     src/io/ProjectSerializer.cpp
     src/io/PresetStore.cpp
+    src/io/ProfileStore.cpp
     src/baking/TextureBaker.cpp
     src/baking/TextureWriter.cpp
 )
@@ -155,6 +157,7 @@ set(CORE_HEADERS
     include/core/UndoActions.h
     include/core/TextureData.h
     include/core/WrapPreset.h
+    include/core/SourceProfile.h
     include/rendering/Renderer.h
     include/rendering/MeshRenderer.h
     include/rendering/ShaderManager.h
@@ -179,6 +182,7 @@ set(CORE_HEADERS
     include/io/MeshExporter.h
     include/io/ProjectSerializer.h
     include/io/PresetStore.h
+    include/io/ProfileStore.h
     include/baking/TextureBaker.h
     include/baking/TextureWriter.h
 )
@@ -335,6 +339,30 @@ add_custom_command(TARGET metavisage_v1_compat POST_BUILD
 
 add_test(NAME smoke_v1_backward_compat
          COMMAND metavisage_v1_compat
+         WORKING_DIRECTORY ${CMAKE_RUNTIME_OUTPUT_DIRECTORY})
+
+# ---------------------------------------------------------------------------
+# Source Profile smoke (Sprint 11)
+# ---------------------------------------------------------------------------
+# Topology fingerprint, mask ranges, profile validation, ProfileStore
+# save / load / delete against a temp directory, the dev draft export, and
+# the shipped built-in MetaHuman profile against the bundled head. Reads the
+# staged build/bin/<config>/assets/ tree like smoke_load_serialize_export.
+add_executable(metavisage_smoke_source_profile
+    tests/smoke/source_profile.cpp
+)
+target_link_libraries(metavisage_smoke_source_profile
+    PRIVATE
+        ${PROJECT_NAME}Core
+)
+if(MSVC)
+    target_compile_options(metavisage_smoke_source_profile PRIVATE /W4)
+else()
+    target_compile_options(metavisage_smoke_source_profile PRIVATE -Wall -Wextra)
+endif()
+
+add_test(NAME smoke_source_profile
+         COMMAND metavisage_smoke_source_profile
          WORKING_DIRECTORY ${CMAKE_RUNTIME_OUTPUT_DIRECTORY})
 
 # ---------------------------------------------------------------------------
