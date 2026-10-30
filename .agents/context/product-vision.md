@@ -51,3 +51,10 @@ morph result cannot populate a replacement workspace, and keeps the public
 Wrap Engine name in progress messages and diagnostic metadata. A tiny in-memory
 mesh regression expands the UI lane to six scenarios; full loaded-asset
 Process/Accept and sculpt/undo coverage remains separate follow-up work.
+
+Sprint 9 makes Stage 1 Alignment usable without workarounds. The move gizmo
+keeps the mesh under the cursor in every view, the G/R/S hotkeys match the tool
+rail, transform fields accept typed values, and target textures survive a mesh
+swap. The orthographic top view is also fixed. The UI smoke lane now has eleven
+scenarios. Sprint 10 covers the shell and Morph-stage feedback from the same
+triage. See `retrospectives/retro-sprint-09.md`.

@@ -28,7 +28,9 @@
 
 #include "core/Project.h"
 #include "core/Mesh.h"
+#include "core/TextureData.h"
 #include "core/Types.h"
+#include "core/UndoStack.h"
 #include "ui/AppWindow.h"
 #include "ui/Viewport.h"
 #include "ui/ViewportHost.h"
@@ -41,7 +43,11 @@
 #include <imgui.h>
 
 #include <chrono>
+#include <cmath>
 #include <cstdio>
+#include <filesystem>
+#include <functional>
+#include <fstream>
 #include <string>
 
 using namespace MetaVisage;
@@ -54,6 +60,10 @@ struct AppWindowTestAccess {
     static void StartMorph(AppWindow& app) { app.StartMorph(); }
     static void NewProject(AppWindow& app) { app.OnFileNewProject(); }
     static bool MorphRunning(const AppWindow& app) { return app.morphRunning_.load(); }
+    static void ImportTargetMesh(AppWindow& app, const std::string& path) {
+        app.ImportTargetMeshFromDisk(path);
+    }
+    static void RefreshTargetTexturePreview(AppWindow& app) { app.RefreshTargetTexturePreview(); }
 };
 
 } // namespace MetaVisage
@@ -75,6 +85,16 @@ namespace {
 // Shutdown(), so it's never null mid-test in practice; the guard
 // exists for defence-in-depth, not as a routine null check.
 AppWindow* g_app = nullptr;
+
+// Test bodies run on the engine's coroutine thread, where the GL context
+// is not current. Anything that touches GL (texture/mesh uploads) goes
+// through RunOnMainThread, which the harness loop drains before each tick.
+std::function<void()> g_mainThreadTask;
+
+void RunOnMainThread(ImGuiTestContext* ctx, std::function<void()> task) {
+    g_mainThreadTask = std::move(task);
+    while (g_mainThreadTask) ctx->Yield();
+}
 
 void DismissWelcomeModalIfOpen(ImGuiTestContext* ctx) {
     // The welcome modal pops on first frame because no project is
@@ -308,6 +328,252 @@ void RegisterScenario_ProjectSwitchDuringMorph(ImGuiTestEngine* engine) {
     };
 }
 
+// Sprint 9 — shared fixture: a fresh project in Alignment with a unit
+// tetrahedron as the target mesh, framed by the primary camera.
+Viewport* PrepareAlignmentFixture(ImGuiTestContext* ctx) {
+    AppWindowTestAccess::NewProject(*g_app);
+    auto mesh = std::make_shared<Mesh>();
+    mesh->SetVertices({Vector3(0, 0, 0), Vector3(1, 0, 0),
+                       Vector3(0, 1, 0), Vector3(0, 0, 1)});
+    std::vector<Face> faces(4);
+    faces[0].vertexIndices = {0, 2, 1};
+    faces[1].vertexIndices = {0, 1, 3};
+    faces[2].vertexIndices = {0, 3, 2};
+    faces[3].vertexIndices = {1, 2, 3};
+    mesh->SetFaces(faces);
+    mesh->CalculateNormals();
+    Project& project = *g_app->GetProject();
+    project.GetTargetMesh().mesh = mesh;
+    project.GetTargetMesh().isLoaded = true;
+    project.SetCurrentStage(WorkflowStage::Alignment);
+    Viewport* vp = g_app->GetViewportHost()->GetPrimaryViewport();
+    vp->GetCamera()->FocusOnBounds(mesh->GetBounds());
+    ctx->Yield(3); // let the viewport record its pixel size
+    return vp;
+}
+
+// Projects a world point to viewport-local pixels (Y down), matching the
+// space Viewport::OnMouse* receives.
+Vector3 WorldToViewportPixels(const Viewport& vp, const Vector3& p) {
+    const float w = vp.GetPixelWidth();
+    const float h = vp.GetPixelHeight();
+    const Camera& cam = *const_cast<Viewport&>(vp).GetCamera();
+    const Matrix4x4 vpm = cam.GetProjectionMatrix(w / h) * cam.GetViewMatrix();
+    const float* m = vpm.m;
+    const float cx = m[0] * p.x + m[4] * p.y + m[8]  * p.z + m[12];
+    const float cy = m[1] * p.x + m[5] * p.y + m[9]  * p.z + m[13];
+    const float cw = m[3] * p.x + m[7] * p.y + m[11] * p.z + m[15];
+    return Vector3((cx / cw + 1.0f) * 0.5f * w, (1.0f - cy / cw) * 0.5f * h, 0.0f);
+}
+
+void RegisterScenario_AlignmentTransformHotkeys(ImGuiTestEngine* engine) {
+    ImGuiTest* t = IM_REGISTER_TEST(engine, "smoke", "alignment_transform_hotkeys");
+    t->TestFunc = [](ImGuiTestContext* ctx) {
+        if (!g_app || !g_app->GetProject() || !g_app->GetViewportHost()) { IM_CHECK(false); return; }
+        DismissWelcomeModalIfOpen(ctx);
+        Viewport* vp = PrepareAlignmentFixture(ctx);
+        IM_CHECK(vp != nullptr);
+        if (!vp) return;
+
+        // Blender-style bindings, which the tool rail badges now advertise.
+        const struct { int key; TransformMode mode; } kBindings[] = {
+            {GLFW_KEY_G, TransformMode::Move},
+            {GLFW_KEY_R, TransformMode::Rotate},
+            {GLFW_KEY_S, TransformMode::Scale},
+        };
+        for (const auto& b : kBindings) {
+            vp->OnKey(b.key, 0, GLFW_PRESS, 0);
+            ctx->Yield();
+            IM_CHECK(vp->GetTransformMode() == b.mode);
+        }
+        AppWindowTestAccess::NewProject(*g_app);
+    };
+}
+
+void RegisterScenario_AlignmentGizmoTracksCursor(ImGuiTestEngine* engine) {
+    ImGuiTest* t = IM_REGISTER_TEST(engine, "smoke", "alignment_gizmo_tracks_cursor");
+    t->TestFunc = [](ImGuiTestContext* ctx) {
+        if (!g_app || !g_app->GetProject() || !g_app->GetViewportHost()) { IM_CHECK(false); return; }
+        DismissWelcomeModalIfOpen(ctx);
+        Viewport* vp = PrepareAlignmentFixture(ctx);
+        IM_CHECK(vp != nullptr && vp->GetPixelHeight() > 0.0f);
+        if (!vp || vp->GetPixelHeight() <= 0.0f) return;
+        Project& project = *g_app->GetProject();
+        Transform& xform = project.GetTargetMesh().transform;
+        UndoStack* undo = g_app->GetUndoStack();
+        IM_CHECK(undo != nullptr);
+        if (!undo) return;
+
+        // Drag the gizmo 120 px right / 40 px up: the mesh centre must land
+        // under the cursor (the old fixed 0.01 units/px did not track).
+        const Mesh& mesh = *project.GetTargetMesh().mesh;
+        auto centreOnScreen = [&] {
+            const Vector3 c = mesh.GetBounds().Center() + xform.GetPosition();
+            return WorldToViewportPixels(*vp, c);
+        };
+        vp->SetTransformMode(TransformMode::Move);
+        const int undoBefore = undo->Size();
+        const Vector3 start = centreOnScreen();
+        vp->OnMouseButton(GLFW_MOUSE_BUTTON_LEFT, GLFW_PRESS, 0, start.x, start.y);
+        vp->OnMouseMove(start.x + 60.0f, start.y - 20.0f);
+        vp->OnMouseMove(start.x + 120.0f, start.y - 40.0f);
+        vp->OnMouseButton(GLFW_MOUSE_BUTTON_LEFT, GLFW_RELEASE, 0,
+                          start.x + 120.0f, start.y - 40.0f);
+        ctx->Yield();
+        const Vector3 end = centreOnScreen();
+        IM_CHECK_LE(std::abs(end.x - (start.x + 120.0f)), 1.0f);
+        IM_CHECK_LE(std::abs(end.y - (start.y - 40.0f)), 1.0f);
+        IM_CHECK_EQ(undo->Size(), undoBefore + 1); // one undo per drag
+
+        // X-constrained drag in the front view moves along X only.
+        const Vector3 before = xform.GetPosition();
+        vp->OnKey(GLFW_KEY_X, 0, GLFW_PRESS, 0);
+        IM_CHECK(vp->GetAxisConstraint() == AxisConstraint::X);
+        const Vector3 s2 = centreOnScreen();
+        vp->OnMouseButton(GLFW_MOUSE_BUTTON_LEFT, GLFW_PRESS, 0, s2.x, s2.y);
+        vp->OnMouseMove(s2.x + 80.0f, s2.y + 30.0f);
+        vp->OnMouseButton(GLFW_MOUSE_BUTTON_LEFT, GLFW_RELEASE, 0, s2.x + 80.0f, s2.y + 30.0f);
+        ctx->Yield();
+        const Vector3 after = xform.GetPosition();
+        IM_CHECK_GT(after.x, before.x);
+        IM_CHECK_EQ(after.y, before.y);
+        IM_CHECK_EQ(after.z, before.z);
+        IM_CHECK_LE(std::abs(centreOnScreen().x - (s2.x + 80.0f)), 1.0f);
+        AppWindowTestAccess::NewProject(*g_app);
+    };
+}
+
+void RegisterScenario_AlignmentGizmoAllViews(ImGuiTestEngine* engine) {
+    ImGuiTest* t = IM_REGISTER_TEST(engine, "smoke", "alignment_gizmo_all_views");
+    t->TestFunc = [](ImGuiTestContext* ctx) {
+        if (!g_app || !g_app->GetProject() || !g_app->GetViewportHost()) { IM_CHECK(false); return; }
+        DismissWelcomeModalIfOpen(ctx);
+
+        // Orbited perspective plus the numpad orthographic views. Each
+        // names an axis lying in its view plane for the constrained drag.
+        const struct { const char* name; int key; int axisKey; int axis; } kViews[] = {
+            {"orbited",   0,              GLFW_KEY_X, 0},
+            {"front (1)", GLFW_KEY_KP_1,  GLFW_KEY_X, 0},
+            {"right (3)", GLFW_KEY_KP_3,  GLFW_KEY_Z, 2},
+            {"top (7)",   GLFW_KEY_KP_7,  GLFW_KEY_X, 0},
+        };
+        for (const auto& v : kViews) {
+            ctx->LogInfo("view: %s", v.name);
+            Viewport* vp = PrepareAlignmentFixture(ctx);
+            if (!vp || vp->GetPixelHeight() <= 0.0f) { IM_CHECK(false); return; }
+            if (v.key) vp->OnKey(v.key, 0, GLFW_PRESS, 0);
+            else vp->GetCamera()->Orbit(60.0f, 35.0f);
+            ctx->Yield();
+
+            Transform& xform = g_app->GetProject()->GetTargetMesh().transform;
+            const Mesh& mesh = *g_app->GetProject()->GetTargetMesh().mesh;
+            auto centreOnScreen = [&] {
+                return WorldToViewportPixels(*vp, mesh.GetBounds().Center() + xform.GetPosition());
+            };
+
+            // Free drag keeps the mesh centre under the cursor.
+            vp->SetTransformMode(TransformMode::Move);
+            const Vector3 s1 = centreOnScreen();
+            vp->OnMouseButton(GLFW_MOUSE_BUTTON_LEFT, GLFW_PRESS, 0, s1.x, s1.y);
+            vp->OnMouseMove(s1.x - 70.0f, s1.y + 50.0f);
+            vp->OnMouseButton(GLFW_MOUSE_BUTTON_LEFT, GLFW_RELEASE, 0, s1.x - 70.0f, s1.y + 50.0f);
+            ctx->Yield();
+            const Vector3 e1 = centreOnScreen();
+            IM_CHECK_LE(std::abs(e1.x - (s1.x - 70.0f)), 1.0f);
+            IM_CHECK_LE(std::abs(e1.y - (s1.y + 50.0f)), 1.0f);
+
+            // Axis-constrained drag changes only that axis.
+            const Vector3 before = xform.GetPosition();
+            vp->SetTransformMode(TransformMode::Move);
+            vp->OnKey(v.axisKey, 0, GLFW_PRESS, 0);
+            const Vector3 s2 = centreOnScreen();
+            vp->OnMouseButton(GLFW_MOUSE_BUTTON_LEFT, GLFW_PRESS, 0, s2.x, s2.y);
+            vp->OnMouseMove(s2.x + 90.0f, s2.y - 25.0f);
+            vp->OnMouseButton(GLFW_MOUSE_BUTTON_LEFT, GLFW_RELEASE, 0, s2.x + 90.0f, s2.y - 25.0f);
+            ctx->Yield();
+            const Vector3 after = xform.GetPosition();
+            const float b[3] = {before.x, before.y, before.z};
+            const float a[3] = {after.x, after.y, after.z};
+            for (int i = 0; i < 3; ++i) {
+                if (i == v.axis) IM_CHECK_NE(a[i], b[i]);
+                else IM_CHECK_EQ(a[i], b[i]);
+            }
+        }
+        AppWindowTestAccess::NewProject(*g_app);
+    };
+}
+
+void RegisterScenario_AlignmentTextureSurvivesTargetSwap(ImGuiTestEngine* engine) {
+    ImGuiTest* t = IM_REGISTER_TEST(engine, "smoke", "alignment_texture_survives_target_swap");
+    t->TestFunc = [](ImGuiTestContext* ctx) {
+        if (!g_app || !g_app->GetProject() || !g_app->GetViewportHost()) { IM_CHECK(false); return; }
+        DismissWelcomeModalIfOpen(ctx);
+        Viewport* vp = PrepareAlignmentFixture(ctx);
+        if (!vp) { IM_CHECK(false); return; }
+        Project& project = *g_app->GetProject();
+
+        // Albedo on the first target, as ImportTextureForSlot leaves it.
+        auto albedo = TextureData::Create(2, 2);
+        project.GetTargetTextures().Add("Albedo", albedo);
+        RunOnMainThread(ctx, [] { AppWindowTestAccess::RefreshTargetTexturePreview(*g_app); });
+        const Mesh* oldMesh = project.GetTargetMesh().mesh.get();
+        IM_CHECK(vp->HasMeshTexture(oldMesh));
+
+        // Replace the target from disk; the project's albedo must follow.
+        const std::filesystem::path obj =
+            std::filesystem::temp_directory_path() / "metavisage_smoke_target_swap.obj";
+        {
+            std::ofstream out(obj);
+            out << "v 0 0 0\nv 1 0 0\nv 0 1 0\nv 0 0 1\n"
+                   "f 1 3 2\nf 1 2 4\nf 1 4 3\nf 2 3 4\n";
+        }
+        RunOnMainThread(ctx, [&] { AppWindowTestAccess::ImportTargetMesh(*g_app, obj.string()); });
+        const Mesh* newMesh = project.GetTargetMesh().mesh.get();
+        IM_CHECK(project.GetTargetMesh().isLoaded);
+        IM_CHECK(newMesh != nullptr && newMesh != oldMesh);
+        IM_CHECK(vp->HasMeshTexture(newMesh));
+        std::error_code ec;
+        std::filesystem::remove(obj, ec);
+        AppWindowTestAccess::NewProject(*g_app);
+    };
+}
+
+void RegisterScenario_AlignmentTypedTransformEntry(ImGuiTestEngine* engine) {
+    ImGuiTest* t = IM_REGISTER_TEST(engine, "smoke", "alignment_typed_transform_entry");
+    t->TestFunc = [](ImGuiTestContext* ctx) {
+        if (!g_app || !g_app->GetProject() || !g_app->GetUndoStack()) { IM_CHECK(false); return; }
+        DismissWelcomeModalIfOpen(ctx);
+        PrepareAlignmentFixture(ctx);
+        Transform& xform = g_app->GetProject()->GetTargetMesh().transform;
+        UndoStack* undo = g_app->GetUndoStack();
+
+        // Child window paths are mangled; resolve the sidebar body first.
+        ctx->SetRef(ctx->WindowInfo("//Stage/##stage1body").Window);
+        const char* kPosX = "Position/##xform/X/##axisDrag";
+
+        // Double-click → type → Enter commits once, with exactly one undo.
+        const int undoBefore = undo->Size();
+        ctx->ItemDoubleClick(kPosX);
+        ctx->Yield(2);
+        ctx->KeyCharsReplaceEnter("12.5");
+        ctx->Yield(2);
+        IM_CHECK_FLOAT_NEAR(xform.GetPosition().x, 12.5f, 1e-4f);
+        IM_CHECK_EQ(undo->Size(), undoBefore + 1);
+
+        // Esc cancels: value and undo stack unchanged.
+        ctx->ItemDoubleClick(kPosX);
+        ctx->Yield(2);
+        ctx->KeyCharsReplace("99");
+        ctx->KeyPress(ImGuiKey_Escape);
+        ctx->Yield(2);
+        IM_CHECK_FLOAT_NEAR(xform.GetPosition().x, 12.5f, 1e-4f);
+        IM_CHECK_EQ(undo->Size(), undoBefore + 1);
+
+        ctx->SetRef("");
+        AppWindowTestAccess::NewProject(*g_app);
+    };
+}
+
 } // namespace
 
 int main(int /*argc*/, char** /*argv*/) {
@@ -336,6 +602,11 @@ int main(int /*argc*/, char** /*argv*/) {
     RegisterScenario_StageStepperProgression(engine);
     RegisterScenario_StandaloneBrushes(engine);
     RegisterScenario_ProjectSwitchDuringMorph(engine);
+    RegisterScenario_AlignmentTransformHotkeys(engine);
+    RegisterScenario_AlignmentGizmoTracksCursor(engine);
+    RegisterScenario_AlignmentGizmoAllViews(engine);
+    RegisterScenario_AlignmentTextureSurvivesTargetSwap(engine);
+    RegisterScenario_AlignmentTypedTransformEntry(engine);
 
     ImGuiTestEngine_Start(engine, ImGui::GetCurrentContext());
     ImGuiTestEngine_QueueTests(engine, ImGuiTestGroup_Tests, /*filter=*/nullptr,
@@ -362,6 +633,10 @@ int main(int /*argc*/, char** /*argv*/) {
         glfwPollEvents();
         int fbW = 0, fbH = 0;
         glfwGetFramebufferSize(window, &fbW, &fbH);
+        if (g_mainThreadTask) {
+            g_mainThreadTask();
+            g_mainThreadTask = nullptr;
+        }
         app.TickOnce(fbW, fbH);
         ImGuiTestEngine_PostSwap(engine);
     }

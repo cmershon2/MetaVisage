@@ -98,3 +98,10 @@ implemented or counted as completed delivery.
   - **Value**: Keeps future UI-heavy PRs aligned with the paid-feature CTA standard without relying on memory from live review
 
 - [ ] **Cloud rendering** — offload long morph computations to a remote worker
+
+### 2026-10-30 - Sprint 9 Alignment stage usability fixes
+
+- Completed: **Alignment gizmo moves at cursor speed**, **Alignment tool hotkeys match the tool rail** (kept Blender G/R/S; rail labels corrected), **Typed entry for target transform fields**, **Target textures persist across target mesh replacement**, **Remove placeholder Alignment rail tools**.
+- **Effort (Estimated)**: 10 points.
+- **Completed**: Sprint 9, 2026-10-30.
+- **Notes**: Casey confirmed by hand, including a full Stage 1 -> 4 -> Export run. Numpad view checks are automated only; hand-testing them moves to the Sprint 10 View menu. Also fixed the degenerate Numpad 7 top view. See `retrospectives/retro-sprint-09.md`.

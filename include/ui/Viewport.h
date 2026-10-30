@@ -78,6 +78,10 @@ public:
 
     void SetViewportLabel(const std::string& label) { viewportLabel_ = label; }
 
+    // Last rendered size in viewport-local pixels (the space input arrives in).
+    float GetPixelWidth() const { return lastW_; }
+    float GetPixelHeight() const { return lastH_; }
+
     // --- Transform mode (Alignment stage) ---
     TransformMode GetTransformMode() const { return transformMode_; }
     AxisConstraint GetAxisConstraint() const { return axisConstraint_; }
@@ -98,6 +102,7 @@ public:
                              const std::vector<float>& displacements,
                              float maxDisplacement);
     void UploadMeshTexture(const Mesh* mesh, const TextureData& texture);
+    bool HasMeshTexture(const Mesh* mesh) const;
 
     // --- Sculpting (Touch Up) ---
     void SetBrushType(BrushType type);

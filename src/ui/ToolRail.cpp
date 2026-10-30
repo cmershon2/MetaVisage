@@ -35,9 +35,11 @@ struct Tool {
 };
 
 constexpr Tool kStage1Tools[] = {
-    { "Move (W)",   "W", static_cast<int>(TransformMode::Move),   MV_ICON_MOVE_3D    },
-    { "Rotate (E)", "E", static_cast<int>(TransformMode::Rotate), MV_ICON_ROTATE_3D  },
-    { "Scale (R)",  "R", static_cast<int>(TransformMode::Scale),  MV_ICON_SCALE_3D   },
+    // Badges must match the Blender-style G / R / S bindings in
+    // Viewport::OnKey (Sprint 9.2 — they previously read W / E / R).
+    { "Move (G)",   "G", static_cast<int>(TransformMode::Move),   MV_ICON_MOVE_3D    },
+    { "Rotate (R)", "R", static_cast<int>(TransformMode::Rotate), MV_ICON_ROTATE_3D  },
+    { "Scale (S)",  "S", static_cast<int>(TransformMode::Scale),  MV_ICON_SCALE_3D   },
 };
 
 constexpr Tool kStage4Tools[] = {
@@ -257,30 +259,20 @@ Result Render(WorkflowStage stage, Project* project, Viewport* viewport,
         y += kButtonSize + kButtonGap;
     }
 
-    // Divider between primary tools and stage-specific extras ---------------
-    y += 6.0f;
-    {
-        constexpr float DividerW = 24.0f;
-        dl->AddLine(ImVec2(origin.x + (WidthPx - DividerW) * 0.5f, origin.y + y),
-                    ImVec2(origin.x + (WidthPx + DividerW) * 0.5f, origin.y + y),
-                    Col(MvStyle::MvLine2));
-    }
-    y += 10.0f;
-
     // Stage-specific secondary buttons --------------------------------------
-    if (isStage1) {
-        // Stage 1 — Symmetry / Pivot are visual scaffolding; the underlying
-        // transform-symmetry concept doesn't exist in the codebase yet.
-        // Disabled with a "coming soon" tooltip so users know they're real.
-        const Tool kSymStub  { "Symmetry X (coming in a future update)", nullptr,
-                               0, MV_ICON_FLIP_HORIZ };
-        const Tool kPivStub  { "Pivot snap (coming in a future update)", nullptr,
-                               0, MV_ICON_CROSSHAIR };
-        RenderToolButton(dl, origin, y, kSymStub, /*active=*/false, /*stub=*/true);
-        y += kButtonSize + kButtonGap;
-        RenderToolButton(dl, origin, y, kPivStub, /*active=*/false, /*stub=*/true);
-        y += kButtonSize + kButtonGap;
-    } else {
+    // Stage 1 has none: the disabled Symmetry X / Pivot snap placeholders
+    // were removed in Sprint 9.5 because neither has a backend.
+    if (isStage4) {
+        // Divider between primary tools and the stage extras.
+        y += 6.0f;
+        {
+            constexpr float DividerW = 24.0f;
+            dl->AddLine(ImVec2(origin.x + (WidthPx - DividerW) * 0.5f, origin.y + y),
+                        ImVec2(origin.x + (WidthPx + DividerW) * 0.5f, origin.y + y),
+                        Col(MvStyle::MvLine2));
+        }
+        y += 10.0f;
+
         // Stage 4 — Symmetry toggle wired to SculptState.symmetryEnabled.
         const bool sym = project && project->GetSculptState().symmetryEnabled;
         const Tool kSymTool { sym ? "Symmetry X (on)" : "Symmetry X (off)",

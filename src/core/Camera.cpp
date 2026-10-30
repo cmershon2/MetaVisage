@@ -131,6 +131,13 @@ void Camera::UpdatePositionFromAngles() {
     float z = distance_ * std::cos(pitchRad) * std::cos(yawRad);
 
     position_ = target_ + Vector3(x, y, z);
+
+    // True camera up for these angles. Equivalent to world +Y for the view
+    // basis below ±90° pitch, and stays valid at exactly ±90° (Numpad 7),
+    // where a fixed +Y up is parallel to the view direction.
+    up_ = Vector3(-std::sin(pitchRad) * std::sin(yawRad),
+                  std::cos(pitchRad),
+                  -std::sin(pitchRad) * std::cos(yawRad));
 }
 
 Matrix4x4 Camera::GetViewMatrix() const {

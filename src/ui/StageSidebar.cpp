@@ -166,8 +166,8 @@ void StageSidebar::RenderAlignment(Project& project, Actions& out) {
     I::DrawStageHeader("STAGE 01 / 04",
                        "Align", "ment",
                        "Position the target mesh to roughly align with the "
-                       "morph mesh. Drag the X / Y / Z fields below or grab "
-                       "the gizmo handles in the viewport.");
+                       "morph mesh. Drag or double-click the X / Y / Z fields "
+                       "below, or grab the gizmo handles in the viewport.");
 
     // ---- Scrollable body ------------------------------------------------
     // Reserve room for a 56 px footer (hairline + 30 px button row + pad)
@@ -294,11 +294,19 @@ void StageSidebar::RenderAlignment(Project& project, Actions& out) {
             }
         };
 
+        // Sprint 9.3 — scale position drag speed to the target's size so a
+        // cm-scale head moves usefully per pixel (0.1% of the bounds
+        // diagonal; the fixed 0.01 crawled). Typed entry covers precision.
+        float posDragSpeed = 0.01f;
+        if (target.isLoaded && target.mesh) {
+            posDragSpeed = std::max(posDragSpeed,
+                                    target.mesh->GetBounds().Size().Length() * 0.001f);
+        }
         I::TransformValues3 pos{ xform.GetPosition().x,
                                  xform.GetPosition().y,
                                  xform.GetPosition().z };
         const auto rPos = I::DrawTransformGroup(
-            "Position", "cm", pos, /*uniform=*/false, /*dragSpeed=*/0.01f);
+            "Position", "cm", pos, /*uniform=*/false, posDragSpeed);
         if (rPos.changed) xform.SetPosition(Vector3(pos.x, pos.y, pos.z));
         handleEdit(rPos);
 
