@@ -34,6 +34,19 @@ bundled MetaHuman head.
 - **Help > Show Profile Landmarks (Dev)** and **Export Source Profile Draft
   (Dev)** for authoring built-in profiles.
 
+### Also in this release
+
+- **Alignment**: the move gizmo tracks the cursor at its speed, tool hotkeys
+  match the tool rail (Blender-style G/R/S kept), transform fields accept
+  typed values, target textures survive replacing the target mesh, and the
+  placeholder rail tools are gone.
+- **App shell**: a working View menu with a projection toggle and Auto
+  Perspective, tidier menus, the MetaVisage icon on the window and
+  executable, and the debug HUD hidden by default (Help menu).
+- **Morph**: Reset to source mesh (undoable) returns to the unprocessed
+  source; "Reset to defaults" now resets parameters only; the vertex mask has
+  its own section.
+
 ### Fixed
 
 - Reopening a project restores the painted vertex mask and all wrap
