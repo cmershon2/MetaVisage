@@ -85,7 +85,43 @@ public:
         bool autoMapRequested = false;
         std::optional<int> toggleMidlineLockIndex;
         std::optional<bool> setAllMidlineUnlocked;
+
+        // Sprint 14 — source profile tools (Stage 1 picker).
+        enum class ProfileRequest { None, NewFromMesh, EditActive, SaveSourceAsProfile, Manage };
+        ProfileRequest profileRequest = ProfileRequest::None;
+
+        // Sprint 14 — profile editor panel requests.
+        struct EditorActions {
+            std::optional<int> selectLandmark;
+            bool skip = false;
+            bool removeActive = false;
+            std::optional<std::pair<std::string, bool>> addCustom;   // name, paired
+            std::optional<bool> mirrorFill;
+            std::optional<Axis> symmetryAxis;
+            std::optional<std::string> rename;
+            std::optional<bool> maskTab;
+            bool save = false;
+            bool cancel = false;
+        } editor;
     };
+
+    // Sprint 14 — what the profile editor panel shows. AppWindow points this
+    // at its editor state while the editor is open, and clears it after.
+    struct ProfileEditorView {
+        std::string name;
+        bool isNew = true;
+        const std::vector<ProfileLandmark>* landmarks = nullptr;
+        std::vector<bool> placed;
+        int activeLandmark = -1;
+        bool mirrorFill = true;
+        Axis symmetryAxis = Axis::X;
+        bool maskTab = false;
+        bool hasMask = false;
+    };
+    void SetProfileEditorView(const ProfileEditorView* view) {
+        if (!view) checklistScrolledTo_ = -1;
+        editorView_ = view;
+    }
 
     // Render docked panel titled "Stage". Returns the actions requested this
     // frame — the caller (AppWindow) dispatches them to the appropriate
@@ -109,6 +145,15 @@ private:
     void RenderMorph(Project& project, bool processing, float progress,
                      const std::vector<WrapPreset>& userPresets, Actions& out);
     void RenderTouchUp(Project& project, Actions& out);
+    void RenderProfileEditor(Project& project, Actions& out);
+    void RenderMaskControls(bool hasMaskData, Actions& out);
+
+    const ProfileEditorView* editorView_ = nullptr;
+    char editorNameBuf_[128] = {};
+    std::string editorNameFor_;          // which name the buffer was filled from
+    char customNameBuf_[64] = {};
+    int checklistScrolledTo_ = -1;       // active landmark the checklist last scrolled to
+    bool customPaired_ = false;
 
     // Stage 3 mask painting — state persists across frames. When painting is
     // active, LMB in the morph viewport paints mask bits instead of doing

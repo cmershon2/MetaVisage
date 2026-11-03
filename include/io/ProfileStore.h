@@ -28,8 +28,10 @@ public:
     static std::string BuiltInDir();
 
     // %APPDATA%\MetaVisage\profiles, created on first access. Empty if the
-    // APPDATA root can't be resolved.
+    // APPDATA root can't be resolved. Tests redirect it with
+    // SetUserProfilesDirOverride so they never touch the real folder.
     static std::string UserProfilesDir();
+    static void SetUserProfilesDirOverride(const std::string& dir);
 
     // Built-ins first, then user profiles; each group sorted by name. A user
     // profile whose id collides with a built-in is skipped.
@@ -51,6 +53,35 @@ public:
     // built-ins and ids that GenerateUserProfileId couldn't have produced.
     static bool Save(const SourceProfile& profile);
     static bool Save(const SourceProfile& profile, const std::string& dir);
+
+    // Sprint 14 — saves a user profile together with a copy of its source
+    // mesh (design decision 2): the file at `sourceMeshPath` is copied into
+    // <dir>/<id>/ and `profile.meshPath` / `resolvedMeshPath` are updated to
+    // the copy. When `sourceMeshPath` already is the profile's own copy (an
+    // edit of an existing profile) nothing is copied.
+    static bool SaveWithMesh(SourceProfile& profile, const std::string& sourceMeshPath);
+    static bool SaveWithMesh(SourceProfile& profile, const std::string& sourceMeshPath,
+                             const std::string& dir);
+
+    // A new user profile copied from `source` (built-in or user) under a new
+    // id and `name`, with its own mesh copy. nullopt on failure.
+    static std::optional<SourceProfile> Duplicate(const SourceProfile& source,
+                                                  const std::string& name);
+    static std::optional<SourceProfile> Duplicate(const SourceProfile& source,
+                                                  const std::string& name,
+                                                  const std::string& dir);
+
+    // Sprint 14 — a profile as one .mvprofile.zip holding
+    // profile.mvprofile.json and its mesh ("mesh.<ext>").
+    static bool ExportPackage(const SourceProfile& profile, const std::string& zipPath,
+                              std::string* error = nullptr);
+    // Reads a package, checks its mesh against the profile's fingerprint and
+    // landmarks, and saves it as a new user profile with a fresh id.
+    static std::optional<SourceProfile> ImportPackage(const std::string& zipPath,
+                                                      std::string* error = nullptr);
+    static std::optional<SourceProfile> ImportPackage(const std::string& zipPath,
+                                                      const std::string& dir,
+                                                      std::string* error = nullptr);
 
     // Removes <dir>/<id>/. Idempotent; false only on a filesystem error or
     // an invalid id.

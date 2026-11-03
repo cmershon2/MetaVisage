@@ -38,7 +38,8 @@ slash commands, Claude hooks, or `CLAUDE.md` as active project instructions.
 - Graphics: OpenGL 4.3+.
 - Mesh I/O: Assimp for FBX, OBJ, and GLTF.
 - Mesh processing: libigl, OpenMesh, CGAL.
-- Math and serialization: Eigen, GLM, nlohmann/json.
+- Math and serialization: Eigen, GLM, nlohmann/json; kubazip for source
+  profile packages (`.mvprofile.zip`).
 - Distribution: standalone Windows binary with local project/settings storage.
 
 ## Build And Test
@@ -135,7 +136,7 @@ docs may use the internal name.
 - v1.0.0 feedback: `.agents/context/Version 1.0.0 Feedback.md`
 - Product backlog: `.agents/context/development/product_backlog.md`
 - Standalone transition: `.agents/context/open-source-transition.md`
-- Latest retrospective: `.agents/context/retrospectives/retro-sprint-13.md`
+- Latest retrospective: `.agents/context/retrospectives/retro-sprint-14.md`
 
 ## Repository Map
 

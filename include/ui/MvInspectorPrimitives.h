@@ -137,7 +137,8 @@ InspectorFooterResult DrawInspectorFooter(const char* stepLabel,
                                            bool previousEnabled,
                                            bool continueEnabled,
                                            const char* continueLabel = "Continue",
-                                           bool finishStyle = false);
+                                           bool finishStyle = false,
+                                           const char* previousLabel = nullptr);
 
 } // namespace MetaVisage::MvInspector
 

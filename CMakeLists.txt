@@ -51,6 +51,9 @@ find_package(nlohmann_json CONFIG REQUIRED)
 
 # Native File Dialog Extended — replaces QFileDialog (Sprint 3.6)
 find_package(nfd CONFIG REQUIRED)
+# Sprint 14 — profile packages (.mvprofile.zip). kubazip (MIT) is already in
+# the vcpkg tree as an Assimp dependency.
+find_package(zip CONFIG REQUIRED)
 
 # Eigen3 — deformation math (unchanged)
 find_package(Eigen3 CONFIG REQUIRED)
@@ -249,6 +252,7 @@ target_link_libraries(${PROJECT_NAME}Core
         nlohmann_json::nlohmann_json
         nfd::nfd
         Eigen3::Eigen
+        zip::zip
 )
 
 if(OpenMP_CXX_FOUND)

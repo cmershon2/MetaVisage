@@ -17,6 +17,7 @@
     "eigen3",
     "assimp",
     "nlohmann-json",
-    "nativefiledialog-extended"
+    "nativefiledialog-extended",
+    "kubazip"
   ]
 }

@@ -177,6 +177,37 @@ private:
     // source, the auto-map plane on the target, else the Stage 2 setting.
     bool SymmetryPlaneFor(PointSide side, Vector3& point, Vector3& normal) const;
     void BuildMidlineCache(PointSide side, const Vector3& planePoint, const Vector3& planeNormal);
+    // Closest surface point (and nearest vertex) of `ref` to a world point.
+    bool ClosestSurfacePoint(const MeshReference& ref, const Vector3& world,
+                             Vector3& pos, int& vertex) const;
+
+    // Sprint 14 — custom source profiles. The profile editor swaps in a
+    // scratch project (the profile's mesh, its landmarks as source-side
+    // points, its mask) and a fresh undo stack, so Stage 2 placement and
+    // dragging and the Stage 3 mask brush work unchanged; Save writes the
+    // profile, Cancel discards it, and both restore the real project.
+    void HandleProfileRequest(StageSidebar::Actions::ProfileRequest request);
+    void RequestSaveSourceAsProfile();
+    void SaveSourceAsProfile(const std::string& name);
+    void OpenProfileEditor(const SourceProfile* existing);
+    void CloseProfileEditor();
+    void SaveProfileEditor();
+    void RequestCancelProfileEditor();
+    void HandleProfileEditorActions(const StageSidebar::Actions::EditorActions& actions);
+    void RefreshProfileEditorView();
+    void EditorPlacePoint(const Vector3& pos, int vertex);
+    void EditorRemovePoint(int pointIndex);
+    int EditorNextUnplaced(int from) const;
+    int EditorPointIndexOf(const std::string& landmarkId) const;
+    void HandleManageAction();
+    void AttachProfileToProject(const std::string& profileId, const std::string& description);
+    void ReloadSourceProfiles();
+    bool BlockedByProfileEditor();
+    // File > New, Ctrl+N and the welcome screen: a new project with the
+    // default source profile (Manage profiles > Set as default) loaded.
+    void NewProjectWithDefaultProfile();
+    void ExportProfilePackage(const SourceProfile& profile);
+    void ImportProfilePackage();
 
     GLFWwindow* window_ = nullptr;
     bool imguiContextCreated_ = false;
@@ -290,6 +321,25 @@ private:
     std::vector<PointCorrespondence> dragBefore_;
     bool dragMoved_ = false;
     MidlineCache midlineCache_;
+
+    // Profile editor state (Sprint 14). `draft.landmarks` is the checklist;
+    // placements live as points in the scratch project while editing.
+    struct ProfileEditor {
+        bool active = false;
+        bool isNew = true;
+        bool ownMesh = false;       // the scratch mesh was loaded for the editor
+        bool dirty = false;         // edits outside the undo stack (name, axis, customs)
+        bool mirrorFill = true;
+        int activeLandmark = -1;
+        SourceProfile draft;
+        std::string sourceMeshPath;
+        std::unique_ptr<Project> savedProject;
+        std::unique_ptr<UndoStack> savedUndo;
+    };
+    ProfileEditor editor_;
+    StageSidebar::ProfileEditorView editorView_;
+    NamePromptModalState namePrompt_;
+    ManageProfilesModalState manageProfiles_;
 };
 
 } // namespace MetaVisage

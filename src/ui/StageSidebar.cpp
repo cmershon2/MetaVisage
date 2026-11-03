@@ -12,6 +12,7 @@
 #include <imgui.h>
 
 #include <cstdio>
+#include <cctype>
 #include <cstring>
 
 #include <algorithm>
@@ -114,6 +115,12 @@ StageSidebar::Actions StageSidebar::Render(Project* project,
     // header/footer entirely. Remaining stages still use the legacy
     // generic header + footer so the workflow stays usable until each
     // story replaces them.
+    if (editorView_) {
+        RenderProfileEditor(*project, out);
+        ImGui::End();
+        return out;
+    }
+
     const bool ownsChrome = (stage == WorkflowStage::Alignment ||
                              stage == WorkflowStage::PointReference ||
                              stage == WorkflowStage::Morph     ||
@@ -408,6 +415,7 @@ void StageSidebar::RenderSourcePicker(Project& project,
 
     std::string preview;
     if (active)                     preview = active->name;
+    else if (!activeId.empty())     preview = "Profile not installed";
     else if (morph.isLoaded)        preview = "Custom mesh (no profile)";
     else if (sourceProfiles.empty()) preview = "No source profiles found";
     else                            preview = "Select a source profile";
@@ -423,8 +431,14 @@ void StageSidebar::RenderSourcePicker(Project& project,
             }
             const std::string label = p.name + "##" + p.id;
             const bool selected = (active == &p);
+            ImGui::BeginDisabled(p.meshMissing);
             if (ImGui::Selectable(label.c_str(), selected) && !selected) {
                 out.selectSourceProfileId = p.id;
+            }
+            ImGui::EndDisabled();
+            if (p.meshMissing && ImGui::IsItemHovered(ImGuiHoveredFlags_AllowWhenDisabled)) {
+                ImGui::SetTooltip("This profile's mesh copy is missing:\n%s",
+                                  p.resolvedMeshPath.c_str());
             }
             if (selected) ImGui::SetItemDefaultFocus();
         }
@@ -447,6 +461,31 @@ void StageSidebar::RenderSourcePicker(Project& project,
         ImGui::PushStyleColor(ImGuiCol_Text, MvStyle::MvFg4);
         ImGui::TextWrapped("%s", summary.c_str());
         ImGui::PopStyleColor();
+    }
+
+    // Sprint 14 — profile tools.
+    if (ImGui::Button("Profile tools...", ImVec2(-FLT_MIN, 28.0f))) {
+        ImGui::OpenPopup("##profileTools");
+    }
+    if (ImGui::BeginPopup("##profileTools")) {
+        if (ImGui::MenuItem("New profile from this mesh...", nullptr, false, morph.isLoaded)) {
+            out.profileRequest = Actions::ProfileRequest::NewFromMesh;
+        }
+        const bool editable = active && !active->isBuiltIn && !active->meshMissing;
+        if (ImGui::MenuItem("Edit landmarks...", nullptr, false, editable)) {
+            out.profileRequest = Actions::ProfileRequest::EditActive;
+        }
+        if (active && active->isBuiltIn && ImGui::IsItemHovered(ImGuiHoveredFlags_AllowWhenDisabled)) {
+            ImGui::SetTooltip("Built-in profiles are read-only. Duplicate it in Manage profiles to edit.");
+        }
+        if (ImGui::MenuItem("Save source as profile...", nullptr, false, morph.isLoaded)) {
+            out.profileRequest = Actions::ProfileRequest::SaveSourceAsProfile;
+        }
+        ImGui::Separator();
+        if (ImGui::MenuItem("Manage profiles...")) {
+            out.profileRequest = Actions::ProfileRequest::Manage;
+        }
+        ImGui::EndPopup();
     }
 }
 
@@ -1445,36 +1484,7 @@ void StageSidebar::RenderMorph(Project& project, bool processing, float progress
                 ImGui::PopStyleColor();
             }
             ImGui::Dummy(ImVec2(0.0f, 4.0f));
-
-            ImGui::Checkbox("Paint mask", &maskPaintingActive_);
-            ImGui::SameLine();
-            ImGui::Checkbox("Show mask", &maskShowMask_);
-
-            ImGui::BeginDisabled(!maskPaintingActive_);
-            ImGui::PushItemWidth(ImGui::GetContentRegionAvail().x * 0.55f);
-            ImGui::SliderFloat("Mask radius", &maskBrushRadius_, 0.5f, 50.0f, "%.1f");
-            ImGui::PopItemWidth();
-            ImGui::Checkbox("Erase", &maskEraseMode_);
-            ImGui::EndDisabled();
-
-            const bool hasMaskData = !morph.vertexMask.empty();
-            ImGui::Dummy(ImVec2(0.0f, 4.0f));
-            ImGui::BeginDisabled(!hasMaskData);
-            if (ImGui::BeginTable("##maskActions", 2,
-                                  ImGuiTableFlags_SizingStretchSame |
-                                  ImGuiTableFlags_NoPadOuterX)) {
-                ImGui::TableNextRow();
-                ImGui::TableNextColumn();
-                if (ImGui::Button("Clear mask", ImVec2(-FLT_MIN, 28.0f))) {
-                    out.clearMaskRequested = true;
-                }
-                ImGui::TableNextColumn();
-                if (ImGui::Button("Invert mask", ImVec2(-FLT_MIN, 28.0f))) {
-                    out.invertMaskRequested = true;
-                }
-                ImGui::EndTable();
-            }
-            ImGui::EndDisabled();
+            RenderMaskControls(!morph.vertexMask.empty(), out);
         }
         if (morphMeshReady) {
             // Mirror the current mask controls onto the primary viewport
@@ -1743,6 +1753,203 @@ void StageSidebar::RenderTouchUp(Project& project, Actions& out) {
         /*finishStyle=*/true);
     if (footer.previousClicked) out.previousStageRequested = true;
     if (footer.continueClicked) out.exportMeshRequested = true;
+}
+
+// ---------------------------------------------------------------------------
+// Shared mask controls (Stage 3 and the profile editor)
+// ---------------------------------------------------------------------------
+
+void StageSidebar::RenderMaskControls(bool hasMaskData, Actions& out) {
+    ImGui::Checkbox("Paint mask", &maskPaintingActive_);
+    ImGui::SameLine();
+    ImGui::Checkbox("Show mask", &maskShowMask_);
+
+    ImGui::BeginDisabled(!maskPaintingActive_);
+    ImGui::PushItemWidth(ImGui::GetContentRegionAvail().x * 0.55f);
+    ImGui::SliderFloat("Mask radius", &maskBrushRadius_, 0.5f, 50.0f, "%.1f");
+    ImGui::PopItemWidth();
+    ImGui::Checkbox("Erase", &maskEraseMode_);
+    ImGui::EndDisabled();
+
+    ImGui::Dummy(ImVec2(0.0f, 4.0f));
+    ImGui::BeginDisabled(!hasMaskData);
+    if (ImGui::BeginTable("##maskActions", 2,
+                          ImGuiTableFlags_SizingStretchSame |
+                          ImGuiTableFlags_NoPadOuterX)) {
+        ImGui::TableNextRow();
+        ImGui::TableNextColumn();
+        if (ImGui::Button("Clear mask", ImVec2(-FLT_MIN, 28.0f))) {
+            out.clearMaskRequested = true;
+        }
+        ImGui::TableNextColumn();
+        if (ImGui::Button("Invert mask", ImVec2(-FLT_MIN, 28.0f))) {
+            out.invertMaskRequested = true;
+        }
+        ImGui::EndTable();
+    }
+    ImGui::EndDisabled();
+}
+
+// ---------------------------------------------------------------------------
+// Profile editor (Sprint 14)
+// ---------------------------------------------------------------------------
+
+void StageSidebar::RenderProfileEditor(Project& project, Actions& out) {
+    namespace I = MvInspector;
+    const ProfileEditorView& view = *editorView_;
+    const auto& landmarks = *view.landmarks;
+    int placedCount = 0;
+    for (bool b : view.placed) placedCount += b ? 1 : 0;
+
+    I::DrawStageHeader("SOURCE PROFILE",
+                       view.isNew ? "New " : "Edit ", "profile",
+                       "Pick a landmark, then click the mesh to place it. Mirrored "
+                       "partners fill in for you; drag any point to adjust it.");
+
+    constexpr float FooterReserveH = 60.0f;
+    if (ImGui::BeginChild("##profileEditorBody", ImVec2(0.0f, -FooterReserveH), false,
+                          ImGuiWindowFlags_NoBackground)) {
+        // Name and symmetry.
+        if (editorNameFor_ != view.name || editorNameBuf_[0] == '\0') {
+            std::snprintf(editorNameBuf_, sizeof(editorNameBuf_), "%s", view.name.c_str());
+            editorNameFor_ = view.name;
+        }
+        I::DrawSectionLabel("PROFILE");
+        ImGui::SetNextItemWidth(-FLT_MIN);
+        if (ImGui::InputTextWithHint("##profileName", "Profile name", editorNameBuf_,
+                                     sizeof(editorNameBuf_))) {
+            out.editor.rename = std::string(editorNameBuf_);
+            editorNameFor_ = editorNameBuf_;
+        }
+        int axisIdx = view.symmetryAxis == Axis::Y ? 1 : (view.symmetryAxis == Axis::Z ? 2 : 0);
+        const char* axes[] = { "Symmetry: X axis", "Symmetry: Y axis", "Symmetry: Z axis" };
+        ImGui::SetNextItemWidth(-FLT_MIN);
+        if (ImGui::Combo("##profileAxis", &axisIdx, axes, 3)) {
+            out.editor.symmetryAxis = axisIdx == 1 ? Axis::Y : (axisIdx == 2 ? Axis::Z : Axis::X);
+        }
+
+        // Tabs.
+        ImGui::Dummy(ImVec2(0.0f, 4.0f));
+        if (ImGui::BeginTable("##editorTabs", 2, ImGuiTableFlags_SizingStretchSame |
+                                                 ImGuiTableFlags_NoPadOuterX)) {
+            ImGui::TableNextRow();
+            auto tab = [&](const char* label, bool selected, bool mask) {
+                ImGui::TableNextColumn();
+                if (selected) ImGui::PushStyleColor(ImGuiCol_Button, MvStyle::MvBlue600);
+                if (ImGui::Button(label, ImVec2(-FLT_MIN, 28.0f)) && !selected) {
+                    out.editor.maskTab = mask;
+                }
+                if (selected) ImGui::PopStyleColor();
+            };
+            tab("Landmarks", !view.maskTab, false);
+            tab("Default mask", view.maskTab, true);
+            ImGui::EndTable();
+        }
+
+        if (view.maskTab) {
+            I::DrawSectionLabel("DEFAULT MASK");
+            {
+                MvStyle::ScopedFont f(MvStyle::Font.BodySm);
+                ImGui::PushStyleColor(ImGuiCol_Text, MvStyle::MvFg3);
+                ImGui::TextWrapped("Paint the vertices the wrap should leave alone by default "
+                                   "(mouth interior, eyes). Projects using this profile start "
+                                   "with this mask.");
+                ImGui::PopStyleColor();
+            }
+            ImGui::Dummy(ImVec2(0.0f, 4.0f));
+            RenderMaskControls(view.hasMask, out);
+            out.maskPaintingActive = maskPaintingActive_;
+            out.maskShow           = maskShowMask_ || maskPaintingActive_;
+            out.maskEraseMode      = maskEraseMode_;
+            out.maskBrushRadius    = maskBrushRadius_;
+        } else {
+            out.maskPaintingActive = false;
+            out.maskShow           = false;
+
+            I::DrawSectionLabel("LANDMARKS");
+            ImGui::PushStyleColor(ImGuiCol_Text, MvStyle::MvFg3);
+            ImGui::Text("%d of %zu placed", placedCount, landmarks.size());
+            ImGui::PopStyleColor();
+            bool mirror = view.mirrorFill;
+            if (ImGui::Checkbox("Place mirrored partners", &mirror)) out.editor.mirrorFill = mirror;
+
+            // Checklist, grouped by region in list order.
+            const float listH = std::max(160.0f, ImGui::GetContentRegionAvail().y - 150.0f);
+            ImGui::PushStyleColor(ImGuiCol_ChildBg, MvStyle::MvBg1);
+            if (ImGui::BeginChild("##landmarkChecklist", ImVec2(-FLT_MIN, listH), true)) {
+                std::string lastRegion;
+                for (size_t i = 0; i < landmarks.size(); ++i) {
+                    const ProfileLandmark& lm = landmarks[i];
+                    if (lm.region != lastRegion) {
+                        lastRegion = lm.region;
+                        MvStyle::ScopedFont f(MvStyle::Font.MonoSm);
+                        ImGui::PushStyleColor(ImGuiCol_Text, MvStyle::MvFg4);
+                        std::string upper = lastRegion.empty() ? std::string("OTHER") : lastRegion;
+                        for (char& c : upper) c = static_cast<char>(std::toupper(static_cast<unsigned char>(c)));
+                        ImGui::TextUnformatted(upper.c_str());
+                        ImGui::PopStyleColor();
+                    }
+                    ImGui::PushID(static_cast<int>(i));
+                    const bool placed = i < view.placed.size() && view.placed[i];
+                    const bool isActive = static_cast<int>(i) == view.activeLandmark;
+                    ImGui::PushStyleColor(ImGuiCol_Text, placed ? MvStyle::MvSuccess : MvStyle::MvFg4);
+                    {
+                        MvStyle::ScopedFont icon(MvStyle::Font.IconSm);
+                        ImGui::TextUnformatted(placed ? MV_ICON_CHECK_CIRCLE : MV_ICON_CIRCLE_DASHED);
+                    }
+                    ImGui::PopStyleColor();
+                    ImGui::SameLine();
+                    if (ImGui::Selectable(lm.name.c_str(), isActive)) out.editor.selectLandmark = static_cast<int>(i);
+                    // Bring the active row into view only when it changes;
+                    // doing it every frame fought the user's own scrolling.
+                    if (isActive && view.activeLandmark != checklistScrolledTo_) {
+                        ImGui::SetScrollHereY(0.5f);
+                        checklistScrolledTo_ = view.activeLandmark;
+                    }
+                    ImGui::PopID();
+                }
+            }
+            ImGui::EndChild();
+            ImGui::PopStyleColor();
+
+            const bool activePlaced = view.activeLandmark >= 0 &&
+                                      view.activeLandmark < static_cast<int>(view.placed.size()) &&
+                                      view.placed[view.activeLandmark];
+            if (ImGui::BeginTable("##editorRowActions", 2, ImGuiTableFlags_SizingStretchSame |
+                                                           ImGuiTableFlags_NoPadOuterX)) {
+                ImGui::TableNextRow();
+                ImGui::TableNextColumn();
+                if (ImGui::Button("Skip", ImVec2(-FLT_MIN, 28.0f))) out.editor.skip = true;
+                ImGui::TableNextColumn();
+                ImGui::BeginDisabled(!activePlaced);
+                if (ImGui::Button("Remove point", ImVec2(-FLT_MIN, 28.0f))) out.editor.removeActive = true;
+                ImGui::EndDisabled();
+                ImGui::EndTable();
+            }
+
+            I::DrawSectionLabel("CUSTOM LANDMARK");
+            ImGui::SetNextItemWidth(-FLT_MIN);
+            ImGui::InputTextWithHint("##customName", "Name, e.g. Ear tip", customNameBuf_,
+                                     sizeof(customNameBuf_));
+            ImGui::Checkbox("Left/right pair", &customPaired_);
+            ImGui::SameLine();
+            ImGui::BeginDisabled(customNameBuf_[0] == '\0');
+            if (ImGui::Button("Add")) {
+                out.editor.addCustom = std::make_pair(std::string(customNameBuf_), customPaired_);
+                customNameBuf_[0] = '\0';
+            }
+            ImGui::EndDisabled();
+        }
+    }
+    ImGui::EndChild();
+    (void)project;
+
+    const auto footer = I::DrawInspectorFooter("PROFILE EDITOR", /*previousEnabled=*/true,
+                                               /*continueEnabled=*/editorNameBuf_[0] != '\0',
+                                               "Save profile", /*finishStyle=*/true,
+                                               "Cancel");
+    if (footer.continueClicked) out.editor.save = true;
+    if (footer.previousClicked) out.editor.cancel = true;
 }
 
 } // namespace MetaVisage

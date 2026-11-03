@@ -221,7 +221,8 @@ int main(int /*argc*/, char** /*argv*/) {
         if (r.isBuiltIn || r.resolvedMeshPath != expectedMesh || r.fingerprint != p.fingerprint ||
             r.landmarks.size() != 3 || r.landmarks[0].mirrorId != "a_r" ||
             r.maskRanges != p.maskRanges || r.defaultWrapPresetId != "quick" ||
-            r.BuildMask() != std::vector<bool>({false, true, false, true, true, true})) {
+            r.BuildMask() != std::vector<bool>({false, true, false, true, true, true}) ||
+            !r.meshMissing) {
             std::fprintf(stderr, "source_profile: saved profile did not round-trip "
                          "(mesh '%s')\n", r.resolvedMeshPath.c_str());
             return 34;
@@ -393,6 +394,124 @@ int main(int /*argc*/, char** /*argv*/) {
                         er.success ? "reload failed" : er.errorMessage.c_str());
         }
         fs::remove(fbx, ec);
+    }
+
+    // 8. Sprint 14 — user profiles carry a copy of their mesh, duplicates
+    //    copy it too, a deleted copy is flagged, and drafts keep the
+    //    landmark ids points already carry.
+    {
+        const fs::path dir14 = fs::temp_directory_path() / "metavisage_source_profile_s14";
+        fs::remove_all(dir14, ec);
+        fs::create_directories(dir14);
+        const std::string d = dir14.generic_string();
+
+        SourceProfile p = MakeUserProfile(ProfileStore::GenerateUserProfileId());
+        p.fingerprint = headFp;
+        if (!ProfileStore::SaveWithMesh(p, headPath, d) || p.meshPath != "mesh.obj" ||
+            !fs::exists(dir14 / p.id / "mesh.obj")) {
+            std::fprintf(stderr, "source_profile: SaveWithMesh did not copy the mesh\n");
+            return 60;
+        }
+        {
+            const auto loaded = ProfileStore::LoadUserProfiles(d);
+            const SourceProfile* r = ProfileStore::FindById(loaded, p.id);
+            auto copy = std::make_shared<Mesh>();
+            if (!r || r->meshMissing || !copy->Load(r->resolvedMeshPath) ||
+                TopologyFingerprint::FromMesh(*copy) != headFp) {
+                std::fprintf(stderr, "source_profile: profile mesh copy does not load or match\n");
+                return 61;
+            }
+        }
+        // Saving again from its own copy (an edit) must not fail or re-copy.
+        if (!ProfileStore::SaveWithMesh(p, p.resolvedMeshPath, d)) {
+            std::fprintf(stderr, "source_profile: re-save from the profile's own mesh failed\n");
+            return 62;
+        }
+
+        const auto builtIns = ProfileStore::LoadBuiltIns(profilesDir);
+        const SourceProfile* mh = ProfileStore::FindById(builtIns, "metahuman-head-lod0");
+        const auto dup = mh ? ProfileStore::Duplicate(*mh, "My MetaHuman", d) : std::nullopt;
+        if (!dup || dup->isBuiltIn || !ProfileStore::IsValidUserProfileId(dup->id) ||
+            dup->name != "My MetaHuman" || dup->landmarks.size() != mh->landmarks.size() ||
+            dup->maskRanges != mh->maskRanges || !fs::exists(dup->resolvedMeshPath)) {
+            std::fprintf(stderr, "source_profile: duplicating the built-in failed\n");
+            return 63;
+        }
+
+        fs::remove(dir14 / p.id / "mesh.obj", ec);
+        {
+            const auto loaded = ProfileStore::LoadUserProfiles(d);
+            const SourceProfile* r = ProfileStore::FindById(loaded, p.id);
+            if (!r || !r->meshMissing) {
+                std::fprintf(stderr, "source_profile: a missing mesh copy was not flagged\n");
+                return 64;
+            }
+        }
+
+        Project project;
+        project.GetMorphMesh().mesh = head;
+        project.GetMorphMesh().isLoaded = true;
+        project.GetMorphMesh().filepath = headPath;
+        auto point = [](int id, const char* landmark, int vertex) {
+            PointCorrespondence c;
+            c.pointID = id;
+            c.landmarkId = landmark;
+            c.morphMeshVertexIndex = vertex;
+            return c;
+        };
+        std::vector<PointCorrespondence> pts = {
+            point(1, "nose_tip", 10), point(2, "mouth_corner_l", 20),
+            point(3, "mouth_corner_r", 30), point(4, "", 40)};
+        pts[1].isSymmetric = true;
+        pts[1].symmetricPairID = 3;
+        pts[2].isSymmetric = true;
+        pts[2].symmetricPairID = 2;
+        project.GetPointReferenceData().correspondences = pts;
+        const SourceProfile draft = SourceProfile::DraftFromProject(project, "");
+        auto find = [&](const char* id) -> const ProfileLandmark* {
+            for (const auto& lm : draft.landmarks) if (lm.id == id) return &lm;
+            return nullptr;
+        };
+        const ProfileLandmark* nose = find("nose_tip");
+        const ProfileLandmark* left = find("mouth_corner_l");
+        const ProfileLandmark* extra = find("point_4");
+        if (draft.landmarks.size() != 4 || !nose || nose->name != "Nose tip" || nose->region != "nose" ||
+            !left || left->mirrorId != "mouth_corner_r" || left->vertexIndex != 20 ||
+            !extra || extra->name != "Point 4" || !draft.Validate().empty()) {
+            std::fprintf(stderr, "source_profile: draft did not keep landmark ids and mirrors\n");
+            return 65;
+        }
+        // Package round-trip: export the duplicate, import it as a new
+        // profile with a fresh id and its own mesh copy.
+        const fs::path zipPath = dir14 / "package.mvprofile.zip";
+        std::string error;
+        if (!ProfileStore::ExportPackage(*dup, zipPath.string(), &error) || !fs::exists(zipPath)) {
+            std::fprintf(stderr, "source_profile: ExportPackage failed: %s\n", error.c_str());
+            return 66;
+        }
+        const auto imported = ProfileStore::ImportPackage(zipPath.string(), d, &error);
+        if (!imported || imported->id == dup->id || !ProfileStore::IsValidUserProfileId(imported->id) ||
+            imported->name != dup->name || imported->landmarks.size() != dup->landmarks.size() ||
+            imported->fingerprint != dup->fingerprint || !fs::exists(imported->resolvedMeshPath)) {
+            std::fprintf(stderr, "source_profile: ImportPackage round-trip failed: %s\n", error.c_str());
+            return 67;
+        }
+        // A package whose mesh doesn't match its fingerprint is refused.
+        SourceProfile tampered = *dup;
+        tampered.fingerprint.faceHash ^= 1;
+        const fs::path badZip = dir14 / "bad.mvprofile.zip";
+        if (!ProfileStore::ExportPackage(tampered, badZip.string()) ||
+            ProfileStore::ImportPackage(badZip.string(), d, &error)) {
+            std::fprintf(stderr, "source_profile: a mismatched package was imported\n");
+            return 68;
+        }
+        if (ProfileStore::ImportPackage((dir14 / "missing.zip").string(), d, &error)) {
+            std::fprintf(stderr, "source_profile: a missing package was imported\n");
+            return 69;
+        }
+        fs::remove_all(dir14, ec);
+        std::printf("source_profile: Sprint 14 mesh copy, duplicate, missing mesh, named draft, "
+                    "package round-trip OK\n");
     }
 
     std::printf("source_profile: OK\n");

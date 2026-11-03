@@ -172,9 +172,10 @@ public:
         }
     };
 
-    SourceSwapUndoAction(Project* project, SourceState before, SourceState after)
+    SourceSwapUndoAction(Project* project, SourceState before, SourceState after,
+                         std::string description = "Change Source Mesh")
         : project_(project), before_(std::move(before)), after_(std::move(after)),
-          originatingStage_(project->GetCurrentStage()) {}
+          originatingStage_(project->GetCurrentStage()), description_(std::move(description)) {}
 
     void Undo() override {
         before_.ApplyTo(*project_);
@@ -184,13 +185,14 @@ public:
         after_.ApplyTo(*project_);
         project_->SetCurrentStage(originatingStage_);
     }
-    std::string Description() const override { return "Change Source Mesh"; }
+    std::string Description() const override { return description_; }
 
 private:
     Project* project_;
     SourceState before_;
     SourceState after_;
     WorkflowStage originatingStage_;
+    std::string description_;
 };
 
 // Undo action for Stage 3 mask paint strokes. Captures the full vertexMask

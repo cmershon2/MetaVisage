@@ -1,8 +1,10 @@
 #include "io/ProfileStore.h"
+#include "core/Mesh.h"
 #include "utils/Logger.h"
 #include "utils/Paths.h"
 
 #include <nlohmann/json.hpp>
+#include <zip/zip.h>
 
 #include <algorithm>
 #include <chrono>
@@ -23,6 +25,11 @@ namespace fs = std::filesystem;
 constexpr int kSchemaVersion = 1;
 constexpr const char* kFileExtension   = ".mvprofile.json";
 constexpr const char* kUserProfileFile = "profile.mvprofile.json";
+
+std::string& UserDirOverride() {
+    static std::string dir;
+    return dir;
+}
 
 template <typename T>
 T GetOr(const OrderedJson& obj, const char* key, T fallback) {
@@ -157,7 +164,16 @@ std::string ProfileStore::BuiltInDir() {
     return (fs::path(exeDir) / "assets" / "profiles").generic_string();
 }
 
+void ProfileStore::SetUserProfilesDirOverride(const std::string& dir) {
+    UserDirOverride() = dir;
+}
+
 std::string ProfileStore::UserProfilesDir() {
+    if (!UserDirOverride().empty()) {
+        std::error_code ec;
+        fs::create_directories(UserDirOverride(), ec);
+        return UserDirOverride();
+    }
     const std::string root = Paths::AppDataDir();
     if (root.empty()) return {};
     const fs::path dir = fs::path(root) / "profiles";
@@ -245,6 +261,12 @@ std::vector<SourceProfile> ProfileStore::LoadUserProfiles(const std::string& dir
             continue;
         }
         Resolve(*profile, /*builtIn=*/false, entry.path());
+        std::error_code meshEc;
+        if (!fs::exists(profile->resolvedMeshPath, meshEc)) {
+            profile->meshMissing = true;
+            MV_LOG_WARNING(std::format("ProfileStore: profile {} mesh is missing ({})",
+                                       folder, profile->resolvedMeshPath));
+        }
         out.push_back(std::move(*profile));
     }
     SortByName(out);
@@ -459,6 +481,177 @@ const SourceProfile* ProfileStore::FindByFingerprint(const std::vector<SourcePro
         if (p.fingerprint == fp) return &p;
     }
     return nullptr;
+}
+
+// ---------------------------------------------------------------------------
+// Sprint 14 — mesh copies and duplicates
+// ---------------------------------------------------------------------------
+
+bool ProfileStore::SaveWithMesh(SourceProfile& profile, const std::string& sourceMeshPath) {
+    return SaveWithMesh(profile, sourceMeshPath, UserProfilesDir());
+}
+
+bool ProfileStore::SaveWithMesh(SourceProfile& profile, const std::string& sourceMeshPath,
+                                const std::string& dir) {
+    if (profile.isBuiltIn || !IsValidUserProfileId(profile.id) || dir.empty()) {
+        return Save(profile, dir);   // logs the reason
+    }
+    const fs::path folder = fs::path(dir) / profile.id;
+    std::error_code ec;
+    fs::create_directories(folder, ec);
+    const fs::path source(sourceMeshPath);
+    const fs::path dest = folder / ("mesh" + source.extension().string());
+    const bool sameFile = fs::exists(dest, ec) && fs::equivalent(source, dest, ec);
+    if (!sameFile) {
+        if (!fs::exists(source, ec)) {
+            MV_LOG_ERROR(std::format("ProfileStore::SaveWithMesh: source mesh not found: {}",
+                                     source.generic_string()));
+            return false;
+        }
+        fs::copy_file(source, dest, fs::copy_options::overwrite_existing, ec);
+        if (ec) {
+            MV_LOG_ERROR(std::format("ProfileStore::SaveWithMesh: copy to {} failed: {}",
+                                     dest.generic_string(), ec.message()));
+            return false;
+        }
+    }
+    profile.meshPath = dest.filename().generic_string();
+    profile.resolvedMeshPath = dest.generic_string();
+    profile.meshMissing = false;
+    return Save(profile, dir);
+}
+
+std::optional<SourceProfile> ProfileStore::Duplicate(const SourceProfile& source,
+                                                     const std::string& name) {
+    return Duplicate(source, name, UserProfilesDir());
+}
+
+std::optional<SourceProfile> ProfileStore::Duplicate(const SourceProfile& source,
+                                                     const std::string& name,
+                                                     const std::string& dir) {
+    SourceProfile copy = source;
+    copy.id = GenerateUserProfileId();
+    copy.name = name;
+    copy.isBuiltIn = false;
+    if (!SaveWithMesh(copy, source.resolvedMeshPath, dir)) return std::nullopt;
+    return copy;
+}
+
+// ---------------------------------------------------------------------------
+// Sprint 14 — profile packages
+// ---------------------------------------------------------------------------
+
+namespace {
+
+fs::path FreshTempDir(const std::string& tag) {
+    const fs::path dir = fs::temp_directory_path() /
+        std::format("metavisage_{}_{}", tag, ProfileStore::GenerateUserProfileId());
+    std::error_code ec;
+    fs::remove_all(dir, ec);
+    fs::create_directories(dir, ec);
+    return dir;
+}
+
+bool Fail(std::string* error, const std::string& message) {
+    if (error) *error = message;
+    MV_LOG_ERROR(std::format("ProfileStore: {}", message));
+    return false;
+}
+
+} // namespace
+
+bool ProfileStore::ExportPackage(const SourceProfile& profile, const std::string& zipPath,
+                                 std::string* error) {
+    std::error_code ec;
+    if (!fs::exists(profile.resolvedMeshPath, ec)) {
+        return Fail(error, std::format("the profile's mesh is missing: {}", profile.resolvedMeshPath));
+    }
+    const fs::path temp = FreshTempDir("export");
+    const std::string meshName = "mesh" + fs::path(profile.resolvedMeshPath).extension().string();
+    SourceProfile packaged = profile;
+    packaged.meshPath = meshName;
+    const fs::path json = temp / kUserProfileFile;
+    bool ok = WriteFile(packaged, json.string());
+    if (ok) {
+        zip_t* zip = zip_open(zipPath.c_str(), ZIP_DEFAULT_COMPRESSION_LEVEL, 'w');
+        ok = zip != nullptr;
+        if (ok) {
+            auto add = [&](const std::string& entry, const std::string& file) {
+                return zip_entry_open(zip, entry.c_str()) == 0 &&
+                       zip_entry_fwrite(zip, file.c_str()) == 0 &&
+                       zip_entry_close(zip) == 0;
+            };
+            ok = add(kUserProfileFile, json.string()) && add(meshName, profile.resolvedMeshPath);
+            zip_close(zip);
+        }
+    }
+    fs::remove_all(temp, ec);
+    if (!ok) {
+        fs::remove(zipPath, ec);
+        return Fail(error, std::format("could not write {}", zipPath));
+    }
+    return true;
+}
+
+std::optional<SourceProfile> ProfileStore::ImportPackage(const std::string& zipPath, std::string* error) {
+    return ImportPackage(zipPath, UserProfilesDir(), error);
+}
+
+std::optional<SourceProfile> ProfileStore::ImportPackage(const std::string& zipPath,
+                                                         const std::string& dir,
+                                                         std::string* error) {
+    const fs::path temp = FreshTempDir("import");
+    std::error_code ec;
+    auto cleanup = [&] { fs::remove_all(temp, ec); };
+    zip_t* zip = zip_open(zipPath.c_str(), 0, 'r');
+    if (!zip) {
+        cleanup();
+        Fail(error, std::format("{} is not a readable profile package", zipPath));
+        return std::nullopt;
+    }
+    // Only the two expected top-level files are extracted, so an entry
+    // can't write outside the temporary folder.
+    const ssize_t total = zip_entries_total(zip);
+    for (ssize_t i = 0; i < total; ++i) {
+        if (zip_entry_openbyindex(zip, static_cast<size_t>(i)) != 0) continue;
+        const std::string name = zip_entry_name(zip) ? zip_entry_name(zip) : "";
+        const bool safe = name.find_first_of("/\\:") == std::string::npos && name != ".." &&
+                          (name == kUserProfileFile || name.rfind("mesh.", 0) == 0);
+        if (safe && !zip_entry_isdir(zip)) zip_entry_fread(zip, (temp / name).string().c_str());
+        zip_entry_close(zip);
+    }
+    zip_close(zip);
+
+    std::string readError;
+    auto profile = ReadFile((temp / kUserProfileFile).string(), &readError);
+    if (!profile) {
+        cleanup();
+        Fail(error, std::format("the package has no valid profile ({})", readError));
+        return std::nullopt;
+    }
+    const fs::path mesh = temp / fs::path(profile->meshPath).filename();
+    auto loaded = std::make_shared<Mesh>();
+    if (!fs::exists(mesh, ec) || !loaded->Load(mesh.string()) ||
+        TopologyFingerprint::FromMesh(*loaded) != profile->fingerprint) {
+        cleanup();
+        Fail(error, "the package's mesh is missing or doesn't match its profile");
+        return std::nullopt;
+    }
+    const auto problems = profile->Validate();
+    if (!problems.empty()) {
+        cleanup();
+        Fail(error, std::format("the profile in the package is inconsistent: {}", problems.front()));
+        return std::nullopt;
+    }
+    profile->id = GenerateUserProfileId();
+    profile->isBuiltIn = false;
+    const bool saved = SaveWithMesh(*profile, mesh.string(), dir);
+    cleanup();
+    if (!saved) {
+        Fail(error, "the imported profile could not be saved");
+        return std::nullopt;
+    }
+    return profile;
 }
 
 } // namespace MetaVisage

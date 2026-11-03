@@ -4,15 +4,16 @@
 supersedes the commercial distribution/auto-update roadmap below. Sprints 1-7
 remain historical records. The current application is MIT licensed and offline.
 
-**Latest**: [Sprint 13 - Stage 2 Auto-map Workflow](sprint-13.md), complete 2026-11-03. Before it,
-[Sprint 12 - Auto-map Landmark Solver](sprint-12.md) and
-[Sprint 11 - Source Profiles](sprint-11.md) built the Auto Point Reference foundations, and
+**Latest**: [Sprint 14 - Custom Source Profiles](sprint-14.md), complete 2026-11-03, which
+completes Auto Point Reference with [Sprint 11](sprint-11.md), [Sprint 12](sprint-12.md) and
+[Sprint 13](sprint-13.md). Before them,
 [Sprint 10 - App Shell & Morph Stage Polish](sprint-10.md) and
 [Sprint 9 - Alignment Stage Usability Fixes](sprint-09.md) delivered the 2026-10-29
 feedback triage.
 
-**Next**: Sprint 14 - Custom Source Profiles (not yet planned), the last of
-the four Auto Point Reference sprints (11–14); see
+**Next**: not yet planned; pick from the product backlog (small candidates: built-in profile
+landmark adjustments, an Unreal FBX fingerprint check). Auto Point Reference design and history:
+see
 [auto-point-reference.md](../design/auto-point-reference.md) for the design and roadmap.
 
 **Version:** 2.0  

@@ -75,6 +75,9 @@ struct SourceProfile {
     std::string meshPath;
     // Absolute path resolved by ProfileStore on load. Not serialized.
     std::string resolvedMeshPath;
+    // Sprint 14 — set on load when a user profile's mesh copy is gone. The
+    // profile is listed but can't be selected. Not serialized.
+    bool meshMissing = false;
 
     TopologyFingerprint fingerprint;
     Transform           defaultTransform;
