@@ -364,6 +364,11 @@ void Viewport::OnMouseButton(int button, int action, int /*mods*/, float x, floa
             if (isSculpting_) {
                 HandleSculptRelease();
             }
+            if (pointDragIndex_ >= 0) {
+                if (pointDragActive_ && OnPointDragEnd) OnPointDragEnd(pointDragIndex_);
+                pointDragIndex_ = -1;
+                pointDragActive_ = false;
+            }
         }
     }
 }
@@ -383,6 +388,29 @@ void Viewport::OnMouseMove(float x, float y) {
         camera_->Pan(dx, dy);
         if (OnCameraChanged) OnCameraChanged();
         return;
+    }
+
+    // Stage 2 point drag (Sprint 13).
+    // ViewportHost routes the release to the viewport that took the press,
+    // so a drag always ends here even when the cursor leaves the pane.
+    if (pointDragIndex_ >= 0 && project_ &&
+        project_->GetCurrentStage() == WorkflowStage::PointReference) {
+        constexpr float DragThresholdPx = 4.0f;
+        if (!pointDragActive_ &&
+            std::hypot(x - pointDragPressX_, y - pointDragPressY_) >= DragThresholdPx) {
+            pointDragActive_ = true;
+            if (OnPointDragBegin) OnPointDragBegin(pointDragIndex_);
+        }
+        if (pointDragActive_) {
+            const int vpW = static_cast<int>(std::ceil(lastW_));
+            const int vpH = static_cast<int>(std::ceil(lastH_));
+            if (vpW > 0 && vpH > 0 && OnPointDragged) {
+                const Ray ray = RayCaster::ScreenToRay(x, y, vpW, vpH, *camera_);
+                OnPointDragged(pointDragIndex_, GetViewportPointSide(), ray,
+                               ImGui::GetIO().KeyAlt);
+            }
+            return;
+        }
     }
 
     // Gizmo drag (Alignment stage only) — ported from Qt ApplyTransform.
@@ -917,9 +945,11 @@ void Viewport::DrawPointLabelsOverlay(float x, float y, float w, float h) {
 
         Vector3 worldPos;
         bool shouldDraw = false;
+        bool targetSide = false;
         if (renderFilter_ != RenderFilter::MorphOnly && corr.targetMeshVertexIndex >= 0) {
             worldPos = corr.targetMeshPosition;
             shouldDraw = true;
+            targetSide = true;
         } else if (renderFilter_ != RenderFilter::TargetOnly && corr.morphMeshVertexIndex >= 0) {
             worldPos = corr.morphMeshPosition;
             shouldDraw = true;
@@ -929,11 +959,31 @@ void Viewport::DrawPointLabelsOverlay(float x, float y, float w, float h) {
         Vector3 screenPos = RayCaster::WorldToScreen(worldPos, iw, ih, *camera_);
         if (screenPos.z < 0.0f || screenPos.z > 1.0f) continue;
 
-        // Profile landmarks (Sprint 11 dev viewer) name the selected point
-        // only; naming all of them would bury the face in labels.
+        // Sprint 13 — unchecked auto points get a ring in their confidence
+        // band's colour; the pair accent fill (drawn by the renderer) stays.
+        // Target side only: source landmarks come from the profile, so only
+        // the target placement is uncertain. The sidebar can hide the rings.
+        const ConfidenceBand band =
+            (targetSide && project_->GetPointReferenceData().showConfidence) ? BandOf(corr)
+                                                                             : ConfidenceBand::None;
+        if (band != ConfidenceBand::None) {
+            const ImVec4& bandCol = band == ConfidenceBand::High   ? MvStyle::MvSuccess
+                                  : band == ConfidenceBand::Review ? MvStyle::MvWarning
+                                                                   : MvStyle::MvDanger;
+            const float ringR = project_->GetPointReferenceData().pointRenderSize * 0.5f + 4.0f;
+            dl->AddCircle(ImVec2(x + screenPos.x, y + screenPos.y), ringR,
+                          ImGui::ColorConvertFloat4ToU32(bandCol), 0, 2.0f);
+        }
+
+        // Landmark points name the selected point only; naming all of them
+        // would bury the face in labels.
         char buf[96];
         if (isSelected && !corr.landmarkName.empty()) {
-            std::snprintf(buf, sizeof(buf), "%d  %s", corr.pointID, corr.landmarkName.c_str());
+            const char* bandText = band == ConfidenceBand::High   ? "  \xC2\xB7 high"
+                                 : band == ConfidenceBand::Review ? "  \xC2\xB7 review"
+                                 : band == ConfidenceBand::Low    ? "  \xC2\xB7 low" : "";
+            std::snprintf(buf, sizeof(buf), "%d  %s%s", corr.pointID, corr.landmarkName.c_str(),
+                          bandText);
         } else {
             std::snprintf(buf, sizeof(buf), "%d", corr.pointID);
         }
@@ -1858,8 +1908,15 @@ bool Viewport::TrySelectExistingPoint(float screenX, float screenY) {
 void Viewport::HandlePointClick(float screenX, float screenY) {
     if (!project_) return;
 
-    // First, try to select an existing point near the click.
-    if (TrySelectExistingPoint(screenX, screenY)) return;
+    // First, try to select an existing point near the click. Pressing on a
+    // point also arms a drag (Sprint 13), which starts if the mouse moves.
+    if (TrySelectExistingPoint(screenX, screenY)) {
+        pointDragIndex_ = selectedPointIndex_;
+        pointDragActive_ = false;
+        pointDragPressX_ = screenX;
+        pointDragPressY_ = screenY;
+        return;
+    }
 
     int vpW = static_cast<int>(std::ceil(lastW_));
     int vpH = static_cast<int>(std::ceil(lastH_));

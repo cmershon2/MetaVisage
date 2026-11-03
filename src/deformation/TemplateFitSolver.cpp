@@ -797,6 +797,8 @@ LandmarkSolveResult TemplateFitSolver::Solve(const LandmarkSolveInput& in,
     result.alignmentRotationDeg = angleDeg;
     result.alignmentResidual = residualRel;
     result.targetMirrorError = mirrorError;
+    result.targetPlanePoint = w0;
+    result.targetPlaneNormal = planeN;
     result.symmetryApplied = symmetric;
     result.seconds = std::chrono::duration<double>(Clock::now() - t0).count();
     report(1.0f, "Done");

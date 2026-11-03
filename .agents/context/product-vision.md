@@ -92,3 +92,13 @@ good on realistic heads, weaker on stylized features (cartoon lower lids,
 goblin ears). Further accuracy likely needs the learned detector (design
 decision 1) or profile point adjustments, so Sprint 13 adds click-and-drag
 refinement of placed points. See `retrospectives/retro-sprint-12.md`.
+
+Sprint 13 brings auto-map into Stage 2. Entering an empty Stage 2 offers
+auto-map; it runs in the background with Cancel and lands as one undo step.
+Target points carry confidence rings (toggleable) and the sidebar lists the
+ones to check first. Any point can be dragged along the mesh: mirrored
+partners follow to the exact reflected spot, midline points slide along the
+symmetry plane unless unlocked, and Alt moves one side alone. Re-running
+auto-map replaces or fills auto points and never touches the user's edits.
+Sprint 14 (custom source profiles) completes Auto Point Reference. See
+`retrospectives/retro-sprint-13.md`.

@@ -1,6 +1,6 @@
 # Auto Point Reference: Design
 
-**Status**: Sprint 11 complete (2026-10-30). Sprint 12 complete (2026-11-03); Sprints 13–14 outlined.
+**Status**: Sprints 11–13 complete (Sprint 13 on 2026-11-03); Sprint 14 outlined.
 **Owner**: Casey
 **Replaces backlog item**: "Automated point placement (ML)"
 

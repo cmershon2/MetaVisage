@@ -43,6 +43,10 @@ struct LandmarkSolveResult {
     bool success = false;
     std::string errorMessage;
     std::vector<SolvedLandmark> landmarks;   // same order as the input landmarks
+    // The source's symmetry plane carried onto the target by the fit, in
+    // world space. Stage 2 keeps midline points on it while they're dragged.
+    Vector3 targetPlanePoint;
+    Vector3 targetPlaneNormal{1.0f, 0.0f, 0.0f};
 
     // Diagnostics for tests and the benchmark tool.
     double seconds = 0.0;

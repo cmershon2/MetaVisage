@@ -128,3 +128,11 @@ implemented or counted as completed delivery.
   - **Effort (Estimated)**: ~1 sprint (13 pts)
   - **Completed**: Sprint 12, 2026-11-03
   - **Notes**: `smoke_landmark_solver` covers seven synthetic cases plus refusal, cancel and input checks. `metavisage_automap_bench` measures against Casey's six hand-placed heads (median 0.6-1.7% of head size). Casey's review led to click-and-drag refinement being added to Sprint 13. See [retro-sprint-12.md](../retrospectives/retro-sprint-12.md).
+
+### 2026-11-03 - Sprint 13 Stage 2 auto-map workflow
+
+- ✅ **Stage 2 auto-map workflow**
+  - Added the Auto / Manual prompt on entering Stage 2, a background auto-map run with progress and Cancel, auto-map as one undo step, confidence rings and a review-first point list, click-and-drag point editing along the mesh (exact mirrored partners, midline points locked to the symmetry plane with unlock, Alt for one side), and re-running auto-map to replace auto points or fill missing ones. Points save their landmark id, confidence and auto status (format v3, optional fields).
+  - **Effort (Estimated)**: ~1 sprint (13 pts committed, 15 delivered)
+  - **Completed**: Sprint 13, 2026-11-03
+  - **Notes**: Casey reviewed three rounds in the app; fixes covered vertex snapping of mirrored and midline points, target-only confidence rings with a toggle, and a unit mix-up that stalled midline drags on scaled targets. See [retro-sprint-13.md](../retrospectives/retro-sprint-13.md).

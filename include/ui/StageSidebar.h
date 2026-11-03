@@ -78,6 +78,13 @@ public:
         // X on that row; AppWindow erases the correspondence (and its
         // symmetric pair if present) and pushes a PointPlacementUndoAction.
         std::optional<int> deletePointIndex;
+
+        // Stage 2 — Sprint 13. Auto-map runs (or re-runs) the solver;
+        // the lock toggle frees or re-locks one midline point by row index;
+        // setAllMidlineUnlocked does it for every midline point.
+        bool autoMapRequested = false;
+        std::optional<int> toggleMidlineLockIndex;
+        std::optional<bool> setAllMidlineUnlocked;
     };
 
     // Render docked panel titled "Stage". Returns the actions requested this
@@ -97,7 +104,8 @@ private:
                          Actions& out);
     void RenderSourcePicker(Project& project, const std::vector<SourceProfile>& sourceProfiles,
                             Actions& out);
-    void RenderPointReference(Project& project, Actions& out);
+    void RenderPointReference(Project& project, const std::vector<SourceProfile>& sourceProfiles,
+                              Actions& out);
     void RenderMorph(Project& project, bool processing, float progress,
                      const std::vector<WrapPreset>& userPresets, Actions& out);
     void RenderTouchUp(Project& project, Actions& out);

@@ -161,6 +161,34 @@ struct ShortcutsModalState {
 };
 void RenderShortcutsModal(ShortcutsModalState& state);
 
+// ---------------------------------------------------------------------------
+// Auto-map (Sprint 13) — the Auto / Manual prompt on entering Stage 2, the
+// replace-or-fill choice when re-running over existing points, and the
+// progress modal with Cancel while the solver runs. The renderer records
+// the user's answer in `choice`; AppWindow consumes and resets it.
+// ---------------------------------------------------------------------------
+
+enum class AutoMapChoice { None, AutoMap, Manual, Replace, Fill, Cancel, CancelRun };
+
+struct AutoMapModalState {
+    enum class Ask { Prompt, Rerun };
+    bool pendingChoice = false;
+    bool pendingProgress = false;
+    Ask ask = Ask::Prompt;
+    std::string profileName;
+    AutoMapChoice choice = AutoMapChoice::None;
+
+    // Progress, written by AppWindow each frame while the solver runs.
+    bool running = false;
+    float progress = 0.0f;
+    std::string stageText;
+
+    void OpenPrompt(const std::string& profile);
+    void OpenRerun();
+    void OpenProgress();
+};
+void RenderAutoMapModals(AutoMapModalState& state);
+
 } // namespace MetaVisage
 
 #endif
