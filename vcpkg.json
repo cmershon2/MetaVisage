@@ -1,6 +1,6 @@
 {
   "name": "metavisage",
-  "version-string": "2.0.0",
+  "version-string": "2.1.0",
   "description": "MetaHuman mesh morphing desktop application",
   "dependencies": [
     "glfw3",

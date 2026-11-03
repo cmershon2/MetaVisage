@@ -1860,7 +1860,7 @@ void AppWindow::RenderAboutModal() {
     }
     if (ImGui::BeginPopupModal("About MetaVisage", nullptr, ImGuiWindowFlags_AlwaysAutoResize)) {
         ImGui::Text("MetaVisage");
-        ImGui::Text("Version 2.0.0");
+        ImGui::Text("Version %s", METAVISAGE_VERSION);
         ImGui::Separator();
         ImGui::TextWrapped("MetaHuman mesh morphing for Unreal Engine 5.x.");
         ImGui::Spacing();

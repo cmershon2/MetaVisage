@@ -1,8 +1,19 @@
 cmake_minimum_required(VERSION 3.16)
-project(MetaVisage VERSION 2.0.0 LANGUAGES CXX)
+project(MetaVisage VERSION 2.1.0 LANGUAGES CXX)
 
 set(CMAKE_CXX_STANDARD 20)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
+
+# Release 2.1.0 — the project version is the single source for the version
+# shown in the app (METAVISAGE_VERSION). package-release.ps1 reads vcpkg.json,
+# so configure fails if the two disagree.
+file(READ "${CMAKE_CURRENT_SOURCE_DIR}/vcpkg.json" METAVISAGE_MANIFEST)
+string(REGEX MATCH "\"version-string\"[ \t]*:[ \t]*\"([^\"]+)\"" _mv_version_match "${METAVISAGE_MANIFEST}")
+if(NOT CMAKE_MATCH_1 STREQUAL PROJECT_VERSION)
+    message(FATAL_ERROR "vcpkg.json version-string '${CMAKE_MATCH_1}' does not match "
+                        "project(MetaVisage VERSION ${PROJECT_VERSION}). Bump both together.")
+endif()
+add_compile_definitions(METAVISAGE_VERSION="${PROJECT_VERSION}")
 
 # Sprint 3.7 — Qt6 fully removed. The application is now self-hosted on
 # GLFW + Dear ImGui + standard C++ libraries (std::format, std::filesystem,

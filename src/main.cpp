@@ -8,7 +8,7 @@
 
 int main() {
     MetaVisage::Logger::Instance().Initialize(MetaVisage::Paths::LogDir());
-    MV_LOG_INFO("MetaVisage v2.0.0 starting");
+    MV_LOG_INFO(std::string("MetaVisage v") + METAVISAGE_VERSION + " starting");
 
     MetaVisage::Config::Instance().Load();
 

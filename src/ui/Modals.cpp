@@ -345,7 +345,7 @@ void RenderWelcomeModal(WelcomeModalState& state) {
                 MvStyle::ScopedFont f(MvStyle::Font.MonoSm);
                 dl->AddText(ImVec2(textX, hMin.y + 24.0f),
                             ColU(MvStyle::MvBlue400),
-                            "V 2.0.0 \xC2\xB7 EARLY ACCESS");
+                            "V " METAVISAGE_VERSION " \xC2\xB7 EARLY ACCESS");
             }
             {
                 MvStyle::ScopedFont f(MvStyle::Font.Display);
