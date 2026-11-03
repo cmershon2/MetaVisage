@@ -61,8 +61,10 @@ Windows ZIP and SHA-256 checksum under `release/`. See
 
 1. **Alignment**: Pick a source profile (the built-in MetaHuman head, or import
    your own source mesh), load your target head, then align them with move (`G`), rotate (`R`), and scale (`S`).
-2. **Point Reference**: Place corresponding landmarks on both meshes in the
-   dual viewports. Use symmetry for matching features.
+2. **Point Reference**: Auto-map the source profile's landmarks onto the
+   target, check the points it is less sure of, and drag any point along the
+   mesh to fix it (mirrored pairs follow; Alt moves one side). Or place
+   corresponding points on both meshes by hand.
 3. **Morph**: Choose a wrap preset, process the mesh, inspect the result, and
    accept it before continuing.
 4. **Touch Up**: Refine the result with sculpting brushes and texture tools.

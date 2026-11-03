@@ -142,6 +142,15 @@ int main(int /*argc*/, char** /*argv*/) {
             std::fprintf(stderr, "v1_compat: v2 fixture points not restored\n");
             return 105;
         }
+        // Sprint 13 — files without the auto-map fields load as manual points.
+        const PointReferenceData& refData = project.GetPointReferenceData();
+        const PointCorrespondence& old = refData.correspondences[0];
+        if (!old.landmarkId.empty() || old.isAuto || old.confidence >= 0.0f ||
+            old.midlineUnlocked || refData.hasTargetPlane || !refData.mirrorDrag ||
+            !refData.showConfidence) {
+            std::fprintf(stderr, "v1_compat: v2 fixture point picked up auto-map fields\n");
+            return 106;
+        }
         std::printf("v1_compat: v2 fixture -> mask, parameters, points OK\n");
     }
 
@@ -152,6 +161,22 @@ int main(int /*argc*/, char** /*argv*/) {
         Project original;
         original.SetSourceProfileId("metahuman-head-lod0");
         original.GetMorphData().vertexMask = {true, false, false, true};
+        // Sprint 13 — landmark fields on points, and the auto-map plane.
+        PointReferenceData& refData = original.GetPointReferenceData();
+        PointCorrespondence autoPoint;
+        autoPoint.pointID = 1;
+        autoPoint.landmarkId = "nose_tip";
+        autoPoint.isAuto = true;
+        autoPoint.confidence = 0.625f;
+        autoPoint.midlineUnlocked = true;
+        PointCorrespondence manualPoint;
+        manualPoint.pointID = 2;
+        refData.correspondences = {autoPoint, manualPoint};
+        refData.hasTargetPlane = true;
+        refData.targetPlanePoint = Vector3(1.0f, 2.0f, 3.0f);
+        refData.targetPlaneNormal = Vector3(0.0f, 0.0f, 1.0f);
+        refData.mirrorDrag = false;
+        refData.showConfidence = false;
         ProjectSerializer serializer;
         if (!serializer.Save(original, tmp.string()).success) {
             std::fprintf(stderr, "v1_compat: v3 save failed\n");
@@ -170,7 +195,20 @@ int main(int /*argc*/, char** /*argv*/) {
             std::fprintf(stderr, "v1_compat: v3 round-trip lost the profile id or mask\n");
             return 112;
         }
-        std::printf("v1_compat: v3 round-trip -> profile id, mask OK\n");
+        const PointReferenceData& back = reloaded.GetPointReferenceData();
+        if (back.correspondences.size() != 2 || !back.hasTargetPlane || back.mirrorDrag || back.showConfidence ||
+            back.targetPlanePoint.y != 2.0f || back.targetPlaneNormal.z != 1.0f) {
+            std::fprintf(stderr, "v1_compat: v3 round-trip lost the auto-map plane or settings\n");
+            return 113;
+        }
+        const PointCorrespondence& a = back.correspondences[0];
+        const PointCorrespondence& m = back.correspondences[1];
+        if (a.landmarkId != "nose_tip" || !a.isAuto || a.confidence != 0.625f || !a.midlineUnlocked ||
+            !m.landmarkId.empty() || m.isAuto || m.confidence >= 0.0f || m.midlineUnlocked) {
+            std::fprintf(stderr, "v1_compat: v3 round-trip lost point landmark fields\n");
+            return 114;
+        }
+        std::printf("v1_compat: v3 round-trip -> profile id, mask, landmark fields OK\n");
     }
 
     return 0;

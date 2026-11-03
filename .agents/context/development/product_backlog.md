@@ -11,13 +11,7 @@
 
 ### Auto Point Reference
 
-Design: [auto-point-reference.md](../design/auto-point-reference.md). Replaces the former lower-priority "Automated point placement (ML)" item. Sprints run in order; each depends on the one before. Source Profiles shipped in Sprint 11 and the auto-map solver in Sprint 12 (see the changelog).
-
-- [ ] **Stage 2 auto-map workflow**
-  - Add the Auto / Manual prompt after Stage 1, a progress modal with cancel, confidence-coloured points, a re-run that replaces or fills in points, and auto-map as one undo step.
-  - Click-and-drag placed points along the mesh surface to fine-tune auto results (Casey, 2026-11-03): midline points locked to the symmetry plane with a per-point unlock for asymmetrical features, mirrored pairs moving together with a toggle to drag one side alone, one undo step per drag. See the design's "Editing" bullet. Serialize `landmarkId` / `confidence` / `isAuto`. Update the PRD (FR-2 / FR-3) and the user docs.
-  - **Effort**: ~1 sprint
-  - **Value**: Brings Stage 2 in line with Unreal's Mesh to MetaHuman flow
+Design: [auto-point-reference.md](../design/auto-point-reference.md). Replaces the former lower-priority "Automated point placement (ML)" item. Sprints run in order; each depends on the one before. Source Profiles shipped in Sprint 11, the auto-map solver in Sprint 12 and the Stage 2 auto-map workflow in Sprint 13 (see the changelog).
 
 - [ ] **Custom source profiles**
   - Add a profile editor (landmark checklist with mirroring, mask brush), library management (rename, duplicate, delete), "Save source as profile" from a project, and profile import/export.

@@ -24,12 +24,14 @@
 #include "core/Types.h"
 #include "deformation/MeshDeformer.h"
 #include "deformation/NRICPDeformer.h"
+#include "deformation/TemplateFitSolver.h"
 #include "io/ProjectSerializer.h"
 #include "io/MeshExporter.h"
 #include "io/PresetStore.h"
 #include "io/ProfileStore.h"
 #include "baking/TextureBaker.h"
 #include "baking/TextureWriter.h"
+#include "utils/BVH.h"
 #include "utils/Config.h"
 #include "utils/Logger.h"
 #include "utils/Paths.h"
@@ -50,6 +52,7 @@
 #include <format>
 #include <string>
 #include <unordered_map>
+#include <unordered_set>
 
 // Sprint 3.8 follow-up — frameless OS window + custom title bar. We expose
 // the Win32 HWND so our WM_NCHITTEST handler can tell Windows where the
@@ -587,6 +590,9 @@ bool AppWindow::Initialize(int width, int height, const char* title) {
     if (auto* left = viewportHost_->GetPrimaryViewport()) {
         left->OnPointPlaced            = onPointPlaced;
         left->OnPointDeleteRequested   = onPointDelete;
+        left->OnPointDragBegin = [this](int i) { BeginPointDrag(i); };
+        left->OnPointDragged   = [this](int i, PointSide s, const Ray& r, bool one) { DragPoint(i, s, r, one); };
+        left->OnPointDragEnd   = [this](int i) { EndPointDrag(i); };
         left->OnTransformApplied       = onTransformApplied;
         left->OnMaskStrokeCompleted    = onMaskStrokeCompleted;
         left->OnSculptStrokeCompleted  = onSculptStrokeCompleted;
@@ -594,6 +600,9 @@ bool AppWindow::Initialize(int width, int height, const char* title) {
     if (auto* right = viewportHost_->GetSecondaryViewport()) {
         right->OnPointPlaced            = onPointPlaced;
         right->OnPointDeleteRequested   = onPointDelete;
+        right->OnPointDragBegin = [this](int i) { BeginPointDrag(i); };
+        right->OnPointDragged   = [this](int i, PointSide s, const Ray& r, bool one) { DragPoint(i, s, r, one); };
+        right->OnPointDragEnd   = [this](int i) { EndPointDrag(i); };
         right->OnTransformApplied       = onTransformApplied;
         right->OnMaskStrokeCompleted    = onMaskStrokeCompleted;
         right->OnSculptStrokeCompleted  = onSculptStrokeCompleted;
@@ -734,6 +743,7 @@ void AppWindow::TickOnce(int fbWidth, int fbHeight) {
     // the progress bar + enable/disable of the Process Morph button
     // reflect current worker status.
     PollMorphCompletion();
+    PollAutoMapCompletion();
 
     // Stage sidebar docks into the left side of AppDockSpace. Kept after
     // the dockspace is declared (inside RenderAppShell) and before modal
@@ -762,10 +772,38 @@ void AppWindow::TickOnce(int fbWidth, int fbHeight) {
         }
 
         if (actions.nextStageRequested && project_) {
-            const int cur = static_cast<int>(project_->GetCurrentStage());
-            if (cur < static_cast<int>(WorkflowStage::TouchUp)) {
-                project_->SetCurrentStage(static_cast<WorkflowStage>(cur + 1));
+            const WorkflowStage cur = project_->GetCurrentStage();
+            if (static_cast<int>(cur) < static_cast<int>(WorkflowStage::TouchUp)) {
+                project_->SetCurrentStage(static_cast<WorkflowStage>(static_cast<int>(cur) + 1));
                 ApplyStageViewportMode();
+                // Sprint 13 — offer auto-map on the way into an empty Stage 2.
+                if (cur == WorkflowStage::Alignment &&
+                    project_->GetPointReferenceData().correspondences.empty() &&
+                    project_->GetTargetMesh().isLoaded) {
+                    if (const SourceProfile* profile = AutoMapProfile()) {
+                        autoMapModal_.OpenPrompt(profile->name);
+                    }
+                }
+            }
+        }
+        if (actions.autoMapRequested) RequestAutoMap();
+        // Sprint 13 — midline lock toggles are undoable point edits.
+        if ((actions.toggleMidlineLockIndex || actions.setAllMidlineUnlocked) && project_) {
+            auto& points = project_->GetPointReferenceData().correspondences;
+            const std::vector<PointCorrespondence> before = points;
+            if (actions.toggleMidlineLockIndex) {
+                const int i = *actions.toggleMidlineLockIndex;
+                if (i >= 0 && i < static_cast<int>(points.size())) {
+                    points[i].midlineUnlocked = !points[i].midlineUnlocked;
+                }
+            } else {
+                for (auto& p : points) {
+                    if (p.isMidlineLandmark) p.midlineUnlocked = *actions.setAllMidlineUnlocked;
+                }
+            }
+            if (undoStack_) {
+                undoStack_->Push(std::make_unique<PointPlacementUndoAction>(
+                    project_.get(), before, points, "Midline Lock"));
             }
         }
         if (actions.previousStageRequested && project_) {
@@ -1815,6 +1853,8 @@ void AppWindow::RenderModals() {
     RenderConfirmModal(confirmModal_);
     RenderErrorModal(errorModal_);
     RenderShortcutsModal(shortcutsModal_);
+    RenderAutoMapModals(autoMapModal_);
+    HandleAutoMapChoice();
 
     RenderWelcomeModal(welcomeModal_);
     if (welcomeModal_.action != WelcomeAction::None) {
@@ -1967,6 +2007,7 @@ void AppWindow::OpenProjectFromDisk(const std::string& path) {
     if (!profileId.empty() && !ProfileStore::FindById(sourceProfiles_, profileId)) {
         MV_LOG_WARNING(std::format("Project source profile '{}' is not installed", profileId));
     }
+    ResolveLandmarkNames(project_->GetPointReferenceData().correspondences);
 
     // Reconstruct the deformed morph mesh from saved vertex/normal data —
     // ProjectSerializer parks the arrays in MorphData::savedDeformed*; the
@@ -2315,7 +2356,7 @@ void AppWindow::ShowProfileLandmarks() {
         pc.pointID              = pointIdByLandmark[lm.id];
         pc.morphMeshVertexIndex = lm.vertexIndex;
         pc.morphMeshPosition    = RayCaster::TransformPoint(vertices[lm.vertexIndex], model);
-        pc.landmarkName         = lm.name;
+        pc.landmarkId           = lm.id;
         if (const auto it = pointIdByLandmark.find(lm.mirrorId);
             !lm.mirrorId.empty() && it != pointIdByLandmark.end()) {
             pc.isSymmetric     = true;
@@ -2324,6 +2365,7 @@ void AppWindow::ShowProfileLandmarks() {
         points.push_back(std::move(pc));
     }
 
+    ResolveLandmarkNames(points);
     auto& correspondences = project_->GetPointReferenceData().correspondences;
     const std::vector<PointCorrespondence> before = correspondences;
     correspondences = points;
@@ -2547,6 +2589,8 @@ void AppWindow::Shutdown() {
     if (morphDeformer_) morphDeformer_->Cancel();
     if (morphThread_.joinable()) morphThread_.join();
     morphDeformer_.reset();
+    autoMapCancel_.store(true);
+    if (autoMapThread_.joinable()) autoMapThread_.join();
 
     if (viewportHost_) viewportHost_->SetProject(nullptr);
     undoStack_.reset();
@@ -2790,6 +2834,477 @@ void AppWindow::ResetMorphResult() {
         }
     }
     statusMessage_ = "Morph result reset to source mesh";
+}
+
+// ---------------------------------------------------------------------------
+// Stage 2 — Auto-map worker lifecycle (Sprint 13)
+// ---------------------------------------------------------------------------
+
+const SourceProfile* AppWindow::AutoMapProfile() const {
+    if (!project_) return nullptr;
+    const SourceProfile* profile =
+        ProfileStore::FindById(sourceProfiles_, project_->GetSourceProfileId());
+    return (profile && profile->HasLandmarks()) ? profile : nullptr;
+}
+
+void AppWindow::ResolveLandmarkNames(std::vector<PointCorrespondence>& points) const {
+    const SourceProfile* profile = project_
+        ? ProfileStore::FindById(sourceProfiles_, project_->GetSourceProfileId())
+        : nullptr;
+    for (auto& pc : points) {
+        pc.landmarkName.clear();
+        pc.isMidlineLandmark = false;
+        if (pc.landmarkId.empty() || !profile) continue;
+        for (const auto& lm : profile->landmarks) {
+            if (lm.id == pc.landmarkId) {
+                pc.landmarkName = lm.name;
+                pc.isMidlineLandmark = lm.mirrorId.empty();
+                break;
+            }
+        }
+    }
+}
+
+void AppWindow::RequestAutoMap() {
+    if (!project_ || autoMapRunning_.load() || morphRunning_.load()) return;
+    if (!AutoMapProfile()) {
+        errorModal_.Open("Auto-map needs a source profile with landmarks. Pick one in Stage 1.",
+                         "Auto-map Unavailable");
+        return;
+    }
+    if (!project_->GetTargetMesh().isLoaded || !project_->GetTargetMesh().mesh) {
+        errorModal_.Open("Import a target mesh in Stage 1 before auto-mapping.",
+                         "Auto-map Unavailable");
+        return;
+    }
+    if (project_->GetPointReferenceData().correspondences.empty()) {
+        StartAutoMap(AutoMapMode::Fresh);
+    } else {
+        autoMapModal_.OpenRerun();
+    }
+}
+
+void AppWindow::HandleAutoMapChoice() {
+    const AutoMapChoice choice = autoMapModal_.choice;
+    if (choice == AutoMapChoice::None) return;
+    autoMapModal_.choice = AutoMapChoice::None;
+    switch (choice) {
+        case AutoMapChoice::AutoMap:   RequestAutoMap(); break;
+        case AutoMapChoice::Replace:   StartAutoMap(AutoMapMode::Replace); break;
+        case AutoMapChoice::Fill:      StartAutoMap(AutoMapMode::Fill); break;
+        case AutoMapChoice::CancelRun: CancelAutoMap(); break;
+        default: break;
+    }
+}
+
+void AppWindow::StartAutoMap(AutoMapMode mode) {
+    if (!project_ || autoMapRunning_.load()) return;
+    const SourceProfile* profile = AutoMapProfile();
+    const MeshReference& source = project_->GetMorphMesh();
+    const MeshReference& target = project_->GetTargetMesh();
+    if (!profile || !source.isLoaded || !source.mesh || !target.isLoaded || !target.mesh) return;
+
+    // Join any stale thread from a prior run before reusing the handle.
+    if (autoMapThread_.joinable()) autoMapThread_.join();
+
+    // The worker gets its own copies (the meshes are shared and not changed
+    // in Stage 2), so the UI keeps drawing and a project switch cannot pull
+    // anything out from under it.
+    LandmarkSolveInput in;
+    in.source = source.mesh;
+    in.sourceTransform = source.transform;
+    in.target = target.mesh;
+    in.targetTransform = target.transform;
+    in.landmarks = profile->landmarks;
+    in.symmetryAxis = profile->symmetryAxis;
+    in.symmetryPlaneOffset = profile->symmetryPlaneOffset;
+    in.mask = profile->BuildMask();
+
+    autoMapMode_ = mode;
+    autoMapProjectGeneration_ = projectGeneration_;
+    autoMapProgress_.store(0.0f);
+    autoMapCancel_.store(false);
+    autoMapFinished_.store(false);
+    autoMapRunning_.store(true);
+    {
+        std::lock_guard<std::mutex> lock(autoMapMutex_);
+        autoMapStageText_.clear();
+        autoMapResult_ = LandmarkSolveResult{};
+    }
+    autoMapModal_.OpenProgress();
+    statusMessage_ = "Auto-mapping points...";
+
+    autoMapThread_ = std::thread([this, in = std::move(in)]() {
+        TemplateFitSolver solver;
+        LandmarkSolveResult result = solver.Solve(
+            in,
+            [this](float p, const std::string& message) {
+                autoMapProgress_.store(p);
+                std::lock_guard<std::mutex> lock(autoMapMutex_);
+                autoMapStageText_ = message;
+            },
+            autoMapCancel_);
+        {
+            std::lock_guard<std::mutex> lock(autoMapMutex_);
+            autoMapResult_ = std::move(result);
+        }
+        autoMapFinished_.store(true);
+    });
+}
+
+void AppWindow::CancelAutoMap() {
+    if (autoMapRunning_.load()) autoMapCancel_.store(true);
+}
+
+void AppWindow::PollAutoMapCompletion() {
+    if (autoMapRunning_.load()) {
+        autoMapModal_.progress = autoMapProgress_.load();
+        std::lock_guard<std::mutex> lock(autoMapMutex_);
+        autoMapModal_.stageText = autoMapStageText_;
+    }
+    if (!autoMapFinished_.load()) return;
+
+    if (autoMapThread_.joinable()) autoMapThread_.join();
+    autoMapRunning_.store(false);
+    autoMapFinished_.store(false);
+    autoMapModal_.running = false;
+
+    LandmarkSolveResult result;
+    {
+        std::lock_guard<std::mutex> lock(autoMapMutex_);
+        result = std::move(autoMapResult_);
+    }
+    // A result belongs only to the project that started it.
+    if (!project_ || autoMapProjectGeneration_ != projectGeneration_) return;
+    if (autoMapCancel_.load()) {
+        autoMapCancel_.store(false);
+        statusMessage_ = "Auto-map cancelled";
+        return;
+    }
+    if (!result.success) {
+        statusMessage_ = "Auto-map failed";
+        errorModal_.Open(result.errorMessage, "Auto-map Failed");
+        return;
+    }
+    ApplyAutoMapResult(result, autoMapMode_);
+}
+
+void AppWindow::ApplyAutoMapResult(const LandmarkSolveResult& result, AutoMapMode mode) {
+    const SourceProfile* profile = AutoMapProfile();
+    const MeshReference& source = project_->GetMorphMesh();
+    if (!profile || !source.mesh) return;
+
+    PointReferenceData& data = project_->GetPointReferenceData();
+    std::vector<PointCorrespondence>& correspondences = data.correspondences;
+    const std::vector<PointCorrespondence> before = correspondences;
+
+    // Points the user placed or moved (not auto) always survive. Fill keeps
+    // the auto points too; Replace solves them again; Fresh starts empty.
+    std::vector<PointCorrespondence> points;
+    if (mode == AutoMapMode::Fill) {
+        points = correspondences;
+    } else if (mode == AutoMapMode::Replace) {
+        for (const auto& c : correspondences) {
+            if (!c.isAuto) points.push_back(c);
+        }
+    }
+    std::unordered_set<int> keptIds;
+    std::unordered_set<std::string> present;
+    std::unordered_map<std::string, int> idByLandmark;
+    int nextID = 1;
+    for (const auto& c : points) {
+        keptIds.insert(c.pointID);
+        nextID = std::max(nextID, c.pointID + 1);
+        if (!c.landmarkId.empty()) {
+            present.insert(c.landmarkId);
+            idByLandmark[c.landmarkId] = c.pointID;
+        }
+    }
+    // A kept point whose partner was replaced loses the stale link; the
+    // pairing pass below links it to the new partner.
+    for (auto& c : points) {
+        if (c.isSymmetric && !keptIds.count(c.symmetricPairID)) {
+            c.isSymmetric = false;
+            c.symmetricPairID = -1;
+        }
+    }
+
+    const auto& vertices = source.mesh->GetVertices();
+    const Matrix4x4 model = source.transform.GetMatrix();
+    int added = 0;
+    for (const SolvedLandmark& s : result.landmarks) {
+        if (present.count(s.landmarkId)) continue;
+        if (s.sourceVertex < 0 || s.sourceVertex >= static_cast<int>(vertices.size())) continue;
+        PointCorrespondence pc;
+        pc.pointID               = nextID++;
+        pc.morphMeshVertexIndex  = s.sourceVertex;
+        pc.morphMeshPosition     = RayCaster::TransformPoint(vertices[s.sourceVertex], model);
+        pc.targetMeshVertexIndex = s.targetVertex;
+        pc.targetMeshPosition    = s.targetPosition;
+        pc.landmarkId            = s.landmarkId;
+        pc.confidence            = s.confidence;
+        pc.isAuto                = true;
+        idByLandmark[pc.landmarkId] = pc.pointID;
+        points.push_back(std::move(pc));
+        ++added;
+    }
+    if (added == 0 && mode == AutoMapMode::Fill) {
+        statusMessage_ = "Every landmark already has a point";
+        return;
+    }
+
+    // Link left/right landmarks as symmetric pairs, so deleting or dragging
+    // one acts on both. Existing manual pairings are left alone.
+    std::unordered_map<std::string, std::string> mirrorOf;
+    for (const auto& lm : profile->landmarks) mirrorOf[lm.id] = lm.mirrorId;
+    for (auto& c : points) {
+        if (c.landmarkId.empty() || c.isSymmetric) continue;
+        const auto m = mirrorOf.find(c.landmarkId);
+        if (m == mirrorOf.end() || m->second.empty()) continue;
+        const auto partner = idByLandmark.find(m->second);
+        if (partner == idByLandmark.end()) continue;
+        c.isSymmetric = true;
+        c.symmetricPairID = partner->second;
+    }
+    ResolveLandmarkNames(points);
+
+    correspondences = std::move(points);
+    data.hasTargetPlane = true;
+    data.targetPlanePoint = result.targetPlanePoint;
+    data.targetPlaneNormal = result.targetPlaneNormal;
+    if (undoStack_) {
+        undoStack_->Push(std::make_unique<PointPlacementUndoAction>(
+            project_.get(), before, correspondences, "Auto-map Points"));
+    }
+    if (viewportHost_) viewportHost_->SetSelectedPointIndex(-1);
+
+    int high = 0, review = 0, low = 0;
+    for (const auto& c : correspondences) {
+        switch (BandOf(c)) {
+            case ConfidenceBand::High:   ++high; break;
+            case ConfidenceBand::Review: ++review; break;
+            case ConfidenceBand::Low:    ++low; break;
+            default: break;
+        }
+    }
+    statusMessage_ = std::format("Auto-mapped {} points: {} to review, {} low", added, review, low);
+    MV_LOG_INFO(std::format("Auto-map applied {} points in {:.1f} s ({} high, {} review, {} low)",
+                            added, result.seconds, high, review, low));
+}
+
+// ---------------------------------------------------------------------------
+// Stage 2 — dragging placed points (Sprint 13)
+// ---------------------------------------------------------------------------
+
+bool AppWindow::SymmetryPlaneFor(PointSide side, Vector3& point, Vector3& normal) const {
+    auto unit = [](Axis axis) {
+        switch (axis) {
+            case Axis::Y: return Vector3(0.0f, 1.0f, 0.0f);
+            case Axis::Z: return Vector3(0.0f, 0.0f, 1.0f);
+            default:      return Vector3(1.0f, 0.0f, 0.0f);
+        }
+    };
+    if (!project_) return false;
+    const PointReferenceData& data = project_->GetPointReferenceData();
+    if (side == PointSide::Target && data.hasTargetPlane) {
+        point = data.targetPlanePoint;
+        normal = data.targetPlaneNormal.Normalized();
+        return true;
+    }
+    if (side == PointSide::Morph) {
+        if (const SourceProfile* profile =
+                ProfileStore::FindById(sourceProfiles_, project_->GetSourceProfileId())) {
+            const Matrix4x4 m = project_->GetMorphMesh().transform.GetMatrix();
+            const Vector3 axis = unit(profile->symmetryAxis);
+            const Vector3 local = axis * profile->symmetryPlaneOffset;
+            point = RayCaster::TransformPoint(local, m);
+            // Profile transforms are rotation and uniform scale, so the axis
+            // maps straight onto the plane normal.
+            normal = (RayCaster::TransformPoint(local + axis, m) - point).Normalized();
+            return true;
+        }
+    }
+    // No profile or auto-map plane: the Stage 2 mirror setting, as placement
+    // mirroring uses it.
+    normal = unit(data.symmetryAxis);
+    point = normal * data.symmetryPlaneOffset;
+    return true;
+}
+
+void AppWindow::BuildMidlineCache(PointSide side, const Vector3& planePoint, const Vector3& planeNormal) {
+    midlineCache_ = MidlineCache{};
+    midlineCache_.side = side;
+    const MeshReference& ref = side == PointSide::Target ? project_->GetTargetMesh()
+                                                         : project_->GetMorphMesh();
+    if (!ref.mesh) return;
+    const Matrix4x4 m = ref.transform.GetMatrix();
+    const auto& local = ref.mesh->GetVertices();
+    std::vector<Vector3> world(local.size());
+    std::vector<float> dist(local.size());
+    Vector3 lo = local.empty() ? Vector3() : RayCaster::TransformPoint(local[0], m);
+    Vector3 hi = lo;
+    for (size_t i = 0; i < local.size(); ++i) {
+        world[i] = RayCaster::TransformPoint(local[i], m);
+        dist[i] = (world[i] - planePoint).Dot(planeNormal);
+        lo = Vector3(std::min(lo.x, world[i].x), std::min(lo.y, world[i].y), std::min(lo.z, world[i].z));
+        hi = Vector3(std::max(hi.x, world[i].x), std::max(hi.y, world[i].y), std::max(hi.z, world[i].z));
+    }
+    // Where the plane cuts the mesh: each face it crosses contributes the
+    // segment between its two edge crossings, so a point slides along the
+    // exact cut rather than hopping between vertices (the mesh may have no
+    // vertex on the plane at all). Each end also records the nearer vertex.
+    for (const Face& f : ref.mesh->GetFaces()) {
+        const auto& vi = f.vertexIndices;
+        Vector3 cross[2];
+        int crossVertex[2] = {-1, -1};
+        int n = 0;
+        for (size_t e = 0; e < vi.size() && n < 2; ++e) {
+            const unsigned a = vi[e], b = vi[(e + 1) % vi.size()];
+            if ((dist[a] < 0.0f) == (dist[b] < 0.0f)) continue;
+            const float s = dist[a] / (dist[a] - dist[b]);
+            cross[n] = world[a] + (world[b] - world[a]) * s;
+            crossVertex[n] = static_cast<int>(s < 0.5f ? a : b);
+            ++n;
+        }
+        if (n == 2) {
+            midlineCache_.segments.push_back({cross[0], cross[1], crossVertex[0], crossVertex[1]});
+        }
+    }
+    midlineCache_.diagonal = (hi - lo).Length();
+    midlineCache_.valid = true;
+}
+
+void AppWindow::BeginPointDrag(int index) {
+    if (!project_) return;
+    (void)index;
+    dragBefore_ = project_->GetPointReferenceData().correspondences;
+    dragMoved_ = false;
+    midlineCache_.valid = false;
+}
+
+void AppWindow::DragPoint(int index, PointSide side, const Ray& ray, bool oneSide) {
+    if (!project_) return;
+    PointReferenceData& data = project_->GetPointReferenceData();
+    auto& points = data.correspondences;
+    if (index < 0 || index >= static_cast<int>(points.size())) return;
+    MeshReference& ref = side == PointSide::Target ? project_->GetTargetMesh()
+                                                   : project_->GetMorphMesh();
+    if (!ref.isLoaded || !ref.mesh) return;
+
+    Ray r = ray;
+    r.direction = r.direction.Normalized();
+    BVH* bvh = ref.mesh->GetBVH();
+    const RaycastHit hit = bvh ? RayCaster::RayIntersectMeshBVH(r, *ref.mesh, ref.transform, *bvh)
+                               : RayCaster::RayIntersectMesh(r, *ref.mesh, ref.transform);
+    Vector3 planePoint, planeNormal;
+    SymmetryPlaneFor(side, planePoint, planeNormal);
+
+    PointCorrespondence& corr = points[index];
+    Vector3 pos;
+    int vertex = -1;
+    if (corr.isMidlineLandmark && !corr.midlineUnlocked) {
+        // Locked to the plane: the point on the plane cut nearest the cursor
+        // ray, preferring the one nearest the surface under the cursor so
+        // the far side of the head never wins.
+        if (!midlineCache_.valid || midlineCache_.side != side) {
+            BuildMidlineCache(side, planePoint, planeNormal);
+        }
+        // Measured along the world ray: RaycastHit::distance is in the mesh's
+        // local units, and a filter built on it rejected every candidate on a
+        // target scaled in Stage 1, so the point stopped following the cursor.
+        const float hitT = hit.hit ? (hit.position - r.origin).Dot(r.direction) : 0.0f;
+        float best = std::numeric_limits<float>::max();
+        for (const MidlineSegment& seg : midlineCache_.segments) {
+            // Closest point on the segment to the ray's line, clamped to the
+            // segment.
+            const Vector3 u = seg.b - seg.a;
+            const Vector3 w0 = seg.a - r.origin;
+            const float a = u.Dot(u);
+            const float b = u.Dot(r.direction);
+            const float d = u.Dot(w0);
+            const float e = r.direction.Dot(w0);
+            const float denom = a - b * b;
+            float s = denom > 1e-12f ? (b * e - d) / denom : 0.0f;
+            s = std::clamp(s, 0.0f, 1.0f);
+            const Vector3 onSeg = seg.a + u * s;
+            const float t = (onSeg - r.origin).Dot(r.direction);
+            if (t < 0.0f) continue;
+            // Distance from the ray, plus a small pull toward the surface
+            // under the cursor: a grazing ray can pass near the cut twice
+            // (the chin, then the dip above it, or the back of the head) and
+            // should pick the point it reaches first.
+            const float score = (onSeg - (r.origin + r.direction * t)).Length() +
+                                (hit.hit ? 0.05f * std::abs(t - hitT) : 0.0f);
+            if (score < best) {
+                best = score;
+                pos = onSeg;
+                vertex = s < 0.5f ? seg.vertexA : seg.vertexB;
+            }
+        }
+        if (vertex < 0) return;
+    } else {
+        if (!hit.hit) return;  // off the mesh: keep the last surface position
+        pos = hit.position;
+        vertex = hit.vertexIndex;
+    }
+
+    auto setSide = [side](PointCorrespondence& c, const Vector3& p, int v) {
+        if (side == PointSide::Target) {
+            c.targetMeshPosition = p;
+            c.targetMeshVertexIndex = v;
+        } else {
+            c.morphMeshPosition = p;
+            c.morphMeshVertexIndex = v;
+        }
+        // Moved by the user, so it is checked: no longer an auto point.
+        c.isAuto = false;
+        c.confidence = -1.0f;
+    };
+    setSide(corr, pos, vertex);
+    dragMoved_ = true;
+
+    // Mirrored drag: the partner follows to the reflected spot, unless Alt
+    // is held or the setting is off.
+    if (!data.mirrorDrag || oneSide || !corr.isSymmetric || corr.symmetricPairID < 0) return;
+    for (auto& partner : points) {
+        if (partner.pointID != corr.symmetricPairID) continue;
+        // The closest surface point to the reflected position, not the
+        // nearest vertex, so the partner moves as smoothly as the cursor.
+        const Vector3 mirrored = pos - planeNormal * (2.0f * (pos - planePoint).Dot(planeNormal));
+        if (bvh) {
+            const Matrix4x4 m = ref.transform.GetMatrix();
+            const auto& verts = ref.mesh->GetVertices();
+            const BVHClosestPointResult c =
+                bvh->FindClosestPoint(RayCaster::TransformPoint(mirrored, m.Inverse()), verts);
+            if (c.found) {
+                unsigned nearest = c.i0;
+                for (unsigned idx : {c.i1, c.i2}) {
+                    if ((verts[idx] - c.point).Length() < (verts[nearest] - c.point).Length()) nearest = idx;
+                }
+                setSide(partner, RayCaster::TransformPoint(c.point, m), static_cast<int>(nearest));
+            }
+        } else {
+            const int mv = RayCaster::FindNearestVertex(mirrored, *ref.mesh, ref.transform);
+            if (mv >= 0) {
+                setSide(partner,
+                        RayCaster::TransformPoint(ref.mesh->GetVertices()[mv], ref.transform.GetMatrix()),
+                        mv);
+            }
+        }
+        break;
+    }
+}
+
+void AppWindow::EndPointDrag(int index) {
+    (void)index;
+    if (project_ && dragMoved_ && undoStack_) {
+        undoStack_->Push(std::make_unique<PointPlacementUndoAction>(
+            project_.get(), dragBefore_, project_->GetPointReferenceData().correspondences,
+            "Move Point"));
+    }
+    dragBefore_.clear();
+    dragMoved_ = false;
+    midlineCache_.valid = false;
 }
 
 } // namespace MetaVisage

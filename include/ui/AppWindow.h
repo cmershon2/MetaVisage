@@ -1,8 +1,10 @@
 #ifndef APPWINDOW_H
 #define APPWINDOW_H
 
+#include "core/Project.h"
 #include "core/SourceProfile.h"
 #include "core/WrapPreset.h"
+#include "deformation/LandmarkSolver.h"
 #include "ui/Modals.h"
 #include "ui/StageSidebar.h"
 
@@ -147,6 +149,35 @@ private:
     void RequestResetMorphResult();
     void ResetMorphResult();
 
+    // Sprint 13 — auto-map. RequestAutoMap asks replace-or-fill when Stage 2
+    // already has points; StartAutoMap runs the TemplateFitSolver on a worker
+    // with the progress modal up; PollAutoMapCompletion applies the result as
+    // one undo step (called each frame). Points the user placed or moved are
+    // never touched.
+    enum class AutoMapMode { Fresh, Replace, Fill };
+    void RequestAutoMap();
+    void StartAutoMap(AutoMapMode mode);
+    void CancelAutoMap();
+    void PollAutoMapCompletion();
+    void ApplyAutoMapResult(const LandmarkSolveResult& result, AutoMapMode mode);
+    void HandleAutoMapChoice();
+    // The project's source profile when it has landmarks, else nullptr.
+    const SourceProfile* AutoMapProfile() const;
+    // Fill each point's landmark name and midline flag from its landmark id.
+    void ResolveLandmarkNames(std::vector<PointCorrespondence>& points) const;
+
+    // Sprint 13 — dragging placed points along the mesh. One drag is one
+    // undo step. Midline landmarks stay on the side's symmetry plane unless
+    // unlocked; a symmetric partner follows to the mirrored spot unless Alt
+    // is held or "Move mirrored pairs together" is off.
+    void BeginPointDrag(int index);
+    void DragPoint(int index, PointSide side, const Ray& ray, bool oneSide);
+    void EndPointDrag(int index);
+    // World-space symmetry plane for one side: the profile's plane on the
+    // source, the auto-map plane on the target, else the Stage 2 setting.
+    bool SymmetryPlaneFor(PointSide side, Vector3& point, Vector3& normal) const;
+    void BuildMidlineCache(PointSide side, const Vector3& planePoint, const Vector3& planeNormal);
+
     GLFWwindow* window_ = nullptr;
     bool imguiContextCreated_ = false;
     bool imguiGlfwInitialized_ = false;
@@ -229,6 +260,36 @@ private:
     std::vector<float> morphResultDisplacements_;
     float morphResultMaxDisp_ = 0.0f;
     float morphResultAvgDisp_ = 0.0f;
+
+    // Auto-map worker state (Sprint 13), same pattern as the morph worker.
+    AutoMapModalState autoMapModal_;
+    std::thread autoMapThread_;
+    std::atomic<bool> autoMapRunning_{false};
+    std::atomic<bool> autoMapFinished_{false};
+    std::atomic<bool> autoMapCancel_{false};
+    std::atomic<float> autoMapProgress_{0.0f};
+    std::mutex autoMapMutex_;
+    std::string autoMapStageText_;
+    LandmarkSolveResult autoMapResult_;
+    AutoMapMode autoMapMode_ = AutoMapMode::Fresh;
+    std::uint64_t autoMapProjectGeneration_ = 0;
+
+    // Point drag state (Sprint 13). The midline cache holds the line where
+    // the symmetry plane cuts the dragged side's mesh, one segment per face
+    // it crosses, with the nearer mesh vertex at each end for the index.
+    struct MidlineSegment {
+        Vector3 a, b;
+        int vertexA = -1, vertexB = -1;
+    };
+    struct MidlineCache {
+        bool valid = false;
+        PointSide side = PointSide::Target;
+        std::vector<MidlineSegment> segments;
+        float diagonal = 0.0f;
+    };
+    std::vector<PointCorrespondence> dragBefore_;
+    bool dragMoved_ = false;
+    MidlineCache midlineCache_;
 };
 
 } // namespace MetaVisage

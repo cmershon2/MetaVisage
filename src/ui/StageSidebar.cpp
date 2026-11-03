@@ -3,6 +3,7 @@
 #include "core/Project.h"
 #include "core/TextureData.h"
 #include "core/WrapPreset.h"
+#include "io/ProfileStore.h"
 #include "ui/MvIcons.h"
 #include "ui/MvInspectorPrimitives.h"
 #include "ui/MvStyle.h"
@@ -130,7 +131,7 @@ StageSidebar::Actions StageSidebar::Render(Project* project,
     // Per-stage body
     switch (stage) {
         case WorkflowStage::Alignment:      RenderAlignment(*project, sourceProfiles, out); break;
-        case WorkflowStage::PointReference: RenderPointReference(*project, out); break;
+        case WorkflowStage::PointReference: RenderPointReference(*project, sourceProfiles, out); break;
         case WorkflowStage::Morph:          RenderMorph(*project, morphProcessing, morphProgress, userPresets, out); break;
         case WorkflowStage::TouchUp:        RenderTouchUp(*project, out); break;
     }
@@ -453,9 +454,31 @@ void StageSidebar::RenderSourcePicker(Project& project,
 // Stage 2 — Point Reference
 // ---------------------------------------------------------------------------
 
-void StageSidebar::RenderPointReference(Project& project, Actions& out) {
+void StageSidebar::RenderPointReference(Project& project,
+                                        const std::vector<SourceProfile>& sourceProfiles,
+                                        Actions& out) {
     namespace I = MvInspector;
     auto& data = project.GetPointReferenceData();
+
+    // Sprint 13 — auto-map needs a profile with landmarks and a target.
+    const SourceProfile* autoProfile =
+        ProfileStore::FindById(sourceProfiles, project.GetSourceProfileId());
+    const bool canAutoMap = autoProfile && autoProfile->HasLandmarks() &&
+                            project.GetMorphMesh().isLoaded &&
+                            project.GetTargetMesh().isLoaded;
+    int bandHigh = 0, bandReview = 0, bandLow = 0, midlineCount = 0, midlineUnlocked = 0;
+    for (const auto& c : data.correspondences) {
+        switch (BandOf(c)) {
+            case ConfidenceBand::High:   ++bandHigh; break;
+            case ConfidenceBand::Review: ++bandReview; break;
+            case ConfidenceBand::Low:    ++bandLow; break;
+            default: break;
+        }
+        if (c.isMidlineLandmark) {
+            ++midlineCount;
+            if (c.midlineUnlocked) ++midlineUnlocked;
+        }
+    }
 
     // Pre-tally correspondence counts — feeds the stat cards and the
     // Continue gating logic below.
@@ -535,6 +558,32 @@ void StageSidebar::RenderPointReference(Project& project, Actions& out) {
             ImGui::Dummy(ImVec2(availW, CardH));
         }
 
+        // ---- Auto-map confidence summary (Sprint 13) ---------------------
+        // Only while auto-placed points remain unchecked. Bands match the
+        // ring colours in the viewport.
+        if (bandHigh + bandReview + bandLow > 0) {
+            ImGui::Dummy(ImVec2(0.0f, 4.0f));
+            MvStyle::ScopedFont f(MvStyle::Font.MonoSm);
+            struct BandCount { const char* label; int count; ImVec4 color; };
+            const BandCount bands[3] = {
+                { "LOW",    bandLow,    MvStyle::MvDanger },
+                { "REVIEW", bandReview, MvStyle::MvWarning },
+                { "HIGH",   bandHigh,   MvStyle::MvSuccess },
+            };
+            ImGui::PushStyleColor(ImGuiCol_Text, MvStyle::MvFg3);
+            ImGui::TextUnformatted("AUTO-MAP");
+            ImGui::PopStyleColor();
+            for (const auto& b : bands) {
+                ImGui::SameLine(0.0f, 10.0f);
+                ImGui::PushStyleColor(ImGuiCol_Text, b.count > 0 ? b.color : MvStyle::MvFg4);
+                ImGui::Text("%d %s", b.count, b.label);
+                ImGui::PopStyleColor();
+            }
+            ImGui::PushStyleColor(ImGuiCol_Text, MvStyle::MvFg4);
+            ImGui::TextWrapped("Check low and review points first. Drag a point to fix it.");
+            ImGui::PopStyleColor();
+        }
+
         // ---- Points list ------------------------------------------------
         // Scrollable list of every correspondence. Each row matches the
         // design's stage2.jsx layout:
@@ -577,6 +626,20 @@ void StageSidebar::RenderPointReference(Project& project, Actions& out) {
 
             // 60 px-tall rows: 32 badge + 14 + 14 lines. Cap visible height
             // at ~6 rows so the SETTINGS block below stays reachable.
+            // Sprint 13 — low, then review points first, so the ones to
+            // check are at the top; otherwise the placement order.
+            std::vector<size_t> order(data.correspondences.size());
+            for (size_t k = 0; k < order.size(); ++k) order[k] = k;
+            auto rank = [&](size_t k) {
+                switch (BandOf(data.correspondences[k])) {
+                    case ConfidenceBand::Low:    return 0;
+                    case ConfidenceBand::Review: return 1;
+                    default:                     return 2;
+                }
+            };
+            std::stable_sort(order.begin(), order.end(),
+                             [&](size_t a, size_t b) { return rank(a) < rank(b); });
+
             constexpr float RowH     = 60.0f;
             constexpr float MaxListH = 6.0f * RowH + 8.0f;
             const float listH = std::min(
@@ -598,7 +661,7 @@ void StageSidebar::RenderPointReference(Project& project, Actions& out) {
                 const ImU32 colMissingBorder =
                     ImGui::ColorConvertFloat4ToU32(MvStyle::MvLine2);
 
-                for (size_t i = 0; i < data.correspondences.size(); ++i) {
+                for (const size_t i : order) {
                     const auto& corr = data.correspondences[i];
                     const bool hasSrc = corr.morphMeshVertexIndex  >= 0;
                     const bool hasTgt = corr.targetMeshVertexIndex >= 0;
@@ -613,7 +676,10 @@ void StageSidebar::RenderPointReference(Project& project, Actions& out) {
 
                     const ImVec2 rowMin = ImGui::GetCursorScreenPos();
                     constexpr float DelBtnW = 28.0f;
-                    const float bodyW = rowW - DelBtnW;
+                    // Midline landmarks get a lock toggle left of the squares.
+                    constexpr float LockBtnW = 24.0f;
+                    const float lockW = corr.isMidlineLandmark ? LockBtnW : 0.0f;
+                    const float bodyW = rowW - DelBtnW - lockW;
 
                     // Row body button — owns row-select hit-testing.
                     if (ImGui::InvisibleButton("##sel", ImVec2(bodyW, RowH))) {
@@ -621,6 +687,17 @@ void StageSidebar::RenderPointReference(Project& project, Actions& out) {
                     }
                     const bool rowHovered = ImGui::IsItemHovered();
                     const ImVec2 bodyMax(rowMin.x + bodyW, rowMin.y + RowH);
+
+                    bool lockHovered = false;
+                    ImVec2 lockMin(0.0f, 0.0f);
+                    if (corr.isMidlineLandmark) {
+                        ImGui::SameLine(0.0f, 0.0f);
+                        lockMin = ImGui::GetCursorScreenPos();
+                        if (ImGui::InvisibleButton("##lock", ImVec2(LockBtnW, RowH))) {
+                            out.toggleMidlineLockIndex = static_cast<int>(i);
+                        }
+                        lockHovered = ImGui::IsItemHovered();
+                    }
 
                     // X delete button — second item, adjacent on the same row.
                     ImGui::SameLine(0.0f, 0.0f);
@@ -638,7 +715,7 @@ void StageSidebar::RenderPointReference(Project& project, Actions& out) {
                         ImVec4 bg = MvStyle::MvBlue500; bg.w = 0.18f;
                         dl->AddRectFilled(rowMin, rowMax,
                                           ImGui::ColorConvertFloat4ToU32(bg));
-                    } else if (rowHovered || delHovered) {
+                    } else if (rowHovered || delHovered || lockHovered) {
                         ImVec4 bg = MvStyle::MvBlue500; bg.w = 0.06f;
                         dl->AddRectFilled(rowMin, rowMax,
                                           ImGui::ColorConvertFloat4ToU32(bg));
@@ -688,10 +765,21 @@ void StageSidebar::RenderPointReference(Project& project, Actions& out) {
                                     nameBuf, nullptr, 0.0f, &clip);
                     }
                     {
-                        // Status sub-label.
+                        // Status sub-label. Unchecked auto points show
+                        // their confidence band instead of PAIRED.
                         const char* statusText;
                         ImVec4 statusColor;
-                        if (hasSrc && hasTgt) {
+                        const ConfidenceBand band = BandOf(corr);
+                        if (band == ConfidenceBand::Low) {
+                            statusText = "AUTO \xC2\xB7 LOW";
+                            statusColor = MvStyle::MvDanger;
+                        } else if (band == ConfidenceBand::Review) {
+                            statusText = "AUTO \xC2\xB7 REVIEW";
+                            statusColor = MvStyle::MvWarning;
+                        } else if (band == ConfidenceBand::High) {
+                            statusText = "AUTO \xC2\xB7 HIGH";
+                            statusColor = MvStyle::MvSuccess;
+                        } else if (hasSrc && hasTgt) {
                             statusText = "PAIRED";
                             statusColor = MvStyle::MvSuccess;
                         } else if (hasSrc && !hasTgt) {
@@ -732,10 +820,23 @@ void StageSidebar::RenderPointReference(Project& project, Actions& out) {
                                     xCol, MV_ICON_X);
                     }
 
+                    // Midline lock glyph, centred in its hit area.
+                    if (corr.isMidlineLandmark && MvStyle::Font.IconSm) {
+                        ImFont* iconFont = MvStyle::Font.IconSm;
+                        constexpr float lockSize = 13.0f;
+                        const char* glyph = corr.midlineUnlocked ? MV_ICON_LOCK_OPEN : MV_ICON_LOCK;
+                        const ImVec2 ts = iconFont->CalcTextSizeA(lockSize, FLT_MAX, 0.0f, glyph);
+                        const ImVec4 lockCol = lockHovered ? MvStyle::MvFg1
+                                             : (corr.midlineUnlocked ? MvStyle::MvWarning : MvStyle::MvFg3);
+                        dl->AddText(iconFont, lockSize,
+                                    ImVec2(lockMin.x + (LockBtnW - ts.x) * 0.5f, yMid - ts.y * 0.5f),
+                                    ImGui::ColorConvertFloat4ToU32(lockCol), glyph);
+                    }
+
                     // Squares — Source then Target. Both filled in the
                     // point's accent colour when present; hollow MvLine2
                     // outline when missing. Placed just left of the X.
-                    const float xClusterRight = delMin.x - SqClusterPad;
+                    const float xClusterRight = delMin.x - lockW - SqClusterPad;
                     const float tgtRight = xClusterRight;
                     const float tgtLeft  = tgtRight - SqSize;
                     const float srcRight = tgtLeft - SqPad;
@@ -754,7 +855,11 @@ void StageSidebar::RenderPointReference(Project& project, Actions& out) {
                     drawSquare(srcLeft, srcRight, hasSrc);
                     drawSquare(tgtLeft, tgtRight, hasTgt);
 
-                    if (rowHovered || delHovered) {
+                    if (lockHovered) {
+                        ImGui::SetTooltip(corr.midlineUnlocked
+                            ? "Unlocked: drags freely. Click to keep it on the symmetry plane."
+                            : "Locked to the symmetry plane while dragging. Click to unlock.");
+                    } else if (rowHovered || delHovered) {
                         if (delHovered) {
                             ImGui::SetTooltip("Delete point %d", corr.pointID);
                         } else {
@@ -782,11 +887,15 @@ void StageSidebar::RenderPointReference(Project& project, Actions& out) {
             ImGui::TableNextRow();
 
             ImGui::TableNextColumn();
-            ImGui::BeginDisabled();
-            ImGui::Button("Auto-detect", ImVec2(-FLT_MIN, 30.0f));
+            ImGui::BeginDisabled(!canAutoMap);
+            if (ImGui::Button("Auto-map", ImVec2(-FLT_MIN, 30.0f))) {
+                out.autoMapRequested = true;
+            }
             ImGui::EndDisabled();
             if (ImGui::IsItemHovered(ImGuiHoveredFlags_AllowWhenDisabled)) {
-                ImGui::SetTooltip("Coming in a future update");
+                ImGui::SetTooltip(canAutoMap
+                    ? "Place the source profile's landmarks on the target automatically"
+                    : "Needs a source profile with landmarks and a target mesh (Stage 1)");
             }
 
             ImGui::TableNextColumn();
@@ -817,6 +926,36 @@ void StageSidebar::RenderPointReference(Project& project, Actions& out) {
         }
         ImGui::PopItemWidth();
         ImGui::EndDisabled();
+
+        // Sprint 13 — dragging placed points.
+        bool mirrorDrag = data.mirrorDrag;
+        if (ImGui::Checkbox("Move mirrored pairs together", &mirrorDrag)) {
+            data.mirrorDrag = mirrorDrag;
+        }
+        if (ImGui::IsItemHovered()) {
+            ImGui::SetTooltip("Dragging one point of a left/right pair moves its partner. "
+                              "Hold Alt while dragging to move one side only.");
+        }
+        if (bandHigh + bandReview + bandLow > 0) {
+            bool showConfidence = data.showConfidence;
+            if (ImGui::Checkbox("Show confidence rings", &showConfidence)) {
+                data.showConfidence = showConfidence;
+            }
+            if (ImGui::IsItemHovered()) {
+                ImGui::SetTooltip("Green, amber and red rings on auto-placed target points, "
+                                  "by how sure auto-map is of each one.");
+            }
+        }
+        if (midlineCount > 0) {
+            bool allUnlocked = midlineUnlocked == midlineCount;
+            if (ImGui::Checkbox("Unlock midline points", &allUnlocked)) {
+                out.setAllMidlineUnlocked = allUnlocked;
+            }
+            if (ImGui::IsItemHovered()) {
+                ImGui::SetTooltip("Midline points stay on the symmetry plane while dragged. "
+                                  "Unlock them for asymmetrical features.");
+            }
+        }
 
         ImGui::Dummy(ImVec2(0.0f, 4.0f));
         ImGui::PushItemWidth(ImGui::GetContentRegionAvail().x);

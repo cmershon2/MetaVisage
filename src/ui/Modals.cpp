@@ -884,6 +884,12 @@ void RenderShortcutsModal(ShortcutsModalState& state) {
                 {"Ctrl+Z", "Undo"},
                 {"Ctrl+Shift+Z / Ctrl+Y", "Redo"},
             }},
+            {"Point reference (Stage 2)", {
+                {"Click mesh", "Place a point"},
+                {"Drag point", "Move it along the mesh (mirrored pair follows)"},
+                {"Alt + drag point", "Move one side of a mirrored pair only"},
+                {"Delete", "Remove the selected point"},
+            }},
             {"Viewport", {
                 {"MMB drag", "Orbit camera"},
                 {"Shift + MMB drag", "Pan camera"},
@@ -923,6 +929,129 @@ void RenderShortcutsModal(ShortcutsModalState& state) {
         }
         ImGui::EndChild();
         if (ImGui::Button("Close", ImVec2(120, 0))) ImGui::CloseCurrentPopup();
+        ImGui::EndPopup();
+    }
+}
+
+// ---------------------------------------------------------------------------
+// Auto-map
+// ---------------------------------------------------------------------------
+
+void AutoMapModalState::OpenPrompt(const std::string& profile) {
+    ask = Ask::Prompt;
+    profileName = profile;
+    choice = AutoMapChoice::None;
+    pendingChoice = true;
+}
+
+void AutoMapModalState::OpenRerun() {
+    ask = Ask::Rerun;
+    choice = AutoMapChoice::None;
+    pendingChoice = true;
+}
+
+void AutoMapModalState::OpenProgress() {
+    running = true;
+    progress = 0.0f;
+    stageText.clear();
+    pendingProgress = true;
+}
+
+namespace {
+
+bool PrimaryButton(const char* label, const ImVec2& size) {
+    ImGui::PushStyleColor(ImGuiCol_Button,        MvStyle::MvBlue500);
+    ImGui::PushStyleColor(ImGuiCol_ButtonHovered, MvStyle::MvBlue400);
+    ImGui::PushStyleColor(ImGuiCol_ButtonActive,  MvStyle::MvBlue600);
+    ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(0x05/255.f, 0x13/255.f, 0x22/255.f, 1.f));
+    const bool clicked = ImGui::Button(label, size);
+    ImGui::PopStyleColor(4);
+    return clicked;
+}
+
+} // namespace
+
+void RenderAutoMapModals(AutoMapModalState& state) {
+    const auto center = ImGui::GetMainViewport()->GetCenter();
+
+    HandlePendingOpen("##AutoMapChoice", state.pendingChoice);
+    ImGui::SetNextWindowPos(center, ImGuiCond_Always, ImVec2(0.5f, 0.5f));
+    ImGui::SetNextWindowSize(ImVec2(440.0f, 0.0f), ImGuiCond_Always);
+    if (ImGui::BeginPopupModal("##AutoMapChoice", nullptr, ImGuiWindowFlags_AlwaysAutoResize)) {
+        const bool prompt = state.ask == AutoMapModalState::Ask::Prompt;
+        {
+            MvStyle::ScopedFont f(MvStyle::Font.Heading);
+            ImGui::TextUnformatted(prompt ? "Auto-map points?" : "Run auto-map again?");
+        }
+        ImGui::Spacing();
+        ImGui::PushStyleColor(ImGuiCol_Text, MvStyle::MvFg2);
+        if (prompt) {
+            ImGui::TextWrapped("MetaVisage can place the %s landmarks on the target for "
+                               "you. You can check and drag every point afterwards.",
+                               state.profileName.c_str());
+        } else {
+            ImGui::TextWrapped("Replace the auto-placed points, or only add landmarks that "
+                               "are missing. Points you placed or moved yourself are kept "
+                               "either way.");
+        }
+        ImGui::PopStyleColor();
+        ImGui::Spacing();
+        ImGui::Spacing();
+        const float w = ImGui::GetContentRegionAvail().x;
+        if (prompt) {
+            const ImVec2 size((w - ImGui::GetStyle().ItemSpacing.x) * 0.5f, 32.0f);
+            if (PrimaryButton("Auto-map points", size)) {
+                state.choice = AutoMapChoice::AutoMap;
+                ImGui::CloseCurrentPopup();
+            }
+            ImGui::SameLine();
+            if (ImGui::Button("Place manually", size)) {
+                state.choice = AutoMapChoice::Manual;
+                ImGui::CloseCurrentPopup();
+            }
+        } else {
+            const ImVec2 size((w - 2.0f * ImGui::GetStyle().ItemSpacing.x) / 3.0f, 32.0f);
+            if (PrimaryButton("Replace auto", size)) {
+                state.choice = AutoMapChoice::Replace;
+                ImGui::CloseCurrentPopup();
+            }
+            ImGui::SameLine();
+            if (ImGui::Button("Fill missing", size)) {
+                state.choice = AutoMapChoice::Fill;
+                ImGui::CloseCurrentPopup();
+            }
+            ImGui::SameLine();
+            if (ImGui::Button("Cancel", size)) {
+                state.choice = AutoMapChoice::Cancel;
+                ImGui::CloseCurrentPopup();
+            }
+        }
+        ImGui::EndPopup();
+    }
+
+    HandlePendingOpen("##AutoMapProgress", state.pendingProgress);
+    ImGui::SetNextWindowPos(center, ImGuiCond_Always, ImVec2(0.5f, 0.5f));
+    ImGui::SetNextWindowSize(ImVec2(400.0f, 0.0f), ImGuiCond_Always);
+    if (ImGui::BeginPopupModal("##AutoMapProgress", nullptr, ImGuiWindowFlags_AlwaysAutoResize)) {
+        if (!state.running) {
+            ImGui::CloseCurrentPopup();
+        } else {
+            {
+                MvStyle::ScopedFont f(MvStyle::Font.Heading);
+                ImGui::TextUnformatted("Auto-mapping points");
+            }
+            ImGui::Spacing();
+            ImGui::PushStyleColor(ImGuiCol_Text, MvStyle::MvFg3);
+            ImGui::TextUnformatted(state.stageText.empty() ? "Starting" : state.stageText.c_str());
+            ImGui::PopStyleColor();
+            char label[32];
+            std::snprintf(label, sizeof(label), "%.0f%%", state.progress * 100.0f);
+            ImGui::ProgressBar(state.progress, ImVec2(-FLT_MIN, 0.0f), label);
+            ImGui::Spacing();
+            if (ImGui::Button("Cancel", ImVec2(-FLT_MIN, 30.0f))) {
+                state.choice = AutoMapChoice::CancelRun;
+            }
+        }
         ImGui::EndPopup();
     }
 }

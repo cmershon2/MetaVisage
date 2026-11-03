@@ -135,7 +135,7 @@ docs may use the internal name.
 - v1.0.0 feedback: `.agents/context/Version 1.0.0 Feedback.md`
 - Product backlog: `.agents/context/development/product_backlog.md`
 - Standalone transition: `.agents/context/open-source-transition.md`
-- Latest retrospective: `.agents/context/retrospectives/retro-sprint-12.md`
+- Latest retrospective: `.agents/context/retrospectives/retro-sprint-13.md`
 
 ## Repository Map
 

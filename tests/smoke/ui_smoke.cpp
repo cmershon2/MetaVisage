@@ -37,6 +37,7 @@
 #include "ui/Viewport.h"
 #include "ui/ViewportHost.h"
 #include "utils/Logger.h"
+#include "utils/RayCaster.h"
 
 #include "imgui_te_context.h"
 #include "imgui_te_engine.h"
@@ -68,6 +69,15 @@ struct AppWindowTestAccess {
     }
     static void RefreshTargetTexturePreview(AppWindow& app) { app.RefreshTargetTexturePreview(); }
     static std::vector<SourceProfile>& SourceProfiles(AppWindow& app) { return app.sourceProfiles_; }
+    // Sprint 13 — auto-map and point dragging.
+    static void SelectSourceProfile(AppWindow& app, const SourceProfile& p) { app.SelectSourceProfile(p); }
+    static bool AutoMapRunning(const AppWindow& app) { return app.autoMapRunning_.load(); }
+    static void StartAutoMapFill(AppWindow& app) { app.StartAutoMap(AppWindow::AutoMapMode::Fill); }
+    static void BeginPointDrag(AppWindow& app, int i) { app.BeginPointDrag(i); }
+    static void DragPoint(AppWindow& app, int i, PointSide side, const Ray& ray, bool oneSide) {
+        app.DragPoint(i, side, ray, oneSide);
+    }
+    static void EndPointDrag(AppWindow& app, int i) { app.EndPointDrag(i); }
 };
 
 } // namespace MetaVisage
@@ -886,6 +896,229 @@ void RegisterScenario_SourceProfilePicker(ImGuiTestEngine* engine) {
         AppWindowTestAccess::NewProject(*g_app);
     };
 }
+// Sprint 13 — Stage 2 auto-map workflow. The bundled head is both source
+// and target (aligned the same), so the solve is quick and every landmark's
+// right answer is its own vertex.
+void RegisterScenario_AutoMapWorkflow(ImGuiTestEngine* engine) {
+    ImGuiTest* t = IM_REGISTER_TEST(engine, "smoke", "auto_map_workflow");
+    t->TestFunc = [](ImGuiTestContext* ctx) {
+        if (!g_app || !g_app->GetUndoStack()) { IM_CHECK(false); return; }
+        DismissWelcomeModalIfOpen(ctx);
+        AppWindowTestAccess::NewProject(*g_app);
+        const SourceProfile* profile =
+            ProfileStore::FindById(AppWindowTestAccess::SourceProfiles(*g_app), "metahuman-head-lod0");
+        IM_CHECK(profile != nullptr);
+        if (!profile) return;
+        Project* project = g_app->GetProject();
+        UndoStack* undo = g_app->GetUndoStack();
+        project->SetCurrentStage(WorkflowStage::Alignment);
+        RunOnMainThread(ctx, [&] { AppWindowTestAccess::SelectSourceProfile(*g_app, *profile); });
+        IM_CHECK(project->GetMorphMesh().isLoaded);
+        project->GetTargetMesh().mesh = project->GetMorphMesh().mesh;
+        project->GetTargetMesh().transform = project->GetMorphMesh().transform;
+        project->GetTargetMesh().isLoaded = true;
+        auto& points = project->GetPointReferenceData().correspondences;
+
+        auto waitForAutoMap = [&] {
+            const auto until = std::chrono::steady_clock::now() + std::chrono::seconds(20);
+            while (AppWindowTestAccess::AutoMapRunning(*g_app) &&
+                   std::chrono::steady_clock::now() < until) {
+                ctx->Yield();
+            }
+            ctx->Yield(2);
+        };
+        auto indexOf = [&](const char* landmarkId) {
+            for (size_t i = 0; i < points.size(); ++i) {
+                if (points[i].landmarkId == landmarkId) return static_cast<int>(i);
+            }
+            return -1;
+        };
+        auto vertexWorld = [&](int vertex) {
+            const MeshReference& ref = project->GetTargetMesh();
+            return RayCaster::TransformPoint(ref.mesh->GetVertices()[vertex], ref.transform.GetMatrix());
+        };
+        // A ray from outside the head straight at a target vertex.
+        Vector3 headCenter;
+        for (const auto& lm : profile->landmarks) headCenter = headCenter + vertexWorld(lm.vertexIndex);
+        headCenter = headCenter * (1.0f / static_cast<float>(profile->landmarks.size()));
+        auto rayAt = [&](const Vector3& goal) {
+            const Vector3 out = (goal - headCenter).Normalized();
+            return Ray(goal + out * 60.0f, out * -1.0f);
+        };
+        auto landmarkVertex = [&](const char* id) {
+            for (const auto& lm : profile->landmarks) if (lm.id == id) return lm.vertexIndex;
+            return -1;
+        };
+
+        // Continue from Stage 1 into an empty Stage 2 offers auto-map.
+        const int undoBefore = undo->Size();
+        ctx->SetRef(ctx->WindowInfo("//Stage").Window);
+        ctx->ItemClick("**/Continue \xE2\x80\xBA");
+        ctx->Yield(2);
+        IM_CHECK(project->GetCurrentStage() == WorkflowStage::PointReference);
+        ctx->SetRef("//##AutoMapChoice");
+        ctx->ItemClick("Auto-map points");
+        ctx->Yield(2);
+        waitForAutoMap();
+        IM_CHECK_EQ(points.size(), profile->landmarks.size());
+        IM_CHECK_EQ(undo->Size(), undoBefore + 1);
+        IM_CHECK_STR_EQ(undo->UndoDescription().c_str(), "Auto-map Points");
+        IM_CHECK(project->GetPointReferenceData().hasTargetPlane);
+        int high = 0;
+        for (const auto& p : points) {
+            IM_CHECK(p.isAuto && !p.landmarkName.empty());
+            IM_CHECK(p.morphMeshVertexIndex >= 0 && p.targetMeshVertexIndex >= 0);
+            if (BandOf(p) == ConfidenceBand::High) ++high;
+        }
+        IM_CHECK(high > static_cast<int>(points.size()) / 2);
+        const int mouthL = indexOf("mouth_corner_l");
+        const int mouthR = indexOf("mouth_corner_r");
+        IM_CHECK(mouthL >= 0 && mouthR >= 0);
+        if (mouthL < 0 || mouthR < 0) return;
+        IM_CHECK(points[mouthL].isSymmetric && points[mouthL].symmetricPairID == points[mouthR].pointID);
+
+        // One undo removes the whole auto-map; redo brings it back.
+        undo->Undo();
+        ctx->Yield();
+        IM_CHECK(points.empty());
+        undo->Redo();
+        ctx->Yield();
+        IM_CHECK_EQ(points.size(), profile->landmarks.size());
+
+        // Drag a paired point: it moves along the target, its partner follows
+        // to the mirrored spot, both stop being auto points, one undo step.
+        const Vector3 goal = vertexWorld(landmarkVertex("nostril_wing_l"));
+        const int partnerBefore = points[mouthR].targetMeshVertexIndex;
+        const int dragUndo = undo->Size();
+        AppWindowTestAccess::BeginPointDrag(*g_app, mouthL);
+        AppWindowTestAccess::DragPoint(*g_app, mouthL, PointSide::Target, rayAt(goal), false);
+        AppWindowTestAccess::EndPointDrag(*g_app, mouthL);
+        IM_CHECK((points[mouthL].targetMeshPosition - goal).Length() < 1.0f);
+        IM_CHECK(!points[mouthL].isAuto && points[mouthL].confidence < 0.0f);
+        IM_CHECK(points[mouthR].targetMeshVertexIndex != partnerBefore);
+        IM_CHECK(!points[mouthR].isAuto);
+        const Vector3 wingR = vertexWorld(landmarkVertex("nostril_wing_r"));
+        IM_CHECK((points[mouthR].targetMeshPosition - wingR).Length() < 1.0f);
+        // The partner sits on the surface at the reflected spot, not at the
+        // nearest vertex (the bundled head mirrors to within ~0.1 units).
+        {
+            const auto& plane = project->GetPointReferenceData();
+            const Vector3 n = plane.targetPlaneNormal.Normalized();
+            const Vector3 p = points[mouthL].targetMeshPosition;
+            const Vector3 reflected = p - n * (2.0f * (p - plane.targetPlanePoint).Dot(n));
+            IM_CHECK((points[mouthR].targetMeshPosition - reflected).Length() < 0.3f);
+        }
+        IM_CHECK_EQ(undo->Size(), dragUndo + 1);
+        IM_CHECK_STR_EQ(undo->UndoDescription().c_str(), "Move Point");
+        undo->Undo();
+        ctx->Yield();
+        IM_CHECK(points[mouthL].isAuto && points[mouthR].isAuto);
+        IM_CHECK_EQ(points[mouthR].targetMeshVertexIndex, partnerBefore);
+
+        // Alt (one side): the partner stays put.
+        AppWindowTestAccess::BeginPointDrag(*g_app, mouthL);
+        AppWindowTestAccess::DragPoint(*g_app, mouthL, PointSide::Target, rayAt(goal), true);
+        AppWindowTestAccess::EndPointDrag(*g_app, mouthL);
+        IM_CHECK((points[mouthL].targetMeshPosition - goal).Length() < 1.0f);
+        IM_CHECK_EQ(points[mouthR].targetMeshVertexIndex, partnerBefore);
+        IM_CHECK(points[mouthR].isAuto);
+        undo->Undo();
+        ctx->Yield();
+
+        // A midline point stays on the symmetry plane while locked, and
+        // follows the cursor once unlocked.
+        const int nose = indexOf("nose_tip");
+        IM_CHECK(nose >= 0);
+        if (nose < 0) return;
+        IM_CHECK(points[nose].isMidlineLandmark && !points[nose].midlineUnlocked);
+        const Vector3 cheek = vertexWorld(landmarkVertex("cheekbone_l"));
+        const auto& refData = project->GetPointReferenceData();
+        auto planeDistance = [&](const Vector3& p) {
+            return std::abs((p - refData.targetPlanePoint).Dot(refData.targetPlaneNormal.Normalized()));
+        };
+        AppWindowTestAccess::BeginPointDrag(*g_app, nose);
+        AppWindowTestAccess::DragPoint(*g_app, nose, PointSide::Target, rayAt(cheek), false);
+        AppWindowTestAccess::EndPointDrag(*g_app, nose);
+        // On the exact plane cut, not the nearest vertex beside it.
+        IM_CHECK(planeDistance(points[nose].targetMeshPosition) < 0.01f);
+        IM_CHECK((points[nose].targetMeshPosition - cheek).Length() > 2.0f);
+        undo->Undo();
+        ctx->Yield();
+        points[nose].midlineUnlocked = true;
+        AppWindowTestAccess::BeginPointDrag(*g_app, nose);
+        AppWindowTestAccess::DragPoint(*g_app, nose, PointSide::Target, rayAt(cheek), false);
+        AppWindowTestAccess::EndPointDrag(*g_app, nose);
+        IM_CHECK((points[nose].targetMeshPosition - cheek).Length() < 1.0f);
+
+        // A target scaled in Stage 1: a locked midline drag still lands on
+        // the plane under the cursor (ray-cast distances are in mesh units,
+        // which once filtered out every candidate).
+        {
+            Transform& tf = project->GetTargetMesh().transform;
+            const Transform saved = tf;
+            PointReferenceData& pr = project->GetPointReferenceData();
+            const Vector3 savedPlanePoint = pr.targetPlanePoint;
+            tf.SetScale(saved.GetScale() * 2.5f);
+            pr.targetPlanePoint = RayCaster::TransformPoint(
+                RayCaster::TransformPoint(savedPlanePoint, saved.GetMatrix().Inverse()), tf.GetMatrix());
+            Vector3 center;
+            for (const auto& lm : profile->landmarks) center = center + vertexWorld(lm.vertexIndex);
+            center = center * (1.0f / static_cast<float>(profile->landmarks.size()));
+            const Vector3 chin = vertexWorld(landmarkVertex("chin_point"));
+            const Vector3 out = (chin - center).Normalized();
+            points[nose].midlineUnlocked = false;
+            AppWindowTestAccess::BeginPointDrag(*g_app, nose);
+            AppWindowTestAccess::DragPoint(*g_app, nose, PointSide::Target,
+                                           Ray(chin + out * 150.0f, out * -1.0f), false);
+            AppWindowTestAccess::EndPointDrag(*g_app, nose);
+            IM_CHECK(planeDistance(points[nose].targetMeshPosition) < 0.02f);
+            IM_CHECK((points[nose].targetMeshPosition - chin).Length() < 1.5f);
+            undo->Undo();
+            ctx->Yield();
+            tf = saved;
+            pr.targetPlanePoint = savedPlanePoint;
+            points[nose].midlineUnlocked = true;
+            IM_CHECK((points[nose].targetMeshPosition - cheek).Length() < 1.0f);
+        }
+
+        // Re-run with Replace: the point the user moved is kept as it is;
+        // every other landmark is solved again, nothing duplicated.
+        const Vector3 moved = points[nose].targetMeshPosition;
+        ctx->SetRef(ctx->WindowInfo("//Stage/##stage2body").Window);
+        ctx->ItemClick("**/Auto-map");
+        ctx->Yield(2);
+        ctx->SetRef("//##AutoMapChoice");
+        ctx->ItemClick("Replace auto");
+        ctx->Yield(2);
+        waitForAutoMap();
+        IM_CHECK_EQ(points.size(), profile->landmarks.size());
+        const int noseAfter = indexOf("nose_tip");
+        IM_CHECK(noseAfter >= 0);
+        if (noseAfter >= 0) {
+            IM_CHECK(!points[noseAfter].isAuto);
+            IM_CHECK((points[noseAfter].targetMeshPosition - moved).Length() < 1e-4f);
+        }
+        IM_CHECK_STR_EQ(undo->UndoDescription().c_str(), "Auto-map Points");
+
+        // Cancel leaves the points as they were.
+        const size_t countBefore = points.size();
+        const int undoBeforeCancel = undo->Size();
+        AppWindowTestAccess::StartAutoMapFill(*g_app);
+        ctx->SetRef("//##AutoMapProgress");
+        ctx->ItemClick("Cancel");
+        waitForAutoMap();
+        IM_CHECK_EQ(points.size(), countBefore);
+        IM_CHECK_EQ(undo->Size(), undoBeforeCancel);
+
+        // A project switch mid-run drops the result.
+        AppWindowTestAccess::StartAutoMapFill(*g_app);
+        AppWindowTestAccess::NewProject(*g_app);
+        waitForAutoMap();
+        IM_CHECK(g_app->GetProject()->GetPointReferenceData().correspondences.empty());
+        ctx->SetRef("");
+    };
+}
+
 } // namespace
 
 int main(int /*argc*/, char** /*argv*/) {
@@ -922,6 +1155,7 @@ int main(int /*argc*/, char** /*argv*/) {
     RegisterScenario_ShellMenus(engine);
     RegisterScenario_MorphResetToSource(engine);
     RegisterScenario_SourceProfilePicker(engine);
+    RegisterScenario_AutoMapWorkflow(engine);
 
     ImGuiTestEngine_Start(engine, ImGui::GetCurrentContext());
     ImGuiTestEngine_QueueTests(engine, ImGuiTestGroup_Tests, /*filter=*/nullptr,

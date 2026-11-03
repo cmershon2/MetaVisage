@@ -32,15 +32,33 @@ struct PointCorrespondence {
     int targetMeshVertexIndex;
     bool isSymmetric;
     int symmetricPairID;
-    // Sprint 11 — source profile landmark name, shown in place of "Point N"
-    // when the point came from Help > Show Profile Landmarks (Dev). Not
-    // serialized; Sprint 13 adds landmark ids to the project format.
+    // Sprint 13 — the source profile landmark this point marks (empty for a
+    // manual point). Auto-map sets `isAuto` and `confidence`; editing the
+    // point clears both, since the user has checked it. `midlineUnlocked`
+    // frees a midline landmark from the symmetry plane while dragging.
+    std::string landmarkId;
+    float confidence;          // 0-1 for auto points, < 0 when there is none
+    bool isAuto;
+    bool midlineUnlocked;
+    // Resolved from `landmarkId` through the project's source profile when
+    // points are created or a project is opened. Not serialized.
     std::string landmarkName;
+    bool isMidlineLandmark;
 
     PointCorrespondence() : pointID(-1), morphMeshVertexIndex(-1),
                             targetMeshVertexIndex(-1), isSymmetric(false),
-                            symmetricPairID(-1) {}
+                            symmetricPairID(-1), confidence(-1.0f), isAuto(false),
+                            midlineUnlocked(false), isMidlineLandmark(false) {}
 };
+
+// Confidence bands shared by the viewport, sidebar and auto-map summary.
+enum class ConfidenceBand { None, High, Review, Low };
+inline ConfidenceBand BandOf(const PointCorrespondence& c) {
+    if (!c.isAuto || c.confidence < 0.0f) return ConfidenceBand::None;
+    if (c.confidence >= 0.75f) return ConfidenceBand::High;
+    if (c.confidence >= 0.4f) return ConfidenceBand::Review;
+    return ConfidenceBand::Low;
+}
 
 struct PointReferenceData {
     std::vector<PointCorrespondence> correspondences;
@@ -49,9 +67,20 @@ struct PointReferenceData {
     float symmetryPlaneOffset;
     PointSelection activeSelection;
     float pointRenderSize;
+    // Sprint 13 — the target's symmetry plane in world space, as found by
+    // auto-map. Midline points on the target side stay on it while dragged.
+    bool hasTargetPlane;
+    Vector3 targetPlanePoint;
+    Vector3 targetPlaneNormal;
+    // Sprint 13 — dragging one point of a symmetric pair moves its partner.
+    bool mirrorDrag;
+    // Sprint 13 — confidence rings on auto points in the target viewport.
+    bool showConfidence;
 
     PointReferenceData() : symmetryEnabled(false), symmetryAxis(Axis::X),
-                           symmetryPlaneOffset(0.0f), pointRenderSize(12.0f) {}
+                           symmetryPlaneOffset(0.0f), pointRenderSize(12.0f),
+                           hasTargetPlane(false), targetPlaneNormal(1.0f, 0.0f, 0.0f),
+                           mirrorDrag(true), showConfidence(true) {}
 };
 
 // Stage 4 — Touch Up sculpting state. Promoted from widget-local storage in
