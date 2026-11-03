@@ -123,17 +123,19 @@ After the Release build and tests pass, run from the repository root:
 .\package-release.ps1
 ```
 
-The default version comes from `vcpkg.json` (currently `2.0.0`). Use
-`-Version 2.0.0-rc.1` to label a release candidate. Packaging uses the existing
+The default version comes from `vcpkg.json` (currently `2.1.0`). It must
+match `project(MetaVisage VERSION ...)` in `CMakeLists.txt`, which is the
+version the app shows; configure fails if they differ, so bump both together.
+Use `-Version 2.1.0-rc.1` to label a release candidate. Packaging uses the existing
 `build/bin/Release` output; it does not rebuild, rerun tests, create a Git tag,
 or upload a release.
 
 Outputs are under the ignored `release/` directory:
 
-- `MetaVisage-2.0.0-win-x64/`: executable, staged runtime DLLs and assets,
+- `MetaVisage-2.1.0-win-x64/`: executable, staged runtime DLLs and assets,
   run instructions, project license, and dependency notices.
-- `MetaVisage-2.0.0-win-x64.zip`: upload this as the Windows binary asset.
-- `MetaVisage-2.0.0-win-x64.zip.sha256`: upload alongside the ZIP for verification.
+- `MetaVisage-2.1.0-win-x64.zip`: upload this as the Windows binary asset.
+- `MetaVisage-2.1.0-win-x64.zip.sha256`: upload alongside the ZIP for verification.
 
 The script requires staged assets and DLLs and copies notices from the vcpkg
 installation identified by `build/CMakeCache.txt`, plus embedded stb licenses.
