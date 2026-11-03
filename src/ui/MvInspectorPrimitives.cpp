@@ -530,7 +530,8 @@ InspectorFooterResult DrawInspectorFooter(const char* stepLabel,
                                            bool previousEnabled,
                                            bool continueEnabled,
                                            const char* continueLabel,
-                                           bool finishStyle) {
+                                           bool finishStyle,
+                                           const char* previousLabel) {
     InspectorFooterResult result;
     if (!continueLabel) continueLabel = "Continue";
 
@@ -558,7 +559,9 @@ InspectorFooterResult DrawInspectorFooter(const char* stepLabel,
         // stage (the caller passes previousEnabled=false there).
         ImGui::TableNextColumn();
         ImGui::BeginDisabled(!previousEnabled);
-        if (ImGui::Button("\xE2\x80\xB9 Previous", ImVec2(0.0f, 30.0f))) {
+        // Sprint 14 — the profile editor relabels it "Cancel".
+        if (ImGui::Button(previousLabel ? previousLabel : "\xE2\x80\xB9 Previous",
+                          ImVec2(0.0f, 30.0f))) {
             result.previousClicked = true;
         }
         ImGui::EndDisabled();

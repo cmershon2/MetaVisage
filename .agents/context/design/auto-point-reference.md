@@ -1,6 +1,6 @@
 # Auto Point Reference: Design
 
-**Status**: Sprints 11–13 complete (Sprint 13 on 2026-11-03); Sprint 14 outlined.
+**Status**: Complete. Sprints 11–14 shipped (Sprint 14 on 2026-11-03).
 **Owner**: Casey
 **Replaces backlog item**: "Automated point placement (ML)"
 
@@ -292,7 +292,7 @@ Confirm each decision before the sprint that depends on it.
 | # | Decision | Status | Needed by |
 |---|----------|--------|-----------|
 | 1 | Solver approach | **Confirmed by Casey, 2026-10-31.** Geometric template-fit now, so the feature works end to end; an ML face detector is the likely long-term improvement and stays a later solver behind the same `LandmarkSolver` interface | Sprint 12 |
-| 2 | User profile mesh storage | Recommended: copy the mesh into the profile folder. Not yet confirmed | Sprint 14 |
+| 2 | User profile mesh storage | **Confirmed by Casey, 2026-11-03.** Copy the source mesh into the profile folder, so a profile survives moved files and exports as one package | Sprint 14 |
 | 3 | Should Auto refine the Stage 1 alignment? | **Confirmed by Casey, 2026-10-31.** No. The similarity refinement is internal to the solver and never changes the user's Stage 1 transforms. A Stage 1 mesh auto-aligner is a separate future feature (backlog) | Sprint 12 |
 
 ## Roadmap

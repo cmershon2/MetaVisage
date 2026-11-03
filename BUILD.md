@@ -12,7 +12,8 @@ Dependency downloads require network access during the initial vcpkg setup.
 - An OpenGL 4.3 capable GPU for the application and UI smoke test
 
 The vcpkg manifest installs GLFW, Dear ImGui (including the test engine), GLEW,
-Eigen, Assimp, nlohmann/json, and Native File Dialog Extended. Qt is not used.
+Eigen, Assimp, nlohmann/json, Native File Dialog Extended, and kubazip. Qt is
+not used.
 
 ## First-time setup
 

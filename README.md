@@ -7,6 +7,9 @@ tools run locally without accounts, subscriptions, or usage limits.
 ## Features
 
 - **Four-stage workflow**: Alignment, Point Reference, Morph, and Touch Up.
+- **Source profiles and auto-map**: auto-place landmarks on the target, then
+  drag to fix them. Build your own profile for any source mesh in the profile
+  editor, or save a manual setup as one; share profiles as `.mvprofile.zip`.
 - **Wrap Engine**: Quick Wrap and Fantasy Wrap presets, advanced parameter
   controls, and user presets that can be saved, renamed, replaced, and deleted.
 - **Sculpting**: Smooth, Grab, Push/Pull, and Inflate brushes, with symmetry,
@@ -31,8 +34,8 @@ tools run locally without accounts, subscriptions, or usage limits.
 
 To build, install Visual Studio 2022 with **Desktop development with C++** and
 a Windows SDK, CMake 3.16+, Git, and vcpkg. The application uses C++20, Dear
-ImGui, GLFW, GLEW, Eigen, Assimp, nlohmann/json, and Native File Dialog Extended.
-Dependencies are listed in [vcpkg.json](vcpkg.json); Qt is not required.
+ImGui, GLFW, GLEW, Eigen, Assimp, nlohmann/json, Native File Dialog Extended,
+and kubazip. Dependencies are listed in [vcpkg.json](vcpkg.json); Qt is not required.
 
 ## Build and run
 
@@ -106,4 +109,4 @@ need to be documented before release packaging.
 
 Created by Casey Mershon. Thanks to Epic Games for MetaHuman Creator and to
 the maintainers of Dear ImGui, GLFW, GLEW, Eigen, Assimp, nlohmann/json, Native
-File Dialog Extended, stb, Inter, JetBrains Mono, Saira, and Lucide.
+File Dialog Extended, kubazip, stb, Inter, JetBrains Mono, Saira, and Lucide.

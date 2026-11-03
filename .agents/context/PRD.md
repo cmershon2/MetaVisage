@@ -285,6 +285,32 @@ The MVP will focus on core mesh morphing functionality for Windows platforms, pr
   - Grid display toggle
   - "Next Stage" button to proceed to Point Reference
 
+#### FR-2.6: Source Profiles (Sprints 11 and 14)
+- **Description**: Reusable source mesh setups (mesh, landmarks, default
+  mask, symmetry) that auto-map uses
+- **Requirements**:
+  - The Stage 1 source picker lists built-in profiles, then user profiles; a
+    user profile whose mesh copy is missing is listed but can't be picked
+  - **Profile tools**: New profile from this mesh, Edit landmarks (user
+    profiles), Save source as profile, Manage profiles
+  - **Save source as profile** captures the current source mesh (copied into
+    the profile), its source-side points as landmarks (keeping landmark ids
+    and names they already carry) and its vertex mask, and attaches the new
+    profile to the project as one undo step
+  - **Profile editor**: the 52 canonical landmarks as a checklist grouped by
+    region; pick one and click the mesh to place it; mirrored partners fill
+    in at the reflected surface point (toggle); skip, remove, add custom
+    landmarks (single or left/right pair); drag points with the midline
+    lock; paint the default mask; its own undo history; Save or Cancel
+    (Cancel confirms when there are changes). File actions are blocked
+    while it is open
+  - **Manage profiles**: rename, duplicate (built-ins too), delete (confirm),
+    set a default profile for File > New, and import/export a profile as one
+    `.mvprofile.zip` (profile JSON plus mesh, checked against its fingerprint
+    on import)
+  - Built-in profiles are read-only; user profiles live in
+    `%APPDATA%\MetaVisage\profiles\<id>\` with their own mesh copy
+
 ### FR-3: Stage 2 - Point Reference
 
 #### FR-3.1: Dual Viewport Layout

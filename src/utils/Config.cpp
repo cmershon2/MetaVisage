@@ -66,6 +66,9 @@ void Config::Load() {
     // through to defaults; bad value types are skipped, not crashed.
     if (auto ui = j.find("ui_state"); ui != j.end() && ui->is_object()) {
         showGrid_ = ui->value("show_grid", showGrid_);
+        if (auto dp = ui->find("default_source_profile"); dp != ui->end() && dp->is_string()) {
+            defaultSourceProfileId_ = dp->get<std::string>();
+        }
         if (auto cs = ui->find("collapsed_sections");
             cs != ui->end() && cs->is_object()) {
             for (auto entry = cs->begin(); entry != cs->end(); ++entry) {
@@ -102,6 +105,9 @@ void Config::Save() const {
         j["ui_state"]["collapsed_sections"] = std::move(sections);
     }
     if (!showGrid_) j["ui_state"]["show_grid"] = false;
+    if (!defaultSourceProfileId_.empty()) {
+        j["ui_state"]["default_source_profile"] = defaultSourceProfileId_;
+    }
 
     std::ofstream out(path);
     if (!out.is_open()) {
@@ -138,6 +144,12 @@ void Config::ClearRecentProjects() {
 void Config::SetShowGrid(bool show) {
     if (showGrid_ == show) return;
     showGrid_ = show;
+    Save();
+}
+
+void Config::SetDefaultSourceProfileId(const std::string& id) {
+    if (defaultSourceProfileId_ == id) return;
+    defaultSourceProfileId_ = id;
     Save();
 }
 

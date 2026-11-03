@@ -100,5 +100,12 @@ ones to check first. Any point can be dragged along the mesh: mirrored
 partners follow to the exact reflected spot, midline points slide along the
 symmetry plane unless unlocked, and Alt moves one side alone. Re-running
 auto-map replaces or fills auto points and never touches the user's edits.
-Sprint 14 (custom source profiles) completes Auto Point Reference. See
-`retrospectives/retro-sprint-13.md`.
+See `retrospectives/retro-sprint-13.md`.
+
+Sprint 14 completes Auto Point Reference with custom source profiles. Any
+source mesh can become a profile: in a guided editor (canonical landmark
+checklist, mirror fill, custom landmarks, default mask) or by saving a manual
+Stage 2 setup. Profiles keep their own mesh copy, can be duplicated, renamed,
+deleted, set as the default for new projects, and shared as one
+`.mvprofile.zip`. Auto-map works with any profile that has landmarks. See
+`retrospectives/retro-sprint-14.md`.

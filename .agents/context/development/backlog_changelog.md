@@ -136,3 +136,11 @@ implemented or counted as completed delivery.
   - **Effort (Estimated)**: ~1 sprint (13 pts committed, 15 delivered)
   - **Completed**: Sprint 13, 2026-11-03
   - **Notes**: Casey reviewed three rounds in the app; fixes covered vertex snapping of mirrored and midline points, target-only confidence rings with a toggle, and a unit mix-up that stalled midline drags on scaled targets. See [retro-sprint-13.md](../retrospectives/retro-sprint-13.md).
+
+### 2026-11-03 - Sprint 14 custom source profiles
+
+- ✅ **Custom source profiles**
+  - Added Profile tools in Stage 1: a profile editor (canonical landmark checklist by region, mirror fill, custom landmarks, dragging with the midline lock, default mask brush, its own undo history), Save source as profile, and Manage profiles (edit, rename, duplicate including built-ins, delete, default profile for File > New, import/export as one `.mvprofile.zip`). User profiles keep their own mesh copy (design decision 2).
+  - **Effort (Estimated)**: ~1 sprint (14 pts committed, 17 delivered)
+  - **Completed**: Sprint 14, 2026-11-03
+  - **Notes**: Completes Auto Point Reference (Sprints 11–14). Uses kubazip (MIT, already in the vcpkg tree) for packages. Also fixed confirm and error modals collapsing with long messages. See [retro-sprint-14.md](../retrospectives/retro-sprint-14.md).

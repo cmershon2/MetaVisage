@@ -257,7 +257,29 @@ SourceProfile SourceProfile::DraftFromProject(const Project& project, const std:
     const auto& canonical = CanonicalLandmarks();
     constexpr size_t kMidline = 14;
     constexpr size_t kPairs   = 19;
-    if (midline.size() == kMidline && pairs.size() == kPairs) {
+    // Sprint 14 — points that already carry landmark ids (auto-map, the
+    // profile editor, an earlier profile) keep them, with their names and
+    // regions; unnamed points among them become point_<id>.
+    const bool named = std::any_of(placed.begin(), placed.end(),
+                                   [](const PointCorrespondence* c) { return !c->landmarkId.empty(); });
+    auto idOf = [](const PointCorrespondence* c) {
+        return c->landmarkId.empty() ? std::format("point_{}", c->pointID) : c->landmarkId;
+    };
+    if (named) {
+        for (const auto* c : placed) {
+            ProfileLandmark lm;
+            lm.id = idOf(c);
+            lm.vertexIndex = c->morphMeshVertexIndex;
+            for (const auto& k : canonical) {
+                if (k.id == lm.id) { lm.name = k.name; lm.region = k.region; break; }
+            }
+            if (!c->landmarkName.empty()) lm.name = c->landmarkName;
+            if (lm.name.empty()) lm.name = c->landmarkId.empty() ? std::format("Point {}", c->pointID) : lm.id;
+            if (lm.region.empty()) lm.region = "custom";
+            if (const auto* partner = partnerOf(c)) lm.mirrorId = idOf(partner);
+            draft.landmarks.push_back(std::move(lm));
+        }
+    } else if (midline.size() == kMidline && pairs.size() == kPairs) {
         for (size_t i = 0; i < kMidline; ++i) {
             ProfileLandmark lm = canonical[i];
             lm.vertexIndex = midline[i]->morphMeshVertexIndex;

@@ -11,13 +11,17 @@
 
 ### Auto Point Reference
 
-Design: [auto-point-reference.md](../design/auto-point-reference.md). Replaces the former lower-priority "Automated point placement (ML)" item. Sprints run in order; each depends on the one before. Source Profiles shipped in Sprint 11, the auto-map solver in Sprint 12 and the Stage 2 auto-map workflow in Sprint 13 (see the changelog).
+Design: [auto-point-reference.md](../design/auto-point-reference.md). Replaces the former lower-priority "Automated point placement (ML)" item. Sprints run in order; each depends on the one before. All four sprints shipped: Source Profiles (11), the auto-map solver (12), the Stage 2 workflow (13) and custom profiles (14); see the changelog. Follow-ups are listed below.
 
-- [ ] **Custom source profiles**
-  - Add a profile editor (landmark checklist with mirroring, mask brush), library management (rename, duplicate, delete), "Save source as profile" from a project, and profile import/export.
-  - **Effort**: ~1 sprint
-  - **Value**: Auto-mapping for any source mesh, not just the bundled MetaHuman head
-  - **Needs**: Design decision 2 confirmed
+- [ ] **Built-in profile landmark adjustments**
+  - Copy Casey's adjusted cheekbone, jaw middle and ear-top points (placed on a duplicate of the built-in in the profile editor) into `assets/profiles/metahuman-head-lod0.mvprofile.json`, then rerun the profile and landmark-solver smokes and the dataset bench. Raised in Sprint 12; the editor shipped in Sprint 14.
+  - **Effort**: < 1 day
+  - **Value**: Auto-map's most consistent real-head misses came from these points
+
+- [ ] **Mask brush symmetry**
+  - Mirror mask strokes across the symmetry plane in Stage 3 and the profile editor, like the sculpt brushes.
+  - **Effort**: ~1 day
+  - **Value**: Halves mask painting for symmetric heads
 
 ### Other
 

@@ -36,6 +36,7 @@
 #include "ui/AppWindow.h"
 #include "ui/Viewport.h"
 #include "ui/ViewportHost.h"
+#include "utils/Config.h"
 #include "utils/Logger.h"
 #include "utils/RayCaster.h"
 
@@ -73,11 +74,32 @@ struct AppWindowTestAccess {
     static void SelectSourceProfile(AppWindow& app, const SourceProfile& p) { app.SelectSourceProfile(p); }
     static bool AutoMapRunning(const AppWindow& app) { return app.autoMapRunning_.load(); }
     static void StartAutoMapFill(AppWindow& app) { app.StartAutoMap(AppWindow::AutoMapMode::Fill); }
+    static void RequestAutoMap(AppWindow& app) { app.RequestAutoMap(); }
     static void BeginPointDrag(AppWindow& app, int i) { app.BeginPointDrag(i); }
     static void DragPoint(AppWindow& app, int i, PointSide side, const Ray& ray, bool oneSide) {
         app.DragPoint(i, side, ray, oneSide);
     }
     static void EndPointDrag(AppWindow& app, int i) { app.EndPointDrag(i); }
+    // Sprint 14 — custom source profiles.
+    static void RequestSaveSourceAsProfile(AppWindow& app) { app.RequestSaveSourceAsProfile(); }
+    static void OpenProfileEditor(AppWindow& app, const SourceProfile* p) { app.OpenProfileEditor(p); }
+    static bool EditorActive(const AppWindow& app) { return app.editor_.active; }
+    static const std::vector<ProfileLandmark>& EditorLandmarks(const AppWindow& app) {
+        return app.editor_.draft.landmarks;
+    }
+    static void EditorActions(AppWindow& app, const StageSidebar::Actions::EditorActions& a) {
+        app.HandleProfileEditorActions(a);
+    }
+    static void EditorPlacePoint(AppWindow& app, const Vector3& pos, int vertex) {
+        app.EditorPlacePoint(pos, vertex);
+    }
+    static void ManageAction(AppWindow& app, ProfileManageAction action, const std::string& id) {
+        app.manageProfiles_.action = action;
+        app.manageProfiles_.targetId = id;
+        app.HandleManageAction();
+    }
+    static void NewProjectWithDefault(AppWindow& app) { app.NewProjectWithDefaultProfile(); }
+    static void ReloadProfiles(AppWindow& app) { app.ReloadSourceProfiles(); }
 };
 
 } // namespace MetaVisage
@@ -1119,10 +1141,259 @@ void RegisterScenario_AutoMapWorkflow(ImGuiTestEngine* engine) {
     };
 }
 
+// Sprint 14 — custom source profiles: save source as profile, the profile
+// editor (place, mirror fill, custom pair, undo, mask, save, cancel, blocked
+// file actions), Manage profiles (duplicate, delete, default) and a profile
+// whose mesh copy is missing. User profiles live in a temporary folder set
+// in main(), never the real %APPDATA%.
+void RegisterScenario_CustomProfiles(ImGuiTestEngine* engine) {
+    ImGuiTest* t = IM_REGISTER_TEST(engine, "smoke", "custom_profiles");
+    t->TestFunc = [](ImGuiTestContext* ctx) {
+        if (!g_app || !g_app->GetUndoStack()) { IM_CHECK(false); return; }
+        DismissWelcomeModalIfOpen(ctx);
+        AppWindowTestAccess::NewProject(*g_app);
+        auto& profiles = AppWindowTestAccess::SourceProfiles(*g_app);
+        const SourceProfile* found = ProfileStore::FindById(profiles, "metahuman-head-lod0");
+        IM_CHECK(found != nullptr);
+        if (!found) return;
+        const SourceProfile builtIn = *found;
+        auto byName = [&](const char* name) -> const SourceProfile* {
+            for (const auto& p : AppWindowTestAccess::SourceProfiles(*g_app)) {
+                if (p.name == name) return &p;
+            }
+            return nullptr;
+        };
+        auto clickModal = [ctx](const char* modal, const char* button) {
+            ctx->SetRef(modal);
+            ctx->ItemClick(button);
+            ctx->Yield(2);
+            ctx->SetRef("");
+        };
+
+        Project* real = g_app->GetProject();
+        real->SetCurrentStage(WorkflowStage::Alignment);
+        RunOnMainThread(ctx, [&] { AppWindowTestAccess::SelectSourceProfile(*g_app, builtIn); });
+        IM_CHECK(real->GetMorphMesh().isLoaded);
+        const auto& verts = real->GetMorphMesh().mesh->GetVertices();
+        const Matrix4x4 model = real->GetMorphMesh().transform.GetMatrix();
+        auto world = [&](const char* landmarkId) {
+            for (const auto& lm : builtIn.landmarks) {
+                if (lm.id == landmarkId) return RayCaster::TransformPoint(verts[lm.vertexIndex], model);
+            }
+            return Vector3();
+        };
+        auto vertexOf = [&](const char* landmarkId) {
+            for (const auto& lm : builtIn.landmarks) if (lm.id == landmarkId) return lm.vertexIndex;
+            return -1;
+        };
+
+        // 1. Save source as profile: the built-in's landmarks shown as named
+        //    source points become a user profile, attached as one undo step.
+        real->SetCurrentStage(WorkflowStage::PointReference);
+        ctx->Yield(2);
+        ctx->SetRef("//##AppHostWindow");
+        ctx->MenuClick("Help/Show Profile Landmarks (Dev)");
+        ctx->Yield(2);
+        ctx->SetRef("");
+        IM_CHECK_EQ(real->GetPointReferenceData().correspondences.size(), builtIn.landmarks.size());
+        RunOnMainThread(ctx, [] { AppWindowTestAccess::RequestSaveSourceAsProfile(*g_app); });
+        // Typing the name ends with Enter, which saves.
+        ctx->SetRef("//##NamePrompt");
+        ctx->ItemInputValue("##name", "Test Saved");
+        ctx->Yield(2);
+        ctx->SetRef("");
+        const SourceProfile* saved = byName("Test Saved");
+        IM_CHECK(saved != nullptr);
+        if (!saved) return;
+        IM_CHECK(!saved->isBuiltIn && saved->landmarks.size() == builtIn.landmarks.size());
+        IM_CHECK(saved->HasMask() && saved->fingerprint == builtIn.fingerprint);
+        IM_CHECK(std::filesystem::exists(saved->resolvedMeshPath));
+        const std::string savedId = saved->id;
+        IM_CHECK_STR_EQ(real->GetSourceProfileId().c_str(), savedId.c_str());
+        IM_CHECK_STR_EQ(g_app->GetUndoStack()->UndoDescription().c_str(), "Save Source as Profile");
+        g_app->GetUndoStack()->Undo();
+        ctx->Yield();
+        IM_CHECK_STR_EQ(real->GetSourceProfileId().c_str(), "metahuman-head-lod0");
+        g_app->GetUndoStack()->Redo();
+        ctx->Yield();
+
+        // 2. Profile editor on this mesh: its own scratch project and history.
+        real->SetCurrentStage(WorkflowStage::Alignment);
+        const int realUndo = g_app->GetUndoStack()->Size();
+        RunOnMainThread(ctx, [] { AppWindowTestAccess::OpenProfileEditor(*g_app, nullptr); });
+        IM_CHECK(AppWindowTestAccess::EditorActive(*g_app));
+        Project* scratch = g_app->GetProject();
+        IM_CHECK(scratch != real);
+        IM_CHECK(scratch->GetPointReferenceData().correspondences.empty());
+        IM_CHECK_EQ(g_app->GetUndoStack()->Size(), 0);
+        auto& pts = scratch->GetPointReferenceData().correspondences;
+        auto indexOfLandmark = [&](const char* id) {
+            const auto& lms = AppWindowTestAccess::EditorLandmarks(*g_app);
+            for (size_t i = 0; i < lms.size(); ++i) if (lms[i].id == id) return static_cast<int>(i);
+            return -1;
+        };
+
+        // Place the left mouth corner; the right one fills in mirrored.
+        StageSidebar::Actions::EditorActions pick;
+        pick.selectLandmark = indexOfLandmark("mouth_corner_l");
+        AppWindowTestAccess::EditorActions(*g_app, pick);
+        AppWindowTestAccess::EditorPlacePoint(*g_app, world("mouth_corner_l"), vertexOf("mouth_corner_l"));
+        IM_CHECK_EQ(pts.size(), (size_t)2);
+        if (pts.size() == 2) {
+            IM_CHECK_STR_EQ(pts[1].landmarkId.c_str(), "mouth_corner_r");
+            IM_CHECK((pts[1].morphMeshPosition - world("mouth_corner_r")).Length() < 1.0f);
+            IM_CHECK(pts[0].isSymmetric && pts[0].symmetricPairID == pts[1].pointID);
+        }
+        // Editor undo is separate from the project's.
+        g_app->GetUndoStack()->Undo();
+        ctx->Yield();
+        IM_CHECK(pts.empty());
+        g_app->GetUndoStack()->Redo();
+        ctx->Yield();
+        IM_CHECK_EQ(pts.size(), (size_t)2);
+
+        // A custom left/right pair.
+        StageSidebar::Actions::EditorActions custom;
+        custom.addCustom = std::make_pair(std::string("Ear tip"), true);
+        AppWindowTestAccess::EditorActions(*g_app, custom);
+        AppWindowTestAccess::EditorPlacePoint(*g_app, world("ear_top_l"), vertexOf("ear_top_l"));
+        IM_CHECK_EQ(pts.size(), (size_t)4);
+
+        // Mask tab: the scratch project switches to the mask stage.
+        StageSidebar::Actions::EditorActions maskTab;
+        maskTab.maskTab = true;
+        RunOnMainThread(ctx, [&] { AppWindowTestAccess::EditorActions(*g_app, maskTab); });
+        IM_CHECK(scratch->GetCurrentStage() == WorkflowStage::Morph);
+        scratch->GetMorphData().vertexMask.assign(scratch->GetMorphData().vertexMask.size(), false);
+        scratch->GetMorphData().vertexMask[7] = true;
+
+        // File actions are blocked while editing.
+        AppWindowTestAccess::NewProject(*g_app);
+        ctx->Yield(2);
+        IM_CHECK(g_app->GetProject() == scratch);
+        clickModal("//##ErrorModal", "OK");
+
+        // Save: a named profile with the placed landmarks and the mask,
+        // attached to the real project, which is back with its history.
+        StageSidebar::Actions::EditorActions save;
+        save.rename = std::string("Editor Test");
+        save.save = true;
+        RunOnMainThread(ctx, [&] { AppWindowTestAccess::EditorActions(*g_app, save); });
+        IM_CHECK(!AppWindowTestAccess::EditorActive(*g_app));
+        IM_CHECK(g_app->GetProject() == real);
+        const SourceProfile* edited = byName("Editor Test");
+        IM_CHECK(edited != nullptr);
+        if (!edited) return;
+        IM_CHECK_EQ(edited->landmarks.size(), (size_t)4);
+        IM_CHECK(edited->Validate().empty());
+        IM_CHECK(edited->BuildMask().size() > 7 && edited->BuildMask()[7]);
+        IM_CHECK_STR_EQ(real->GetSourceProfileId().c_str(), edited->id.c_str());
+        IM_CHECK_EQ(g_app->GetUndoStack()->Size(), realUndo + 1);
+        IM_CHECK_STR_EQ(g_app->GetUndoStack()->UndoDescription().c_str(), "Use New Profile");
+
+        // Auto-map with the custom profile (4 landmarks) on the same head:
+        // every landmark lands next to its own vertex.
+        {
+            real->GetPointReferenceData().correspondences.clear();
+            real->GetTargetMesh().mesh = real->GetMorphMesh().mesh;
+            real->GetTargetMesh().transform = real->GetMorphMesh().transform;
+            real->GetTargetMesh().isLoaded = true;
+            real->SetCurrentStage(WorkflowStage::PointReference);
+            AppWindowTestAccess::RequestAutoMap(*g_app);
+            const auto until = std::chrono::steady_clock::now() + std::chrono::seconds(20);
+            while (AppWindowTestAccess::AutoMapRunning(*g_app) && std::chrono::steady_clock::now() < until) {
+                ctx->Yield();
+            }
+            ctx->Yield(2);
+            const auto& mapped = real->GetPointReferenceData().correspondences;
+            IM_CHECK_EQ(mapped.size(), edited->landmarks.size());
+            for (const auto& c : mapped) {
+                const auto& v = real->GetMorphMesh().mesh->GetVertices();
+                const Vector3 expected = RayCaster::TransformPoint(v[c.morphMeshVertexIndex], model);
+                IM_CHECK((c.targetMeshPosition - expected).Length() < 1.0f);
+            }
+            real->GetTargetMesh() = MeshReference();
+            real->GetPointReferenceData().correspondences.clear();
+            real->SetCurrentStage(WorkflowStage::Alignment);
+        }
+
+        // 3. Editing a user profile and cancelling with changes asks first.
+        const SourceProfile editedCopy = *edited;
+        RunOnMainThread(ctx, [&] { AppWindowTestAccess::OpenProfileEditor(*g_app, &editedCopy); });
+        IM_CHECK(AppWindowTestAccess::EditorActive(*g_app));
+        IM_CHECK_EQ(g_app->GetProject()->GetPointReferenceData().correspondences.size(), (size_t)4);
+        StageSidebar::Actions::EditorActions remove;
+        remove.selectLandmark = indexOfLandmark("mouth_corner_l");
+        remove.removeActive = true;
+        AppWindowTestAccess::EditorActions(*g_app, remove);
+        IM_CHECK_EQ(g_app->GetProject()->GetPointReferenceData().correspondences.size(), (size_t)3);
+        StageSidebar::Actions::EditorActions cancel;
+        cancel.cancel = true;
+        AppWindowTestAccess::EditorActions(*g_app, cancel);
+        ctx->Yield(2);
+        IM_CHECK(AppWindowTestAccess::EditorActive(*g_app));
+        ctx->SetRef("//##ConfirmModal");
+        ctx->ItemClick("Discard");
+        ctx->Yield(3);
+        ctx->SetRef("");
+        IM_CHECK(!AppWindowTestAccess::EditorActive(*g_app));
+        IM_CHECK(g_app->GetProject() == real);
+        IM_CHECK_EQ(byName("Editor Test")->landmarks.size(), (size_t)4);
+
+        // 4. Manage: duplicate the built-in, make it the default for File >
+        //    New, then delete it.
+        AppWindowTestAccess::ManageAction(*g_app, ProfileManageAction::Duplicate, "metahuman-head-lod0");
+        ctx->Yield(2);
+        clickModal("//##NamePrompt", "Duplicate");
+        const SourceProfile* copy = byName("MetaHuman Head (LOD0) copy");
+        IM_CHECK(copy != nullptr);
+        if (!copy) return;
+        IM_CHECK(!copy->isBuiltIn && copy->landmarks.size() == builtIn.landmarks.size());
+        const std::string copyId = copy->id;
+        AppWindowTestAccess::ManageAction(*g_app, ProfileManageAction::SetDefault, copyId);
+        IM_CHECK_STR_EQ(Config::Instance().DefaultSourceProfileId().c_str(), copyId.c_str());
+        RunOnMainThread(ctx, [] { AppWindowTestAccess::NewProjectWithDefault(*g_app); });
+        IM_CHECK_STR_EQ(g_app->GetProject()->GetSourceProfileId().c_str(), copyId.c_str());
+        IM_CHECK(g_app->GetProject()->GetMorphMesh().isLoaded);
+        IM_CHECK_EQ(g_app->GetUndoStack()->Size(), 0);
+        AppWindowTestAccess::ManageAction(*g_app, ProfileManageAction::Delete, copyId);
+        ctx->Yield(2);
+        clickModal("//##ConfirmModal", "Delete");
+        IM_CHECK(byName("MetaHuman Head (LOD0) copy") == nullptr);
+        IM_CHECK(Config::Instance().DefaultSourceProfileId().empty());
+
+        // 5. A profile whose mesh copy is gone is flagged and can't be edited.
+        const SourceProfile* victim = byName("Test Saved");
+        IM_CHECK(victim != nullptr);
+        if (!victim) return;
+        std::error_code ec;
+        std::filesystem::remove(victim->resolvedMeshPath, ec);
+        AppWindowTestAccess::ReloadProfiles(*g_app);
+        victim = byName("Test Saved");
+        IM_CHECK(victim != nullptr && victim->meshMissing);
+        if (victim) {
+            const SourceProfile missing = *victim;
+            RunOnMainThread(ctx, [&] { AppWindowTestAccess::OpenProfileEditor(*g_app, &missing); });
+            IM_CHECK(!AppWindowTestAccess::EditorActive(*g_app));
+            clickModal("//##ErrorModal", "OK");
+        }
+
+        AppWindowTestAccess::NewProject(*g_app);
+    };
+}
+
 } // namespace
 
 int main(int /*argc*/, char** /*argv*/) {
     Logger::Instance().SetFileLogging(false);
+    // Sprint 14 — user profiles go to a temporary folder for the whole run.
+    const std::filesystem::path profilesDir =
+        std::filesystem::temp_directory_path() / "metavisage_smoke_ui_profiles";
+    {
+        std::error_code ec;
+        std::filesystem::remove_all(profilesDir, ec);
+    }
+    ProfileStore::SetUserProfilesDirOverride(profilesDir.generic_string());
 
     AppWindow app;
     g_app = &app;
@@ -1156,6 +1427,7 @@ int main(int /*argc*/, char** /*argv*/) {
     RegisterScenario_MorphResetToSource(engine);
     RegisterScenario_SourceProfilePicker(engine);
     RegisterScenario_AutoMapWorkflow(engine);
+    RegisterScenario_CustomProfiles(engine);
 
     ImGuiTestEngine_Start(engine, ImGui::GetCurrentContext());
     ImGuiTestEngine_QueueTests(engine, ImGuiTestGroup_Tests, /*filter=*/nullptr,
