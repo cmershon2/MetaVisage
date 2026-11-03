@@ -122,6 +122,7 @@ set(CORE_SOURCES
     src/utils/SingleInstance.cpp
     src/deformation/MeshDeformer.cpp
     src/deformation/NRICPDeformer.cpp
+    src/deformation/TemplateFitSolver.cpp
     src/sculpting/SculptBrush.cpp
     src/sculpting/SmoothBrush.cpp
     src/sculpting/GrabBrush.cpp
@@ -172,6 +173,8 @@ set(CORE_HEADERS
     include/utils/SingleInstance.h
     include/deformation/MeshDeformer.h
     include/deformation/NRICPDeformer.h
+    include/deformation/LandmarkSolver.h
+    include/deformation/TemplateFitSolver.h
     include/sculpting/SculptBrush.h
     include/sculpting/SmoothBrush.h
     include/sculpting/GrabBrush.h
@@ -364,6 +367,42 @@ endif()
 add_test(NAME smoke_source_profile
          COMMAND metavisage_smoke_source_profile
          WORKING_DIRECTORY ${CMAKE_RUNTIME_OUTPUT_DIRECTORY})
+
+# ---------------------------------------------------------------------------
+# Landmark solver smoke (Sprint 12)
+# ---------------------------------------------------------------------------
+# Runs the auto-map solver on targets generated from the bundled head (moved,
+# stretched, bulged, noisy, slightly misaligned), where the right answer is
+# the same vertex, and checks accuracy, cancellation and refusal of an
+# unaligned target.
+add_executable(metavisage_smoke_landmark_solver
+    tests/smoke/landmark_solver.cpp
+)
+target_link_libraries(metavisage_smoke_landmark_solver
+    PRIVATE
+        ${PROJECT_NAME}Core
+)
+if(MSVC)
+    target_compile_options(metavisage_smoke_landmark_solver PRIVATE /W4)
+else()
+    target_compile_options(metavisage_smoke_landmark_solver PRIVATE -Wall -Wextra)
+endif()
+
+add_test(NAME smoke_landmark_solver
+         COMMAND metavisage_smoke_landmark_solver
+         WORKING_DIRECTORY ${CMAKE_RUNTIME_OUTPUT_DIRECTORY})
+set_tests_properties(smoke_landmark_solver PROPERTIES TIMEOUT 240)
+
+# Auto-map dataset benchmark (Sprint 12). Not a CTest target: it runs the
+# solver over a folder of saved projects with hand-placed reference points.
+# See tests/datasets/README.md.
+add_executable(metavisage_automap_bench
+    tools/automap_bench.cpp
+)
+target_link_libraries(metavisage_automap_bench
+    PRIVATE
+        ${PROJECT_NAME}Core
+)
 
 # ---------------------------------------------------------------------------
 # Wrap Engine behavioural-parity smoke (Story 4.6)

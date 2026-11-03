@@ -63,9 +63,12 @@ ctest --test-dir build -C Release -L ui --output-on-failure
 
 `VCPKG_ROOT` or `-DCMAKE_TOOLCHAIN_FILE=...` is required for configure.
 No API credentials, environment profiles, account, or license keys are required.
-The full smoke suite has five targets; `smoke_wrap_parity`
+The full smoke suite has six targets; `smoke_wrap_parity`
 can take about 70 seconds on development machines and has a 120-second CTest
-timeout.
+timeout, and `smoke_landmark_solver` takes about 25 seconds (240-second
+timeout). `metavisage_automap_bench` measures auto-map against hand-placed
+reference heads; it is built with the tests but is not part of CTest (see
+`tests/datasets/README.md`).
 
 Package an already-tested MSVC Release build with `.\package-release.ps1`.
 It reads the version from `vcpkg.json` and writes the portable Windows ZIP and
@@ -132,7 +135,7 @@ docs may use the internal name.
 - v1.0.0 feedback: `.agents/context/Version 1.0.0 Feedback.md`
 - Product backlog: `.agents/context/development/product_backlog.md`
 - Standalone transition: `.agents/context/open-source-transition.md`
-- Latest retrospective: `.agents/context/retrospectives/retro-sprint-11.md`
+- Latest retrospective: `.agents/context/retrospectives/retro-sprint-12.md`
 
 ## Repository Map
 
