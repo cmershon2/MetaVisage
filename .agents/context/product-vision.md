@@ -82,5 +82,13 @@ symmetry, named landmarks and default mask. The built-in MetaHuman profile
 ships with 52 authored landmarks and a mouth-interior mask; importing a mesh
 with a known topology attaches its profile automatically. Projects save the
 profile id (format v3), and reopening a project now keeps the painted mask and
-all wrap parameters. Sprint 12 adds the auto-map solver that places the
-landmarks on the target. See `retrospectives/retro-sprint-11.md`.
+all wrap parameters. See `retrospectives/retro-sprint-11.md`.
+
+Sprint 12 adds the auto-map solver (headless; the Stage 2 UI is Sprint 13). A
+geometric template fit places all 52 landmarks on a Stage 1-aligned target in
+3-6 s, with a confidence per point, and never changes Stage 1. On Casey's six
+hand-placed reference heads the median error is 0.6-1.7% of the head's size:
+good on realistic heads, weaker on stylized features (cartoon lower lids,
+goblin ears). Further accuracy likely needs the learned detector (design
+decision 1) or profile point adjustments, so Sprint 13 adds click-and-drag
+refinement of placed points. See `retrospectives/retro-sprint-12.md`.

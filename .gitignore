@@ -63,3 +63,6 @@ config.ini
 .env
 .env.*
 keys/*.pem
+
+# Local auto-map dataset meshes (Sprint 12); see tests/datasets/README.md
+tests/datasets/local/

@@ -11,16 +11,11 @@
 
 ### Auto Point Reference
 
-Design: [auto-point-reference.md](../design/auto-point-reference.md). Replaces the former lower-priority "Automated point placement (ML)" item. Sprints run in order; each depends on the one before. Source Profiles shipped in Sprint 11 (see the changelog).
-
-- [ ] **Auto-map landmark solver**
-  - Add a headless `LandmarkSolver` interface and a geometric template-fit solver: similarity refinement, coarse wrap, projection, symmetry and confidence scoring. Runs on a worker thread, is cancellable, and has a smoke target with accuracy thresholds on transformed and perturbed MetaHuman targets.
-  - **Effort**: ~1 sprint
-  - **Value**: The core of auto point placement
-  - **Needs**: Design decisions 1 and 3 confirmed
+Design: [auto-point-reference.md](../design/auto-point-reference.md). Replaces the former lower-priority "Automated point placement (ML)" item. Sprints run in order; each depends on the one before. Source Profiles shipped in Sprint 11 and the auto-map solver in Sprint 12 (see the changelog).
 
 - [ ] **Stage 2 auto-map workflow**
-  - Add the Auto / Manual prompt after Stage 1, a progress modal with cancel, confidence-coloured points, moving placed points, a re-run that replaces or fills in points, and auto-map as one undo step. Serialize `landmarkId` / `confidence` / `isAuto`. Update the PRD (FR-2 / FR-3) and the user docs.
+  - Add the Auto / Manual prompt after Stage 1, a progress modal with cancel, confidence-coloured points, a re-run that replaces or fills in points, and auto-map as one undo step.
+  - Click-and-drag placed points along the mesh surface to fine-tune auto results (Casey, 2026-11-03): midline points locked to the symmetry plane with a per-point unlock for asymmetrical features, mirrored pairs moving together with a toggle to drag one side alone, one undo step per drag. See the design's "Editing" bullet. Serialize `landmarkId` / `confidence` / `isAuto`. Update the PRD (FR-2 / FR-3) and the user docs.
   - **Effort**: ~1 sprint
   - **Value**: Brings Stage 2 in line with Unreal's Mesh to MetaHuman flow
 
@@ -44,6 +39,11 @@ Design: [auto-point-reference.md](../design/auto-point-reference.md). Replaces t
 - [ ] **Separate MinGW build directory**
   - `build-mingw.ps1` builds into the same `build\` folder as `build-msvc.ps1`, so a full MinGW build can't run without overwriting the MSVC cache. Give it its own directory (for example `build-mingw\`) and validate the full MinGW build, including the Sprint 10 icon resource step. Found in Sprint 10.
   - **Effort**: ~0.5 day
+
+- [ ] **Stage 1 mesh auto-aligner**
+  - Add an "Auto-align" action to Stage 1 that moves, rotates and scales the target to match the source, as one undoable step. Separate from Auto Point Reference: per design decision 3 (confirmed 2026-10-31), auto-map never changes Stage 1 transforms. The Sprint 12 similarity refinement is a likely starting point. Raised by Casey on 2026-10-31.
+  - **Effort**: ~1 sprint
+  - **Value**: Removes the most manual step left in the workflow
 
 - [ ] **Load meshes off the UI thread**
   - `AppWindow::ImportMorphMeshFromDisk` / `ImportTargetMeshFromDisk` call `Mesh::Load` on the UI thread, so large meshes freeze the window. AGENTS.md requires worker threads for mesh loading. Load on a worker, show progress, and upload to the GPU on the UI thread when done. Found while planning Sprint 11.

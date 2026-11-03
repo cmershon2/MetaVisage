@@ -91,8 +91,9 @@ ctest --test-dir build -C Release --output-on-failure
 ctest --test-dir build -C Release -L ui --output-on-failure
 ```
 
-The four smoke targets cover mesh round-trip/export, v1 project compatibility,
-wrap parity, and UI startup/navigation/shading/brush selection. The UI lane opens
+The six smoke targets cover mesh round-trip/export, v1 project compatibility,
+source profiles, auto-map landmark accuracy, wrap parity, and UI
+startup/navigation/shading/brush selection. The UI lane opens
 a real GLFW window. Wrap parity can take about 70 seconds (120-second timeout).
 
 ## Troubleshooting

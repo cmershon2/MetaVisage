@@ -1,6 +1,6 @@
 # Auto Point Reference: Design
 
-**Status**: Sprint 11 in progress (approved 2026-10-30); Sprints 12–14 outlined.
+**Status**: Sprint 11 complete (2026-10-30). Sprint 12 complete (2026-11-03); Sprints 13–14 outlined.
 **Owner**: Casey
 **Replaces backlog item**: "Automated point placement (ML)"
 
@@ -172,10 +172,42 @@ with no ImGui dependency, so it can be tested headless.
    snap to the nearest target vertex, as manual placement does.
 4. **Symmetry.** If the target is close to mirror-symmetric on the profile axis,
    average each mirrored pair so left and right agree.
-5. **Confidence.** Combine the projection distance (relative to the bounding-box
-   diagonal), normal agreement between the fitted source and target, and
-   mirror-pair consistency. Bands: high ≥ 0.75, review 0.4–0.75, low < 0.4.
-   Tune these thresholds in Sprint 12.
+5. **Confidence.** Combine the fit residual in a neighbourhood around the
+   landmark (2.5% of the diagonal), normal agreement, mirror-pair consistency,
+   how flat the surface is there (flat patches cap a landmark at "review"),
+   and the overall alignment residual. Bands: high ≥ 0.75, review 0.4–0.75,
+   low < 0.4.
+
+**As built in Sprint 12** (`TemplateFitSolver`): step 1 is followed by a
+bounded affine refinement (up to 1.4× per axis) so proportions can differ, and
+by a facing check that refuses a target turned 180° about the vertical. The
+symmetry step only runs when the target's median mirror distance is under 0.2%
+of its diagonal. After Casey's first review two steps were added: each eye and
+ear gets its own bounded affine fit (up to 2.2× per axis, matched both ways)
+before the coarse fit, and the mouth corners and lip contact snap to the
+deepest point of the crease nearby. A solve takes 3–6 s on the bundled head
+against targets of up to ~900k vertices.
+
+**Measured accuracy (2026-11-01).** On synthetic variants of the bundled head:
+0.07–0.54% median error, at most 1.8% (fractions of the ~57-unit diagonal).
+On Casey's six hand-placed heads: 0.53–1.79% median. Distinct features
+(eyelids, nose, lips, inner brows) are within 0.4–0.7%. The largest errors come
+from landmarks whose profile vertex differs from where Casey clicks them on
+targets (cheekbone, ear top, jaw middle; same offset on every head), from
+smooth-surface landmarks, and from exaggerated features (the goblin's ears).
+`metavisage_automap_bench` reproduces these numbers; see
+`tests/datasets/README.md`.
+
+**After the feature refit and crease snap (2026-11-03).** Median across all
+points 1.08% → 0.98%; mouth corners 1.43% → 1.15%; ear points 2.30% → 2.05%
+(goblin ear lobes 2.3% → 0.4%). Lower lids are unchanged (0.9%; cartoon female
+still 2.9%). Tried and dropped: refitting the mouth (pulled closed lips apart
+on the facescan), refitting the nose (moved cartoon nostrils off), and
+snapping the nose tip, subnasale and ear extremes (helped some heads, hurt as
+many). The goblin's ear tops stay ~13% off; they are now rated review or low.
+Confidence was not retuned: most remaining high-confidence misses are the
+cheekbone and jaw points, which are offset the same way on every head, and
+the fit can't detect that from the geometry.
 
 Why geometric first: it needs no new dependency, works on untextured meshes,
 and does not assume a realistic human face. MetaVisage ships a Fantasy Wrap
@@ -200,8 +232,20 @@ and offline.
 - **Result.** Points appear paired on both meshes. Each point is coloured by
   confidence band; the sidebar lists review and low points first with their
   landmark names.
-- **Editing.** Select a point and click a new spot to move it (new; today points
-  can only be deleted). Users can add manual points as before.
+- **Editing.** Click and drag a placed point; it slides along the mesh surface
+  under the cursor (new; today points can only be deleted). Requested by Casey
+  on 2026-11-03 after reviewing Sprint 12's auto-placed points:
+  - **Midline lock.** Midline landmarks (no mirror partner) stay on the
+    symmetry plane while dragged, moving only along the curve where the plane
+    meets the mesh. A per-point unlock (and a sidebar toggle for all) frees
+    them for asymmetrical features.
+  - **Mirrored drag.** Dragging one point of a mirrored pair moves its partner
+    to the reflected spot, snapped to the surface. On by default when the
+    target is near-symmetric; a toggle (and a modifier key held while
+    dragging) turns it off for one-sided adjustments.
+  - One drag is one undo step, covering both points of a mirrored pair.
+  - Dragging works on either viewport (source or target side).
+  - Users can add manual points as before.
 - **Re-run.** A sidebar "Auto-map" action re-runs the solver. It asks whether to
   replace all auto points or only fill missing ones, and never moves points the
   user has edited.
@@ -243,14 +287,13 @@ The density matches the mouth, eyes and nose, where the wrap most often drifts.
 
 ## Decisions
 
-These are the recommended defaults. Casey has not confirmed them yet; confirm
-each before the sprint that depends on it.
+Confirm each decision before the sprint that depends on it.
 
-| # | Decision | Recommended default | Needed by |
-|---|----------|---------------------|-----------|
-| 1 | Solver approach | Geometric template-fit first; ML detector only if Sprint 12 results justify it | Sprint 12 |
-| 2 | User profile mesh storage | Copy the mesh into the profile folder | Sprint 14 |
-| 3 | Should Auto refine the Stage 1 alignment? | Use the similarity refinement internally only; do not change the user's target transform | Sprint 12 |
+| # | Decision | Status | Needed by |
+|---|----------|--------|-----------|
+| 1 | Solver approach | **Confirmed by Casey, 2026-10-31.** Geometric template-fit now, so the feature works end to end; an ML face detector is the likely long-term improvement and stays a later solver behind the same `LandmarkSolver` interface | Sprint 12 |
+| 2 | User profile mesh storage | Recommended: copy the mesh into the profile folder. Not yet confirmed | Sprint 14 |
+| 3 | Should Auto refine the Stage 1 alignment? | **Confirmed by Casey, 2026-10-31.** No. The similarity refinement is internal to the solver and never changes the user's Stage 1 transforms. A Stage 1 mesh auto-aligner is a separate future feature (backlog) | Sprint 12 |
 
 ## Roadmap
 

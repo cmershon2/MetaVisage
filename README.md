@@ -79,7 +79,7 @@ Settings, recent projects, presets, and logs are stored under
 |------|----------|
 | `assets/` | Fonts, icons, shaders, gizmos, brush previews, and a reference head mesh |
 | `include/`, `src/` | C++ headers and implementation, organized by subsystem |
-| `tests/` | Four CTest smoke targets and project/mesh fixtures |
+| `tests/` | Six CTest smoke targets, project/mesh fixtures, and the auto-map dataset guide |
 | `docs/` | Known issues and public documentation assets |
 | `.agents/`, `.codex/` | Maintainer context and optional agent tooling |
 | `build-msvc.ps1`, `build-mingw.ps1` | Build helpers |

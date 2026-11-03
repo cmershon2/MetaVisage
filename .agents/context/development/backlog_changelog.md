@@ -120,3 +120,11 @@ implemented or counted as completed delivery.
   - **Effort (Estimated)**: ~1 sprint (13 pts)
   - **Completed**: Sprint 11, 2026-10-30
   - **Notes**: Casey authored the 52 landmarks and the mouth-interior mask. Also fixed: reopened projects lost the vertex mask and newer wrap parameters; a new source import kept the old `originalMorphMesh`; undo did not refresh the mask overlay. See [retro-sprint-11.md](../retrospectives/retro-sprint-11.md).
+
+### 2026-11-03 - Sprint 12 auto-map landmark solver
+
+- ✅ **Auto-map landmark solver**
+  - Added a headless `LandmarkSolver` interface and `TemplateFitSolver`: similarity and bounded affine refinement, a facing check, per-feature refit of eyes and ears, a stiff coarse wrap, projection, a crease snap for the mouth, symmetry averaging and per-point confidence. Cancellable, with progress, and never changes Stage 1 transforms.
+  - **Effort (Estimated)**: ~1 sprint (13 pts)
+  - **Completed**: Sprint 12, 2026-11-03
+  - **Notes**: `smoke_landmark_solver` covers seven synthetic cases plus refusal, cancel and input checks. `metavisage_automap_bench` measures against Casey's six hand-placed heads (median 0.6-1.7% of head size). Casey's review led to click-and-drag refinement being added to Sprint 13. See [retro-sprint-12.md](../retrospectives/retro-sprint-12.md).
