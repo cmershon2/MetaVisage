@@ -1,0 +1,7 @@
+// Windows resources for MetaVisage.exe (Sprint 10.5).
+//
+// GLFW_ICON is the resource name GLFW's Win32 backend loads as the window
+// class icon, so this one entry sets the Explorer, title bar and taskbar
+// icons. CMake configures this file with the absolute icon path (see
+// CMakeLists.txt). Regenerate the .ico with resources/build-ico.ps1.
+GLFW_ICON ICON "@METAVISAGE_ICON_PATH@"

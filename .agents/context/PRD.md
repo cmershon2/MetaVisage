@@ -285,6 +285,32 @@ The MVP will focus on core mesh morphing functionality for Windows platforms, pr
   - Grid display toggle
   - "Next Stage" button to proceed to Point Reference
 
+#### FR-2.6: Source Profiles (Sprints 11 and 14)
+- **Description**: Reusable source mesh setups (mesh, landmarks, default
+  mask, symmetry) that auto-map uses
+- **Requirements**:
+  - The Stage 1 source picker lists built-in profiles, then user profiles; a
+    user profile whose mesh copy is missing is listed but can't be picked
+  - **Profile tools**: New profile from this mesh, Edit landmarks (user
+    profiles), Save source as profile, Manage profiles
+  - **Save source as profile** captures the current source mesh (copied into
+    the profile), its source-side points as landmarks (keeping landmark ids
+    and names they already carry) and its vertex mask, and attaches the new
+    profile to the project as one undo step
+  - **Profile editor**: the 52 canonical landmarks as a checklist grouped by
+    region; pick one and click the mesh to place it; mirrored partners fill
+    in at the reflected surface point (toggle); skip, remove, add custom
+    landmarks (single or left/right pair); drag points with the midline
+    lock; paint the default mask; its own undo history; Save or Cancel
+    (Cancel confirms when there are changes). File actions are blocked
+    while it is open
+  - **Manage profiles**: rename, duplicate (built-ins too), delete (confirm),
+    set a default profile for File > New, and import/export a profile as one
+    `.mvprofile.zip` (profile JSON plus mesh, checked against its fingerprint
+    on import)
+  - Built-in profiles are read-only; user profiles live in
+    `%APPDATA%\MetaVisage\profiles\<id>\` with their own mesh copy
+
 ### FR-3: Stage 2 - Point Reference
 
 #### FR-3.1: Dual Viewport Layout
@@ -327,6 +353,44 @@ The MVP will focus on core mesh morphing functionality for Windows platforms, pr
   - Highlight corresponding point in other viewport
   - Show list of all points in sidebar
   - Click point in list to select/focus in viewport
+  - Drag a placed point to move it along that viewport's mesh surface; a
+    press without moving still just selects (Sprint 13)
+  - One drag is one undo step, covering a mirrored partner if it moved
+  - Midline landmarks (no mirror partner) slide along the exact line where the
+    symmetry plane cuts the mesh while dragged, even between vertices; a
+    per-point lock toggle in the point list, and an "Unlock
+    midline points" setting, free them for asymmetrical features
+  - Dragging one point of a symmetric pair moves its partner to the closest
+    surface point to the mirrored spot ("Move mirrored pairs together", on by
+    default); holding Alt while dragging moves one side only
+  - Moving an auto-placed point marks it as checked: it loses its auto status
+    and confidence band
+
+#### FR-3.4a: Auto-map (Sprint 13)
+- **Description**: Place the source profile's landmarks on the target
+  automatically, then let the user check and fix them
+- **Requirements**:
+  - On Continue from Stage 1, when the source profile has landmarks, a target
+    is loaded and Stage 2 has no points, ask **Auto-map points** (primary) or
+    **Place manually**
+  - The sidebar **Auto-map** button runs the same solve; with points already
+    placed it asks to replace the auto-placed points or only fill missing
+    landmarks. Points the user placed or moved are never changed
+  - The solve runs on a worker thread with a progress modal and Cancel; the
+    UI keeps drawing. Cancel, a refused solve (the target faces the wrong way
+    or is too far from the Stage 1 alignment) and a project switch leave the
+    points unchanged; a refusal explains how to fix Stage 1
+  - Each auto-map is one undo step. Left/right landmarks are linked as
+    symmetric pairs. Stage 1 transforms are never changed
+  - Confidence bands: high (>= 0.75), review (0.4-0.75), low (< 0.4). Auto
+    points on the target show a green, amber or red ring around their
+    pair-coloured marker (not on the source, whose landmarks come from the
+    profile; a "Show confidence rings" setting hides them),
+    the selected point's label shows its landmark name and band, and the
+    sidebar shows counts per band and lists low and review points first
+  - Points store their landmark id, auto status, confidence and midline
+    unlock in the project (format v3, optional fields), along with the
+    target symmetry plane found by auto-map
 
 #### FR-3.5: Symmetry Mode
 - **Description**: Mirror point placement across mesh symmetry plane

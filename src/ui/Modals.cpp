@@ -64,6 +64,10 @@ void RenderConfirmModal(ConfirmModalState& state) {
     // is genuinely centered. No perf concern for a small fixed popup.
     const auto center = ImGui::GetMainViewport()->GetCenter();
     ImGui::SetNextWindowPos(center, ImGuiCond_Always, ImVec2(0.5f, 0.5f));
+    // Sprint 14 — a fixed width: auto-resize alone let wrapped messages
+    // narrow the window each frame until it was a tall column with the
+    // buttons pushed off-screen.
+    ImGui::SetNextWindowSize(ImVec2(440.0f, 0.0f), ImGuiCond_Always);
     if (ImGui::BeginPopupModal("##ConfirmModal", nullptr, ImGuiWindowFlags_AlwaysAutoResize)) {
         ImGui::TextUnformatted(state.title.c_str());
         ImGui::Separator();
@@ -103,6 +107,11 @@ void ErrorModalState::OpenInfo(const std::string& msg, const std::string& t) {
 
 void RenderErrorModal(ErrorModalState& state) {
     HandlePendingOpen("##ErrorModal", state.pendingOpen);
+    // Same fixed width and centring as the confirm modal, so long messages
+    // wrap into a readable box.
+    ImGui::SetNextWindowPos(ImGui::GetMainViewport()->GetCenter(), ImGuiCond_Always,
+                            ImVec2(0.5f, 0.5f));
+    ImGui::SetNextWindowSize(ImVec2(440.0f, 0.0f), ImGuiCond_Always);
     if (ImGui::BeginPopupModal("##ErrorModal", nullptr, ImGuiWindowFlags_AlwaysAutoResize)) {
         const ImVec4 errorColor(0.95f, 0.45f, 0.45f, 1.0f);
         const ImVec4 infoColor (0.40f, 0.85f, 0.50f, 1.0f);
@@ -336,7 +345,7 @@ void RenderWelcomeModal(WelcomeModalState& state) {
                 MvStyle::ScopedFont f(MvStyle::Font.MonoSm);
                 dl->AddText(ImVec2(textX, hMin.y + 24.0f),
                             ColU(MvStyle::MvBlue400),
-                            "V 2.0.0 \xC2\xB7 EARLY ACCESS");
+                            "V " METAVISAGE_VERSION " \xC2\xB7 EARLY ACCESS");
             }
             {
                 MvStyle::ScopedFont f(MvStyle::Font.Display);
@@ -884,12 +893,20 @@ void RenderShortcutsModal(ShortcutsModalState& state) {
                 {"Ctrl+Z", "Undo"},
                 {"Ctrl+Shift+Z / Ctrl+Y", "Redo"},
             }},
+            {"Point reference (Stage 2)", {
+                {"Click mesh", "Place a point"},
+                {"Drag point", "Move it along the mesh (mirrored pair follows)"},
+                {"Alt + drag point", "Move one side of a mirrored pair only"},
+                {"Delete", "Remove the selected point"},
+            }},
             {"Viewport", {
                 {"MMB drag", "Orbit camera"},
                 {"Shift + MMB drag", "Pan camera"},
                 {"Scroll", "Zoom"},
                 {"Numpad 1/3/7", "Front / Side / Top view"},
                 {"Numpad 5", "Toggle perspective / orthographic"},
+                {"F", "Frame meshes"},
+                {"Home", "Reset camera"},
             }},
             {"Transform (Alignment stage)", {
                 {"G", "Move gizmo"},
@@ -923,6 +940,279 @@ void RenderShortcutsModal(ShortcutsModalState& state) {
         if (ImGui::Button("Close", ImVec2(120, 0))) ImGui::CloseCurrentPopup();
         ImGui::EndPopup();
     }
+}
+
+// ---------------------------------------------------------------------------
+// Auto-map
+// ---------------------------------------------------------------------------
+
+void AutoMapModalState::OpenPrompt(const std::string& profile) {
+    ask = Ask::Prompt;
+    profileName = profile;
+    choice = AutoMapChoice::None;
+    pendingChoice = true;
+}
+
+void AutoMapModalState::OpenRerun() {
+    ask = Ask::Rerun;
+    choice = AutoMapChoice::None;
+    pendingChoice = true;
+}
+
+void AutoMapModalState::OpenProgress() {
+    running = true;
+    progress = 0.0f;
+    stageText.clear();
+    pendingProgress = true;
+}
+
+namespace {
+
+bool PrimaryButton(const char* label, const ImVec2& size) {
+    ImGui::PushStyleColor(ImGuiCol_Button,        MvStyle::MvBlue500);
+    ImGui::PushStyleColor(ImGuiCol_ButtonHovered, MvStyle::MvBlue400);
+    ImGui::PushStyleColor(ImGuiCol_ButtonActive,  MvStyle::MvBlue600);
+    ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(0x05/255.f, 0x13/255.f, 0x22/255.f, 1.f));
+    const bool clicked = ImGui::Button(label, size);
+    ImGui::PopStyleColor(4);
+    return clicked;
+}
+
+} // namespace
+
+void RenderAutoMapModals(AutoMapModalState& state) {
+    const auto center = ImGui::GetMainViewport()->GetCenter();
+
+    HandlePendingOpen("##AutoMapChoice", state.pendingChoice);
+    ImGui::SetNextWindowPos(center, ImGuiCond_Always, ImVec2(0.5f, 0.5f));
+    ImGui::SetNextWindowSize(ImVec2(440.0f, 0.0f), ImGuiCond_Always);
+    if (ImGui::BeginPopupModal("##AutoMapChoice", nullptr, ImGuiWindowFlags_AlwaysAutoResize)) {
+        const bool prompt = state.ask == AutoMapModalState::Ask::Prompt;
+        {
+            MvStyle::ScopedFont f(MvStyle::Font.Heading);
+            ImGui::TextUnformatted(prompt ? "Auto-map points?" : "Run auto-map again?");
+        }
+        ImGui::Spacing();
+        ImGui::PushStyleColor(ImGuiCol_Text, MvStyle::MvFg2);
+        if (prompt) {
+            ImGui::TextWrapped("MetaVisage can place the %s landmarks on the target for "
+                               "you. You can check and drag every point afterwards.",
+                               state.profileName.c_str());
+        } else {
+            ImGui::TextWrapped("Replace the auto-placed points, or only add landmarks that "
+                               "are missing. Points you placed or moved yourself are kept "
+                               "either way.");
+        }
+        ImGui::PopStyleColor();
+        ImGui::Spacing();
+        ImGui::Spacing();
+        const float w = ImGui::GetContentRegionAvail().x;
+        if (prompt) {
+            const ImVec2 size((w - ImGui::GetStyle().ItemSpacing.x) * 0.5f, 32.0f);
+            if (PrimaryButton("Auto-map points", size)) {
+                state.choice = AutoMapChoice::AutoMap;
+                ImGui::CloseCurrentPopup();
+            }
+            ImGui::SameLine();
+            if (ImGui::Button("Place manually", size)) {
+                state.choice = AutoMapChoice::Manual;
+                ImGui::CloseCurrentPopup();
+            }
+        } else {
+            const ImVec2 size((w - 2.0f * ImGui::GetStyle().ItemSpacing.x) / 3.0f, 32.0f);
+            if (PrimaryButton("Replace auto", size)) {
+                state.choice = AutoMapChoice::Replace;
+                ImGui::CloseCurrentPopup();
+            }
+            ImGui::SameLine();
+            if (ImGui::Button("Fill missing", size)) {
+                state.choice = AutoMapChoice::Fill;
+                ImGui::CloseCurrentPopup();
+            }
+            ImGui::SameLine();
+            if (ImGui::Button("Cancel", size)) {
+                state.choice = AutoMapChoice::Cancel;
+                ImGui::CloseCurrentPopup();
+            }
+        }
+        ImGui::EndPopup();
+    }
+
+    HandlePendingOpen("##AutoMapProgress", state.pendingProgress);
+    ImGui::SetNextWindowPos(center, ImGuiCond_Always, ImVec2(0.5f, 0.5f));
+    ImGui::SetNextWindowSize(ImVec2(400.0f, 0.0f), ImGuiCond_Always);
+    if (ImGui::BeginPopupModal("##AutoMapProgress", nullptr, ImGuiWindowFlags_AlwaysAutoResize)) {
+        if (!state.running) {
+            ImGui::CloseCurrentPopup();
+        } else {
+            {
+                MvStyle::ScopedFont f(MvStyle::Font.Heading);
+                ImGui::TextUnformatted("Auto-mapping points");
+            }
+            ImGui::Spacing();
+            ImGui::PushStyleColor(ImGuiCol_Text, MvStyle::MvFg3);
+            ImGui::TextUnformatted(state.stageText.empty() ? "Starting" : state.stageText.c_str());
+            ImGui::PopStyleColor();
+            char label[32];
+            std::snprintf(label, sizeof(label), "%.0f%%", state.progress * 100.0f);
+            ImGui::ProgressBar(state.progress, ImVec2(-FLT_MIN, 0.0f), label);
+            ImGui::Spacing();
+            if (ImGui::Button("Cancel", ImVec2(-FLT_MIN, 30.0f))) {
+                state.choice = AutoMapChoice::CancelRun;
+            }
+        }
+        ImGui::EndPopup();
+    }
+}
+
+// ---------------------------------------------------------------------------
+// Name prompt (Sprint 14)
+// ---------------------------------------------------------------------------
+
+void NamePromptModalState::Open(const std::string& t, const std::string& msg,
+                                const std::string& initialName,
+                                std::function<void(const std::string&)> confirm,
+                                const std::string& confirmLbl) {
+    title = t;
+    message = msg;
+    confirmLabel = confirmLbl;
+    std::snprintf(buffer, sizeof(buffer), "%s", initialName.c_str());
+    onConfirm = std::move(confirm);
+    pendingOpen = true;
+}
+
+void RenderNamePromptModal(NamePromptModalState& state) {
+    HandlePendingOpen("##NamePrompt", state.pendingOpen);
+    const auto center = ImGui::GetMainViewport()->GetCenter();
+    ImGui::SetNextWindowPos(center, ImGuiCond_Always, ImVec2(0.5f, 0.5f));
+    ImGui::SetNextWindowSize(ImVec2(420.0f, 0.0f), ImGuiCond_Always);
+    if (ImGui::BeginPopupModal("##NamePrompt", nullptr, ImGuiWindowFlags_AlwaysAutoResize)) {
+        {
+            MvStyle::ScopedFont f(MvStyle::Font.Heading);
+            ImGui::TextUnformatted(state.title.c_str());
+        }
+        if (!state.message.empty()) {
+            ImGui::Spacing();
+            ImGui::PushStyleColor(ImGuiCol_Text, MvStyle::MvFg2);
+            ImGui::TextWrapped("%s", state.message.c_str());
+            ImGui::PopStyleColor();
+        }
+        ImGui::Spacing();
+        if (ImGui::IsWindowAppearing()) ImGui::SetKeyboardFocusHere();
+        ImGui::SetNextItemWidth(-FLT_MIN);
+        const bool enter = ImGui::InputText("##name", state.buffer, sizeof(state.buffer),
+                                            ImGuiInputTextFlags_EnterReturnsTrue);
+        std::string name(state.buffer);
+        while (!name.empty() && name.back() == ' ') name.pop_back();
+        while (!name.empty() && name.front() == ' ') name.erase(name.begin());
+        ImGui::Spacing();
+        const float w = (ImGui::GetContentRegionAvail().x - ImGui::GetStyle().ItemSpacing.x) * 0.5f;
+        ImGui::BeginDisabled(name.empty());
+        if (PrimaryButton(state.confirmLabel.c_str(), ImVec2(w, 30.0f)) || (enter && !name.empty())) {
+            auto confirm = std::move(state.onConfirm);
+            state.onConfirm = nullptr;
+            ImGui::CloseCurrentPopup();
+            if (confirm) confirm(name);
+        }
+        ImGui::EndDisabled();
+        ImGui::SameLine();
+        if (ImGui::Button("Cancel", ImVec2(w, 30.0f))) {
+            state.onConfirm = nullptr;
+            ImGui::CloseCurrentPopup();
+        }
+        ImGui::EndPopup();
+    }
+}
+
+// ---------------------------------------------------------------------------
+// Manage profiles (Sprint 14)
+// ---------------------------------------------------------------------------
+
+void RenderManageProfilesModal(ManageProfilesModalState& state,
+                               const std::vector<SourceProfile>& profiles,
+                               const std::string& defaultProfileId) {
+    HandlePendingOpen("Manage Source Profiles", state.pendingOpen);
+    const auto center = ImGui::GetMainViewport()->GetCenter();
+    ImGui::SetNextWindowPos(center, ImGuiCond_Appearing, ImVec2(0.5f, 0.5f));
+    ImGui::SetNextWindowSize(ImVec2(620.0f, 440.0f), ImGuiCond_Appearing);
+    if (!ImGui::BeginPopupModal("Manage Source Profiles", nullptr, ImGuiWindowFlags_NoSavedSettings)) {
+        return;
+    }
+    // Full-height row buttons; SmallButton was too short to hit comfortably.
+    auto RowButton = [](const char* label) { return ImGui::Button(label, ImVec2(0.0f, 26.0f)); };
+    auto request = [&](ProfileManageAction a, const std::string& id) {
+        state.action = a;
+        state.targetId = id;
+    };
+
+    ImGui::PushStyleColor(ImGuiCol_Text, MvStyle::MvFg2);
+    ImGui::TextWrapped("Built-in profiles are read-only; duplicate one to change it. "
+                       "The default profile is picked automatically for File > New.");
+    ImGui::PopStyleColor();
+    ImGui::Spacing();
+
+    const float footerH = 40.0f;
+    if (ImGui::BeginChild("##profileList", ImVec2(0.0f, -footerH), true)) {
+        for (const auto& p : profiles) {
+            ImGui::PushID(p.id.c_str());
+            const bool isDefault = p.id == defaultProfileId;
+            {
+                MvStyle::ScopedFont f(MvStyle::Font.BodyMd);
+                ImGui::TextUnformatted(p.name.c_str());
+            }
+            ImGui::SameLine();
+            ImGui::PushStyleColor(ImGuiCol_Text, MvStyle::MvFg3);
+            std::string tags = p.isBuiltIn ? "BUILT-IN" : "USER";
+            if (isDefault) tags += " \xC2\xB7 DEFAULT";
+            if (p.meshMissing) tags += " \xC2\xB7 MESH MISSING";
+            {
+                MvStyle::ScopedFont f(MvStyle::Font.MonoSm);
+                ImGui::TextUnformatted(tags.c_str());
+            }
+            ImGui::PopStyleColor();
+            ImGui::PushStyleColor(ImGuiCol_Text, MvStyle::MvFg4);
+            ImGui::Text("%zu landmarks%s", p.landmarks.size(), p.HasMask() ? ", default mask" : "");
+            ImGui::PopStyleColor();
+
+            if (!p.isBuiltIn) {
+                ImGui::BeginDisabled(p.meshMissing);
+                if (RowButton("Edit")) request(ProfileManageAction::Edit, p.id);
+                ImGui::EndDisabled();
+                ImGui::SameLine();
+                if (RowButton("Rename")) request(ProfileManageAction::Rename, p.id);
+                ImGui::SameLine();
+            }
+            ImGui::BeginDisabled(p.meshMissing);
+            if (RowButton("Duplicate")) request(ProfileManageAction::Duplicate, p.id);
+            ImGui::SameLine();
+            if (RowButton("Export")) request(ProfileManageAction::Export, p.id);
+            ImGui::EndDisabled();
+            ImGui::SameLine();
+            if (isDefault) {
+                if (RowButton("Clear default")) request(ProfileManageAction::SetDefault, "");
+            } else {
+                ImGui::BeginDisabled(p.meshMissing);
+                if (RowButton("Set as default")) request(ProfileManageAction::SetDefault, p.id);
+                ImGui::EndDisabled();
+            }
+            if (!p.isBuiltIn) {
+                ImGui::SameLine();
+                ImGui::PushStyleColor(ImGuiCol_Text, MvStyle::MvDanger);
+                if (RowButton("Delete")) request(ProfileManageAction::Delete, p.id);
+                ImGui::PopStyleColor();
+            }
+            ImGui::Separator();
+            ImGui::PopID();
+        }
+    }
+    ImGui::EndChild();
+
+    if (ImGui::Button("Import...", ImVec2(120.0f, 30.0f))) request(ProfileManageAction::Import, "");
+    ImGui::SameLine();
+    if (ImGui::Button("Close", ImVec2(120.0f, 30.0f))) ImGui::CloseCurrentPopup();
+    // Edit hands the window over to the profile editor.
+    if (state.action == ProfileManageAction::Edit) ImGui::CloseCurrentPopup();
+    ImGui::EndPopup();
 }
 
 } // namespace MetaVisage

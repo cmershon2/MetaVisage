@@ -28,9 +28,14 @@ void Camera::CopyStateFrom(const Camera& other) {
     distance_ = other.distance_;
     yaw_ = other.yaw_;
     pitch_ = other.pitch_;
+    autoPerspective_ = other.autoPerspective_;
 }
 
 void Camera::Orbit(float deltaX, float deltaY) {
+    if (autoPerspective_) {
+        projectionMode_ = ProjectionMode::Perspective;
+        autoPerspective_ = false;
+    }
     const float sensitivity = 0.5f;
     yaw_ -= deltaX * sensitivity;
     pitch_ += deltaY * sensitivity;
@@ -78,6 +83,7 @@ void Camera::Reset() {
     position_ = Vector3(0.0f, 0.0f, 5.0f);
     target_ = Vector3(0.0f, 0.0f, 0.0f);
     up_ = Vector3(0.0f, 1.0f, 0.0f);
+    autoPerspective_ = false;
     distance_ = 5.0f;
     yaw_ = 0.0f;
     pitch_ = 0.0f;
@@ -131,6 +137,13 @@ void Camera::UpdatePositionFromAngles() {
     float z = distance_ * std::cos(pitchRad) * std::cos(yawRad);
 
     position_ = target_ + Vector3(x, y, z);
+
+    // True camera up for these angles. Equivalent to world +Y for the view
+    // basis below ±90° pitch, and stays valid at exactly ±90° (Numpad 7),
+    // where a fixed +Y up is parallel to the view direction.
+    up_ = Vector3(-std::sin(pitchRad) * std::sin(yawRad),
+                  std::cos(pitchRad),
+                  -std::sin(pitchRad) * std::cos(yawRad));
 }
 
 Matrix4x4 Camera::GetViewMatrix() const {

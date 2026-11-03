@@ -12,7 +12,8 @@ Dependency downloads require network access during the initial vcpkg setup.
 - An OpenGL 4.3 capable GPU for the application and UI smoke test
 
 The vcpkg manifest installs GLFW, Dear ImGui (including the test engine), GLEW,
-Eigen, Assimp, nlohmann/json, and Native File Dialog Extended. Qt is not used.
+Eigen, Assimp, nlohmann/json, Native File Dialog Extended, and kubazip. Qt is
+not used.
 
 ## First-time setup
 
@@ -74,6 +75,16 @@ The helper accepts `-MinGWPath`, `-VcpkgToolchain`, `-BuildType`, `-Clean`, and
 runtime staging. It does not run `windeployqt`. Standalone MinGW validation is
 still pending; do not reuse an MSVC-configured build directory for MinGW.
 
+## App icon
+
+`MetaVisage.exe` embeds `assets/icons/metavisage.ico` through
+`resources/metavisage.rc.in`. The resource is named `GLFW_ICON`, so GLFW also
+uses it for the window and taskbar. After changing the
+`assets/icons/Windows/Square44x44Logo.targetsize-*.png` files, regenerate the
+icon with `.\resources\build-ico.ps1`. MinGW builds compile the resource in a
+separate `windres` step because windres cannot handle include paths that
+contain spaces.
+
 ## Test
 
 ```powershell
@@ -81,8 +92,9 @@ ctest --test-dir build -C Release --output-on-failure
 ctest --test-dir build -C Release -L ui --output-on-failure
 ```
 
-The four smoke targets cover mesh round-trip/export, v1 project compatibility,
-wrap parity, and UI startup/navigation/shading/brush selection. The UI lane opens
+The six smoke targets cover mesh round-trip/export, v1 project compatibility,
+source profiles, auto-map landmark accuracy, wrap parity, and UI
+startup/navigation/shading/brush selection. The UI lane opens
 a real GLFW window. Wrap parity can take about 70 seconds (120-second timeout).
 
 ## Troubleshooting
@@ -102,3 +114,38 @@ Settings, recent projects, and inspector preferences live under
 `%APPDATA%/MetaVisage`. Legacy account fields are ignored and omitted when
 settings are saved. The standalone application does not register browser URL
 handlers, contact a web service, or report exports.
+
+## Package a release
+
+After the Release build and tests pass, run from the repository root:
+
+```powershell
+.\package-release.ps1
+```
+
+The default version comes from `vcpkg.json` (currently `2.1.0`). It must
+match `project(MetaVisage VERSION ...)` in `CMakeLists.txt`, which is the
+version the app shows; configure fails if they differ, so bump both together.
+Use `-Version 2.1.0-rc.1` to label a release candidate. Packaging uses the existing
+`build/bin/Release` output; it does not rebuild, rerun tests, create a Git tag,
+or upload a release.
+
+Outputs are under the ignored `release/` directory:
+
+- `MetaVisage-2.1.0-win-x64/`: executable, staged runtime DLLs and assets,
+  run instructions, project license, and dependency notices.
+- `MetaVisage-2.1.0-win-x64.zip`: upload this as the Windows binary asset.
+- `MetaVisage-2.1.0-win-x64.zip.sha256`: upload alongside the ZIP for verification.
+
+The script requires staged assets and DLLs and copies notices from the vcpkg
+installation identified by `build/CMakeCache.txt`, plus embedded stb licenses.
+It excludes test executables, fixtures, logs, and developer configuration. It
+never deletes prior packages or overwrites an existing output; move an existing
+version's outputs aside or choose another version before rerunning.
+
+Before publishing, extract the ZIP on a clean Windows machine and verify launch,
+mesh loading, wrapping, project save/reopen, and FBX export. The package requires
+the Microsoft Visual C++ x64 Redistributable; its installer is not bundled.
+Bundled head/font/icon provenance and notices still need verification as recorded
+in the [documentation review](.agents/context/reviews/open-source-documentation.md).
+Collecting dependency notices does not resolve those asset-specific items.

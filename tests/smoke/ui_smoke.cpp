@@ -28,20 +28,31 @@
 
 #include "core/Project.h"
 #include "core/Mesh.h"
+#include "core/TextureData.h"
 #include "core/Types.h"
+#include "core/UndoStack.h"
+#include "core/WrapPreset.h"
+#include "io/ProfileStore.h"
 #include "ui/AppWindow.h"
 #include "ui/Viewport.h"
 #include "ui/ViewportHost.h"
+#include "utils/Config.h"
 #include "utils/Logger.h"
+#include "utils/RayCaster.h"
 
 #include "imgui_te_context.h"
 #include "imgui_te_engine.h"
 
 #include <GLFW/glfw3.h>
 #include <imgui.h>
+#include <imgui_internal.h>
 
 #include <chrono>
+#include <cmath>
 #include <cstdio>
+#include <filesystem>
+#include <functional>
+#include <fstream>
 #include <string>
 
 using namespace MetaVisage;
@@ -54,6 +65,41 @@ struct AppWindowTestAccess {
     static void StartMorph(AppWindow& app) { app.StartMorph(); }
     static void NewProject(AppWindow& app) { app.OnFileNewProject(); }
     static bool MorphRunning(const AppWindow& app) { return app.morphRunning_.load(); }
+    static void ImportTargetMesh(AppWindow& app, const std::string& path) {
+        app.ImportTargetMeshFromDisk(path);
+    }
+    static void RefreshTargetTexturePreview(AppWindow& app) { app.RefreshTargetTexturePreview(); }
+    static std::vector<SourceProfile>& SourceProfiles(AppWindow& app) { return app.sourceProfiles_; }
+    // Sprint 13 — auto-map and point dragging.
+    static void SelectSourceProfile(AppWindow& app, const SourceProfile& p) { app.SelectSourceProfile(p); }
+    static bool AutoMapRunning(const AppWindow& app) { return app.autoMapRunning_.load(); }
+    static void StartAutoMapFill(AppWindow& app) { app.StartAutoMap(AppWindow::AutoMapMode::Fill); }
+    static void RequestAutoMap(AppWindow& app) { app.RequestAutoMap(); }
+    static void BeginPointDrag(AppWindow& app, int i) { app.BeginPointDrag(i); }
+    static void DragPoint(AppWindow& app, int i, PointSide side, const Ray& ray, bool oneSide) {
+        app.DragPoint(i, side, ray, oneSide);
+    }
+    static void EndPointDrag(AppWindow& app, int i) { app.EndPointDrag(i); }
+    // Sprint 14 — custom source profiles.
+    static void RequestSaveSourceAsProfile(AppWindow& app) { app.RequestSaveSourceAsProfile(); }
+    static void OpenProfileEditor(AppWindow& app, const SourceProfile* p) { app.OpenProfileEditor(p); }
+    static bool EditorActive(const AppWindow& app) { return app.editor_.active; }
+    static const std::vector<ProfileLandmark>& EditorLandmarks(const AppWindow& app) {
+        return app.editor_.draft.landmarks;
+    }
+    static void EditorActions(AppWindow& app, const StageSidebar::Actions::EditorActions& a) {
+        app.HandleProfileEditorActions(a);
+    }
+    static void EditorPlacePoint(AppWindow& app, const Vector3& pos, int vertex) {
+        app.EditorPlacePoint(pos, vertex);
+    }
+    static void ManageAction(AppWindow& app, ProfileManageAction action, const std::string& id) {
+        app.manageProfiles_.action = action;
+        app.manageProfiles_.targetId = id;
+        app.HandleManageAction();
+    }
+    static void NewProjectWithDefault(AppWindow& app) { app.NewProjectWithDefaultProfile(); }
+    static void ReloadProfiles(AppWindow& app) { app.ReloadSourceProfiles(); }
 };
 
 } // namespace MetaVisage
@@ -75,6 +121,16 @@ namespace {
 // Shutdown(), so it's never null mid-test in practice; the guard
 // exists for defence-in-depth, not as a routine null check.
 AppWindow* g_app = nullptr;
+
+// Test bodies run on the engine's coroutine thread, where the GL context
+// is not current. Anything that touches GL (texture/mesh uploads) goes
+// through RunOnMainThread, which the harness loop drains before each tick.
+std::function<void()> g_mainThreadTask;
+
+void RunOnMainThread(ImGuiTestContext* ctx, std::function<void()> task) {
+    g_mainThreadTask = std::move(task);
+    while (g_mainThreadTask) ctx->Yield();
+}
 
 void DismissWelcomeModalIfOpen(ImGuiTestContext* ctx) {
     // The welcome modal pops on first frame because no project is
@@ -308,10 +364,1036 @@ void RegisterScenario_ProjectSwitchDuringMorph(ImGuiTestEngine* engine) {
     };
 }
 
+// Sprint 9 — shared fixture: a fresh project in Alignment with a unit
+// tetrahedron as the target mesh, framed by the primary camera.
+Viewport* PrepareAlignmentFixture(ImGuiTestContext* ctx) {
+    AppWindowTestAccess::NewProject(*g_app);
+    auto mesh = std::make_shared<Mesh>();
+    mesh->SetVertices({Vector3(0, 0, 0), Vector3(1, 0, 0),
+                       Vector3(0, 1, 0), Vector3(0, 0, 1)});
+    std::vector<Face> faces(4);
+    faces[0].vertexIndices = {0, 2, 1};
+    faces[1].vertexIndices = {0, 1, 3};
+    faces[2].vertexIndices = {0, 3, 2};
+    faces[3].vertexIndices = {1, 2, 3};
+    mesh->SetFaces(faces);
+    mesh->CalculateNormals();
+    Project& project = *g_app->GetProject();
+    project.GetTargetMesh().mesh = mesh;
+    project.GetTargetMesh().isLoaded = true;
+    project.SetCurrentStage(WorkflowStage::Alignment);
+    Viewport* vp = g_app->GetViewportHost()->GetPrimaryViewport();
+    vp->GetCamera()->FocusOnBounds(mesh->GetBounds());
+    ctx->Yield(3); // let the viewport record its pixel size
+    return vp;
+}
+
+// Projects a world point to viewport-local pixels (Y down), matching the
+// space Viewport::OnMouse* receives.
+Vector3 WorldToViewportPixels(const Viewport& vp, const Vector3& p) {
+    const float w = vp.GetPixelWidth();
+    const float h = vp.GetPixelHeight();
+    const Camera& cam = *const_cast<Viewport&>(vp).GetCamera();
+    const Matrix4x4 vpm = cam.GetProjectionMatrix(w / h) * cam.GetViewMatrix();
+    const float* m = vpm.m;
+    const float cx = m[0] * p.x + m[4] * p.y + m[8]  * p.z + m[12];
+    const float cy = m[1] * p.x + m[5] * p.y + m[9]  * p.z + m[13];
+    const float cw = m[3] * p.x + m[7] * p.y + m[11] * p.z + m[15];
+    return Vector3((cx / cw + 1.0f) * 0.5f * w, (1.0f - cy / cw) * 0.5f * h, 0.0f);
+}
+
+void RegisterScenario_AlignmentTransformHotkeys(ImGuiTestEngine* engine) {
+    ImGuiTest* t = IM_REGISTER_TEST(engine, "smoke", "alignment_transform_hotkeys");
+    t->TestFunc = [](ImGuiTestContext* ctx) {
+        if (!g_app || !g_app->GetProject() || !g_app->GetViewportHost()) { IM_CHECK(false); return; }
+        DismissWelcomeModalIfOpen(ctx);
+        Viewport* vp = PrepareAlignmentFixture(ctx);
+        IM_CHECK(vp != nullptr);
+        if (!vp) return;
+
+        // Blender-style bindings, which the tool rail badges now advertise.
+        const struct { int key; TransformMode mode; } kBindings[] = {
+            {GLFW_KEY_G, TransformMode::Move},
+            {GLFW_KEY_R, TransformMode::Rotate},
+            {GLFW_KEY_S, TransformMode::Scale},
+        };
+        for (const auto& b : kBindings) {
+            vp->OnKey(b.key, 0, GLFW_PRESS, 0);
+            ctx->Yield();
+            IM_CHECK(vp->GetTransformMode() == b.mode);
+        }
+        AppWindowTestAccess::NewProject(*g_app);
+    };
+}
+
+void RegisterScenario_AlignmentGizmoTracksCursor(ImGuiTestEngine* engine) {
+    ImGuiTest* t = IM_REGISTER_TEST(engine, "smoke", "alignment_gizmo_tracks_cursor");
+    t->TestFunc = [](ImGuiTestContext* ctx) {
+        if (!g_app || !g_app->GetProject() || !g_app->GetViewportHost()) { IM_CHECK(false); return; }
+        DismissWelcomeModalIfOpen(ctx);
+        Viewport* vp = PrepareAlignmentFixture(ctx);
+        IM_CHECK(vp != nullptr && vp->GetPixelHeight() > 0.0f);
+        if (!vp || vp->GetPixelHeight() <= 0.0f) return;
+        Project& project = *g_app->GetProject();
+        Transform& xform = project.GetTargetMesh().transform;
+        UndoStack* undo = g_app->GetUndoStack();
+        IM_CHECK(undo != nullptr);
+        if (!undo) return;
+
+        // Drag the gizmo 120 px right / 40 px up: the mesh centre must land
+        // under the cursor (the old fixed 0.01 units/px did not track).
+        const Mesh& mesh = *project.GetTargetMesh().mesh;
+        auto centreOnScreen = [&] {
+            const Vector3 c = mesh.GetBounds().Center() + xform.GetPosition();
+            return WorldToViewportPixels(*vp, c);
+        };
+        vp->SetTransformMode(TransformMode::Move);
+        const int undoBefore = undo->Size();
+        const Vector3 start = centreOnScreen();
+        vp->OnMouseButton(GLFW_MOUSE_BUTTON_LEFT, GLFW_PRESS, 0, start.x, start.y);
+        vp->OnMouseMove(start.x + 60.0f, start.y - 20.0f);
+        vp->OnMouseMove(start.x + 120.0f, start.y - 40.0f);
+        vp->OnMouseButton(GLFW_MOUSE_BUTTON_LEFT, GLFW_RELEASE, 0,
+                          start.x + 120.0f, start.y - 40.0f);
+        ctx->Yield();
+        const Vector3 end = centreOnScreen();
+        IM_CHECK_LE(std::abs(end.x - (start.x + 120.0f)), 1.0f);
+        IM_CHECK_LE(std::abs(end.y - (start.y - 40.0f)), 1.0f);
+        IM_CHECK_EQ(undo->Size(), undoBefore + 1); // one undo per drag
+
+        // X-constrained drag in the front view moves along X only.
+        const Vector3 before = xform.GetPosition();
+        vp->OnKey(GLFW_KEY_X, 0, GLFW_PRESS, 0);
+        IM_CHECK(vp->GetAxisConstraint() == AxisConstraint::X);
+        const Vector3 s2 = centreOnScreen();
+        vp->OnMouseButton(GLFW_MOUSE_BUTTON_LEFT, GLFW_PRESS, 0, s2.x, s2.y);
+        vp->OnMouseMove(s2.x + 80.0f, s2.y + 30.0f);
+        vp->OnMouseButton(GLFW_MOUSE_BUTTON_LEFT, GLFW_RELEASE, 0, s2.x + 80.0f, s2.y + 30.0f);
+        ctx->Yield();
+        const Vector3 after = xform.GetPosition();
+        IM_CHECK_GT(after.x, before.x);
+        IM_CHECK_EQ(after.y, before.y);
+        IM_CHECK_EQ(after.z, before.z);
+        IM_CHECK_LE(std::abs(centreOnScreen().x - (s2.x + 80.0f)), 1.0f);
+        AppWindowTestAccess::NewProject(*g_app);
+    };
+}
+
+void RegisterScenario_AlignmentGizmoAllViews(ImGuiTestEngine* engine) {
+    ImGuiTest* t = IM_REGISTER_TEST(engine, "smoke", "alignment_gizmo_all_views");
+    t->TestFunc = [](ImGuiTestContext* ctx) {
+        if (!g_app || !g_app->GetProject() || !g_app->GetViewportHost()) { IM_CHECK(false); return; }
+        DismissWelcomeModalIfOpen(ctx);
+
+        // Orbited perspective plus the numpad orthographic views. Each
+        // names an axis lying in its view plane for the constrained drag.
+        const struct { const char* name; int key; int axisKey; int axis; } kViews[] = {
+            {"orbited",   0,              GLFW_KEY_X, 0},
+            {"front (1)", GLFW_KEY_KP_1,  GLFW_KEY_X, 0},
+            {"right (3)", GLFW_KEY_KP_3,  GLFW_KEY_Z, 2},
+            {"top (7)",   GLFW_KEY_KP_7,  GLFW_KEY_X, 0},
+        };
+        for (const auto& v : kViews) {
+            ctx->LogInfo("view: %s", v.name);
+            Viewport* vp = PrepareAlignmentFixture(ctx);
+            if (!vp || vp->GetPixelHeight() <= 0.0f) { IM_CHECK(false); return; }
+            if (v.key) vp->OnKey(v.key, 0, GLFW_PRESS, 0);
+            else vp->GetCamera()->Orbit(60.0f, 35.0f);
+            ctx->Yield();
+
+            Transform& xform = g_app->GetProject()->GetTargetMesh().transform;
+            const Mesh& mesh = *g_app->GetProject()->GetTargetMesh().mesh;
+            auto centreOnScreen = [&] {
+                return WorldToViewportPixels(*vp, mesh.GetBounds().Center() + xform.GetPosition());
+            };
+
+            // Free drag keeps the mesh centre under the cursor.
+            vp->SetTransformMode(TransformMode::Move);
+            const Vector3 s1 = centreOnScreen();
+            vp->OnMouseButton(GLFW_MOUSE_BUTTON_LEFT, GLFW_PRESS, 0, s1.x, s1.y);
+            vp->OnMouseMove(s1.x - 70.0f, s1.y + 50.0f);
+            vp->OnMouseButton(GLFW_MOUSE_BUTTON_LEFT, GLFW_RELEASE, 0, s1.x - 70.0f, s1.y + 50.0f);
+            ctx->Yield();
+            const Vector3 e1 = centreOnScreen();
+            IM_CHECK_LE(std::abs(e1.x - (s1.x - 70.0f)), 1.0f);
+            IM_CHECK_LE(std::abs(e1.y - (s1.y + 50.0f)), 1.0f);
+
+            // Axis-constrained drag changes only that axis.
+            const Vector3 before = xform.GetPosition();
+            vp->SetTransformMode(TransformMode::Move);
+            vp->OnKey(v.axisKey, 0, GLFW_PRESS, 0);
+            const Vector3 s2 = centreOnScreen();
+            vp->OnMouseButton(GLFW_MOUSE_BUTTON_LEFT, GLFW_PRESS, 0, s2.x, s2.y);
+            vp->OnMouseMove(s2.x + 90.0f, s2.y - 25.0f);
+            vp->OnMouseButton(GLFW_MOUSE_BUTTON_LEFT, GLFW_RELEASE, 0, s2.x + 90.0f, s2.y - 25.0f);
+            ctx->Yield();
+            const Vector3 after = xform.GetPosition();
+            const float b[3] = {before.x, before.y, before.z};
+            const float a[3] = {after.x, after.y, after.z};
+            for (int i = 0; i < 3; ++i) {
+                if (i == v.axis) IM_CHECK_NE(a[i], b[i]);
+                else IM_CHECK_EQ(a[i], b[i]);
+            }
+        }
+        AppWindowTestAccess::NewProject(*g_app);
+    };
+}
+
+void RegisterScenario_AlignmentTextureSurvivesTargetSwap(ImGuiTestEngine* engine) {
+    ImGuiTest* t = IM_REGISTER_TEST(engine, "smoke", "alignment_texture_survives_target_swap");
+    t->TestFunc = [](ImGuiTestContext* ctx) {
+        if (!g_app || !g_app->GetProject() || !g_app->GetViewportHost()) { IM_CHECK(false); return; }
+        DismissWelcomeModalIfOpen(ctx);
+        Viewport* vp = PrepareAlignmentFixture(ctx);
+        if (!vp) { IM_CHECK(false); return; }
+        Project& project = *g_app->GetProject();
+
+        // Albedo on the first target, as ImportTextureForSlot leaves it.
+        auto albedo = TextureData::Create(2, 2);
+        project.GetTargetTextures().Add("Albedo", albedo);
+        RunOnMainThread(ctx, [] { AppWindowTestAccess::RefreshTargetTexturePreview(*g_app); });
+        const Mesh* oldMesh = project.GetTargetMesh().mesh.get();
+        IM_CHECK(vp->HasMeshTexture(oldMesh));
+
+        // Replace the target from disk; the project's albedo must follow.
+        const std::filesystem::path obj =
+            std::filesystem::temp_directory_path() / "metavisage_smoke_target_swap.obj";
+        {
+            std::ofstream out(obj);
+            out << "v 0 0 0\nv 1 0 0\nv 0 1 0\nv 0 0 1\n"
+                   "f 1 3 2\nf 1 2 4\nf 1 4 3\nf 2 3 4\n";
+        }
+        RunOnMainThread(ctx, [&] { AppWindowTestAccess::ImportTargetMesh(*g_app, obj.string()); });
+        const Mesh* newMesh = project.GetTargetMesh().mesh.get();
+        IM_CHECK(project.GetTargetMesh().isLoaded);
+        IM_CHECK(newMesh != nullptr && newMesh != oldMesh);
+        IM_CHECK(vp->HasMeshTexture(newMesh));
+        std::error_code ec;
+        std::filesystem::remove(obj, ec);
+        AppWindowTestAccess::NewProject(*g_app);
+    };
+}
+
+void RegisterScenario_AlignmentTypedTransformEntry(ImGuiTestEngine* engine) {
+    ImGuiTest* t = IM_REGISTER_TEST(engine, "smoke", "alignment_typed_transform_entry");
+    t->TestFunc = [](ImGuiTestContext* ctx) {
+        if (!g_app || !g_app->GetProject() || !g_app->GetUndoStack()) { IM_CHECK(false); return; }
+        DismissWelcomeModalIfOpen(ctx);
+        PrepareAlignmentFixture(ctx);
+        Transform& xform = g_app->GetProject()->GetTargetMesh().transform;
+        UndoStack* undo = g_app->GetUndoStack();
+
+        // Child window paths are mangled; resolve the sidebar body first.
+        ctx->SetRef(ctx->WindowInfo("//Stage/##stage1body").Window);
+        const char* kPosX = "Position/##xform/X/##axisDrag";
+
+        // Double-click → type → Enter commits once, with exactly one undo.
+        const int undoBefore = undo->Size();
+        ctx->ItemDoubleClick(kPosX);
+        ctx->Yield(2);
+        ctx->KeyCharsReplaceEnter("12.5");
+        ctx->Yield(2);
+        IM_CHECK_FLOAT_NEAR(xform.GetPosition().x, 12.5f, 1e-4f);
+        IM_CHECK_EQ(undo->Size(), undoBefore + 1);
+
+        // Esc cancels: value and undo stack unchanged.
+        ctx->ItemDoubleClick(kPosX);
+        ctx->Yield(2);
+        ctx->KeyCharsReplace("99");
+        ctx->KeyPress(ImGuiKey_Escape);
+        ctx->Yield(2);
+        IM_CHECK_FLOAT_NEAR(xform.GetPosition().x, 12.5f, 1e-4f);
+        IM_CHECK_EQ(undo->Size(), undoBefore + 1);
+
+        ctx->SetRef("");
+        AppWindowTestAccess::NewProject(*g_app);
+    };
+}
+
+
+// Sprint 10.1 / 10.2 / 10.3 — Debug HUD hidden until opened from Help, the
+// stub Mesh menu is gone, and View menu items drive the viewport.
+void RegisterScenario_ShellMenus(ImGuiTestEngine* engine) {
+    ImGuiTest* t = IM_REGISTER_TEST(engine, "smoke", "shell_menus_and_debug_hud");
+    t->TestFunc = [](ImGuiTestContext* ctx) {
+        if (!g_app || !g_app->GetViewportHost()) { IM_CHECK(false); return; }
+        DismissWelcomeModalIfOpen(ctx);
+        ctx->SetRef("//##AppHostWindow");
+
+        auto hudVisible = [] {
+            ImGuiWindow* w = ImGui::FindWindowByName("Debug HUD");
+            return w != nullptr && w->Active;
+        };
+        IM_CHECK(!hudVisible());
+        ctx->MenuClick("Help/Debug HUD (Dev)");
+        ctx->Yield(2);
+        IM_CHECK(hudVisible());
+        ctx->MenuClick("Help/Debug HUD (Dev)");
+        ctx->Yield(2);
+        IM_CHECK(!hudVisible());
+
+        IM_CHECK(ctx->ItemExists("**/View"));
+        IM_CHECK(!ctx->ItemExists("**/Mesh"));
+
+        ViewportHost* host = g_app->GetViewportHost();
+        const bool gridBefore = host->GetShowGrid();
+        ctx->MenuClick("View/Show Grid");
+        ctx->Yield();
+        IM_CHECK(host->GetShowGrid() == !gridBefore);
+        IM_CHECK(host->GetSecondaryViewport()->GetShowGrid() == !gridBefore);
+        ctx->MenuClick("View/Show Grid");
+        ctx->Yield();
+        IM_CHECK(host->GetShowGrid() == gridBefore);
+
+        const Camera& cam = host->GetPrimaryViewport()->GetCameraConst();
+        ctx->MenuClick("View/Top");
+        ctx->Yield();
+        IM_CHECK(cam.GetProjectionMode() == ProjectionMode::OrthographicTop);
+        IM_CHECK_FLOAT_NEAR(cam.GetPitch(), 90.0f, 1e-3f);
+        ctx->MenuClick("View/Perspective");
+        ctx->Yield();
+        IM_CHECK(cam.GetProjectionMode() == ProjectionMode::Perspective);
+        ctx->MenuClick("View/Right");
+        ctx->Yield();
+        IM_CHECK(cam.GetProjectionMode() == ProjectionMode::OrthographicRight);
+        ctx->MenuClick("View/Reset Camera");
+        ctx->Yield();
+        IM_CHECK(cam.GetProjectionMode() == ProjectionMode::Perspective);
+
+        // Auto perspective: orbiting out of a preset view returns to
+        // perspective; an orthographic view chosen with the toolbar toggle
+        // stays orthographic while orbiting.
+        Camera* camera = host->GetPrimaryViewport()->GetCamera();
+        ctx->MenuClick("View/Front");
+        ctx->Yield();
+        IM_CHECK(cam.GetProjectionMode() == ProjectionMode::OrthographicFront);
+        camera->Orbit(20.0f, 10.0f);
+        IM_CHECK(cam.GetProjectionMode() == ProjectionMode::Perspective);
+
+        const char* kProjToggle = "//##VpToolbar_primary/proj/##b";
+        ctx->ItemClick(kProjToggle);
+        ctx->Yield();
+        IM_CHECK(cam.GetProjectionMode() != ProjectionMode::Perspective);
+        camera->Orbit(20.0f, 10.0f);
+        IM_CHECK(cam.GetProjectionMode() != ProjectionMode::Perspective);
+        ctx->ItemClick(kProjToggle);
+        ctx->Yield();
+        IM_CHECK(cam.GetProjectionMode() == ProjectionMode::Perspective);
+
+        ctx->SetRef("");
+        AppWindowTestAccess::NewProject(*g_app);
+    };
+}
+
+// Sprint 10.6 / 10.7 — Reset to source mesh is undoable and confirms when the
+// result was accepted; Reset to defaults only touches parameters.
+void RegisterScenario_MorphResetToSource(ImGuiTestEngine* engine) {
+    ImGuiTest* t = IM_REGISTER_TEST(engine, "smoke", "morph_reset_to_source");
+    t->TestFunc = [](ImGuiTestContext* ctx) {
+        if (!g_app || !g_app->GetProject() || !g_app->GetUndoStack()) { IM_CHECK(false); return; }
+        DismissWelcomeModalIfOpen(ctx);
+        AppWindowTestAccess::NewProject(*g_app);
+        Project& project = *g_app->GetProject();
+        UndoStack* undo = g_app->GetUndoStack();
+
+        // Tiny source mesh plus a fake processed result (no worker run).
+        auto makeTetra = [] {
+            auto mesh = std::make_shared<Mesh>();
+            mesh->SetVertices({Vector3(0, 0, 0), Vector3(1, 0, 0),
+                               Vector3(0, 1, 0), Vector3(0, 0, 1)});
+            std::vector<Face> faces(4);
+            faces[0].vertexIndices = {0, 2, 1};
+            faces[1].vertexIndices = {0, 1, 3};
+            faces[2].vertexIndices = {0, 3, 2};
+            faces[3].vertexIndices = {1, 2, 3};
+            mesh->SetFaces(faces);
+            mesh->CalculateNormals();
+            return mesh;
+        };
+        auto source = makeTetra();
+        project.GetMorphMesh().mesh = source;
+        project.GetMorphMesh().isLoaded = true;
+        MorphData& morph = project.GetMorphData();
+        auto deformed = makeTetra();
+        auto setProcessed = [&](bool accepted) {
+            morph.deformedMorphMesh = deformed;
+            morph.isProcessed = true;
+            morph.isAccepted = accepted;
+            morph.displacementMagnitudes = {0.1f, 0.2f, 0.3f, 0.4f};
+            morph.maxDisplacement = 0.4f;
+        };
+        setProcessed(false);
+        morph.vertexMask = {true, false, true, false};
+        project.SetCurrentStage(WorkflowStage::Morph);
+        ctx->Yield(3);
+
+        ctx->SetRef(ctx->WindowInfo("//Stage/##stage3body").Window);
+        IM_CHECK(ctx->ItemExists("Vertex Mask"));
+        // Order: Advanced, Vertex Mask, Reset to defaults.
+        IM_CHECK_LT(ctx->ItemInfo("Advanced").RectFull.Min.y,
+                    ctx->ItemInfo("Vertex Mask").RectFull.Min.y);
+        IM_CHECK_LT(ctx->ItemInfo("Vertex Mask").RectFull.Min.y,
+                    ctx->ItemInfo("Reset to defaults").RectFull.Min.y);
+
+        // Reset to defaults: parameters only.
+        morph.nricpLandmarkWeight = 99.0f;
+        ctx->ItemClick("Reset to defaults");
+        ctx->Yield();
+        IM_CHECK(WrapPreset::QuickWrap().MatchesParamsOf(morph));
+        IM_CHECK(morph.isProcessed && morph.deformedMorphMesh == deformed);
+        IM_CHECK_EQ(morph.vertexMask.size(), (size_t)4);
+
+        // Unaccepted result: reset immediately, one undo restores it.
+        const int undoBefore = undo->Size();
+        ctx->ItemClick("Reset to source mesh");
+        ctx->Yield(2);
+        IM_CHECK(!morph.isProcessed);
+        IM_CHECK(morph.deformedMorphMesh == nullptr);
+        IM_CHECK(morph.displacementMagnitudes.empty());
+        IM_CHECK_EQ(morph.vertexMask.size(), (size_t)4);
+        IM_CHECK_EQ(undo->Size(), undoBefore + 1);
+        undo->Undo();
+        ctx->Yield();
+        IM_CHECK(morph.isProcessed && morph.deformedMorphMesh == deformed);
+        IM_CHECK_FLOAT_NEAR(morph.maxDisplacement, 0.4f, 1e-6f);
+
+        // Accepted result: confirm first; Cancel keeps it.
+        setProcessed(true);
+        ctx->Yield();
+        ctx->ItemClick("Reset to source mesh");
+        ctx->Yield(2);
+        ctx->SetRef("//##ConfirmModal");
+        ctx->ItemClick("Cancel");
+        ctx->Yield(2);
+        IM_CHECK(morph.isProcessed && morph.isAccepted);
+        ctx->SetRef(ctx->WindowInfo("//Stage/##stage3body").Window);
+        ctx->ItemClick("Reset to source mesh");
+        ctx->Yield(2);
+        ctx->SetRef("//##ConfirmModal");
+        ctx->ItemClick("Reset");
+        ctx->Yield(2);
+        IM_CHECK(!morph.isProcessed && !morph.isAccepted);
+
+        // Nothing processed: the button is disabled.
+        ctx->SetRef(ctx->WindowInfo("//Stage/##stage3body").Window);
+        IM_CHECK((ctx->ItemInfo("Reset to source mesh").ItemFlags & ImGuiItemFlags_Disabled) != 0);
+
+        ctx->SetRef("");
+        AppWindowTestAccess::NewProject(*g_app);
+    };
+}
+
+// Sprint 11 — Stage 1 source picker. Picking the built-in profile loads the
+// bundled head with the profile's transform and a full-size mask; swapping
+// away while points exist confirms first and is one undo step; a profile
+// whose fingerprint doesn't match its mesh is refused without changes.
+void RegisterScenario_SourceProfilePicker(ImGuiTestEngine* engine) {
+    ImGuiTest* t = IM_REGISTER_TEST(engine, "smoke", "source_profile_picker");
+    t->TestFunc = [](ImGuiTestContext* ctx) {
+        if (!g_app || !g_app->GetUndoStack()) { IM_CHECK(false); return; }
+        DismissWelcomeModalIfOpen(ctx);
+        AppWindowTestAccess::NewProject(*g_app);
+        auto& profiles = AppWindowTestAccess::SourceProfiles(*g_app);
+        const std::vector<SourceProfile> savedProfiles = profiles;
+        const SourceProfile* found = ProfileStore::FindById(profiles, "metahuman-head-lod0");
+        IM_CHECK(found != nullptr);
+        const SourceProfile builtIn = *found;
+
+        // Test-only profiles on the same mesh: one with a default mask, one
+        // with a fingerprint that can't match.
+        SourceProfile masked = builtIn;
+        masked.id = "test-masked";
+        masked.name = "Test Masked";
+        masked.isBuiltIn = false;
+        masked.maskRanges = {{0, 9}};
+        SourceProfile wrong = builtIn;
+        wrong.id = "test-wrong";
+        wrong.name = "Test Wrong";
+        wrong.isBuiltIn = false;
+        wrong.fingerprint.faceHash ^= 1;
+        profiles.push_back(masked);
+        profiles.push_back(wrong);
+
+        Project* project = g_app->GetProject();
+        UndoStack* undo = g_app->GetUndoStack();
+        project->SetCurrentStage(WorkflowStage::Alignment);
+        ctx->Yield(2);
+        const int undoBefore = undo->Size();
+        auto stage1 = [ctx] { ctx->SetRef(ctx->WindowInfo("//Stage/##stage1body").Window); };
+
+        stage1();
+        ctx->ComboClick(("##sourceProfile/" + builtIn.name + "##" + builtIn.id).c_str());
+        ctx->Yield(2);
+        IM_CHECK(project->GetMorphMesh().isLoaded && project->GetMorphMesh().mesh);
+        IM_CHECK_STR_EQ(project->GetSourceProfileId().c_str(), "metahuman-head-lod0");
+        IM_CHECK_EQ(project->GetMorphData().vertexMask.size(),
+                    project->GetMorphMesh().mesh->GetVertexCount());
+        IM_CHECK_FLOAT_NEAR(project->GetMorphMesh().transform.GetRotation().x, -0.70710677f, 1e-5f);
+        IM_CHECK_EQ(undo->Size(), undoBefore + 1);
+        const auto headMesh = project->GetMorphMesh().mesh;
+
+        // Points exist: confirm first, and Cancel keeps everything.
+        PointCorrespondence pc;
+        pc.pointID = 1;
+        pc.morphMeshVertexIndex = 5;
+        project->GetPointReferenceData().correspondences = {pc};
+        stage1();
+        ctx->ComboClick("##sourceProfile/Test Masked##test-masked");
+        ctx->Yield(2);
+        ctx->SetRef("//##ConfirmModal");
+        ctx->ItemClick("Cancel");
+        ctx->Yield(2);
+        IM_CHECK_STR_EQ(project->GetSourceProfileId().c_str(), "metahuman-head-lod0");
+        IM_CHECK_EQ(project->GetPointReferenceData().correspondences.size(), (size_t)1);
+
+        stage1();
+        ctx->ComboClick("##sourceProfile/Test Masked##test-masked");
+        ctx->Yield(2);
+        ctx->SetRef("//##ConfirmModal");
+        ctx->ItemClick("Replace");
+        ctx->Yield(2);
+        IM_CHECK_STR_EQ(project->GetSourceProfileId().c_str(), "test-masked");
+        IM_CHECK(project->GetPointReferenceData().correspondences.empty());
+        IM_CHECK(project->GetMorphData().vertexMask[9]);
+        IM_CHECK(!project->GetMorphData().vertexMask[10]);
+
+        // One undo restores the previous source, profile, points and mask.
+        undo->Undo();
+        ctx->Yield();
+        IM_CHECK_STR_EQ(project->GetSourceProfileId().c_str(), "metahuman-head-lod0");
+        IM_CHECK(project->GetMorphMesh().mesh == headMesh);
+        IM_CHECK_EQ(project->GetPointReferenceData().correspondences.size(), (size_t)1);
+        IM_CHECK(!project->GetMorphData().vertexMask[0]);
+
+        // Fingerprint mismatch: error modal, nothing changes. No points or
+        // painted mask, so no confirm step first.
+        project->GetPointReferenceData().correspondences.clear();
+        stage1();
+        ctx->ComboClick("##sourceProfile/Test Wrong##test-wrong");
+        ctx->Yield(2);
+        ctx->SetRef("//##ErrorModal");
+        ctx->ItemClick("OK");
+        ctx->Yield(2);
+        IM_CHECK_STR_EQ(project->GetSourceProfileId().c_str(), "metahuman-head-lod0");
+        IM_CHECK(project->GetMorphMesh().mesh == headMesh);
+
+        // Help > Show Profile Landmarks (Dev): refused outside Stage 2, then
+        // loads the profile's landmarks as named source-only points, with
+        // mirrors linked, as one undo step.
+        ctx->SetRef("//##AppHostWindow");
+        ctx->MenuClick("Help/Show Profile Landmarks (Dev)");
+        ctx->Yield(2);
+        ctx->SetRef("//##ErrorModal");
+        ctx->ItemClick("OK");
+        ctx->Yield(2);
+        IM_CHECK(project->GetPointReferenceData().correspondences.empty());
+
+        project->SetCurrentStage(WorkflowStage::PointReference);
+        ctx->Yield(2);
+        ctx->SetRef("//##AppHostWindow");
+        ctx->MenuClick("Help/Show Profile Landmarks (Dev)");
+        ctx->Yield(2);
+        const auto& shown = project->GetPointReferenceData().correspondences;
+        IM_CHECK_EQ(shown.size(), builtIn.landmarks.size());
+        IM_CHECK_STR_EQ(undo->UndoDescription().c_str(), "Show Profile Landmarks");
+        for (size_t i = 0; i < shown.size() && i < builtIn.landmarks.size(); ++i) {
+            IM_CHECK_STR_EQ(shown[i].landmarkName.c_str(), builtIn.landmarks[i].name.c_str());
+            IM_CHECK_EQ(shown[i].morphMeshVertexIndex, builtIn.landmarks[i].vertexIndex);
+            IM_CHECK_EQ(shown[i].targetMeshVertexIndex, -1);
+            IM_CHECK_EQ(shown[i].isSymmetric, !builtIn.landmarks[i].mirrorId.empty());
+            if (shown[i].isSymmetric) {
+                const int pair = shown[i].symmetricPairID;
+                IM_CHECK(pair >= 1 && pair <= static_cast<int>(shown.size()));
+                if (pair >= 1 && pair <= static_cast<int>(shown.size())) {
+                    IM_CHECK_EQ(shown[pair - 1].symmetricPairID, shown[i].pointID);
+                }
+            }
+        }
+        undo->Undo();
+        ctx->Yield();
+        IM_CHECK(project->GetPointReferenceData().correspondences.empty());
+
+        profiles = savedProfiles;
+        ctx->SetRef("");
+        AppWindowTestAccess::NewProject(*g_app);
+    };
+}
+// Sprint 13 — Stage 2 auto-map workflow. The bundled head is both source
+// and target (aligned the same), so the solve is quick and every landmark's
+// right answer is its own vertex.
+void RegisterScenario_AutoMapWorkflow(ImGuiTestEngine* engine) {
+    ImGuiTest* t = IM_REGISTER_TEST(engine, "smoke", "auto_map_workflow");
+    t->TestFunc = [](ImGuiTestContext* ctx) {
+        if (!g_app || !g_app->GetUndoStack()) { IM_CHECK(false); return; }
+        DismissWelcomeModalIfOpen(ctx);
+        AppWindowTestAccess::NewProject(*g_app);
+        const SourceProfile* profile =
+            ProfileStore::FindById(AppWindowTestAccess::SourceProfiles(*g_app), "metahuman-head-lod0");
+        IM_CHECK(profile != nullptr);
+        if (!profile) return;
+        Project* project = g_app->GetProject();
+        UndoStack* undo = g_app->GetUndoStack();
+        project->SetCurrentStage(WorkflowStage::Alignment);
+        RunOnMainThread(ctx, [&] { AppWindowTestAccess::SelectSourceProfile(*g_app, *profile); });
+        IM_CHECK(project->GetMorphMesh().isLoaded);
+        project->GetTargetMesh().mesh = project->GetMorphMesh().mesh;
+        project->GetTargetMesh().transform = project->GetMorphMesh().transform;
+        project->GetTargetMesh().isLoaded = true;
+        auto& points = project->GetPointReferenceData().correspondences;
+
+        auto waitForAutoMap = [&] {
+            const auto until = std::chrono::steady_clock::now() + std::chrono::seconds(20);
+            while (AppWindowTestAccess::AutoMapRunning(*g_app) &&
+                   std::chrono::steady_clock::now() < until) {
+                ctx->Yield();
+            }
+            ctx->Yield(2);
+        };
+        auto indexOf = [&](const char* landmarkId) {
+            for (size_t i = 0; i < points.size(); ++i) {
+                if (points[i].landmarkId == landmarkId) return static_cast<int>(i);
+            }
+            return -1;
+        };
+        auto vertexWorld = [&](int vertex) {
+            const MeshReference& ref = project->GetTargetMesh();
+            return RayCaster::TransformPoint(ref.mesh->GetVertices()[vertex], ref.transform.GetMatrix());
+        };
+        // A ray from outside the head straight at a target vertex.
+        Vector3 headCenter;
+        for (const auto& lm : profile->landmarks) headCenter = headCenter + vertexWorld(lm.vertexIndex);
+        headCenter = headCenter * (1.0f / static_cast<float>(profile->landmarks.size()));
+        auto rayAt = [&](const Vector3& goal) {
+            const Vector3 out = (goal - headCenter).Normalized();
+            return Ray(goal + out * 60.0f, out * -1.0f);
+        };
+        auto landmarkVertex = [&](const char* id) {
+            for (const auto& lm : profile->landmarks) if (lm.id == id) return lm.vertexIndex;
+            return -1;
+        };
+
+        // Continue from Stage 1 into an empty Stage 2 offers auto-map.
+        const int undoBefore = undo->Size();
+        ctx->SetRef(ctx->WindowInfo("//Stage").Window);
+        ctx->ItemClick("**/Continue \xE2\x80\xBA");
+        ctx->Yield(2);
+        IM_CHECK(project->GetCurrentStage() == WorkflowStage::PointReference);
+        ctx->SetRef("//##AutoMapChoice");
+        ctx->ItemClick("Auto-map points");
+        ctx->Yield(2);
+        waitForAutoMap();
+        IM_CHECK_EQ(points.size(), profile->landmarks.size());
+        IM_CHECK_EQ(undo->Size(), undoBefore + 1);
+        IM_CHECK_STR_EQ(undo->UndoDescription().c_str(), "Auto-map Points");
+        IM_CHECK(project->GetPointReferenceData().hasTargetPlane);
+        int high = 0;
+        for (const auto& p : points) {
+            IM_CHECK(p.isAuto && !p.landmarkName.empty());
+            IM_CHECK(p.morphMeshVertexIndex >= 0 && p.targetMeshVertexIndex >= 0);
+            if (BandOf(p) == ConfidenceBand::High) ++high;
+        }
+        IM_CHECK(high > static_cast<int>(points.size()) / 2);
+        const int mouthL = indexOf("mouth_corner_l");
+        const int mouthR = indexOf("mouth_corner_r");
+        IM_CHECK(mouthL >= 0 && mouthR >= 0);
+        if (mouthL < 0 || mouthR < 0) return;
+        IM_CHECK(points[mouthL].isSymmetric && points[mouthL].symmetricPairID == points[mouthR].pointID);
+
+        // One undo removes the whole auto-map; redo brings it back.
+        undo->Undo();
+        ctx->Yield();
+        IM_CHECK(points.empty());
+        undo->Redo();
+        ctx->Yield();
+        IM_CHECK_EQ(points.size(), profile->landmarks.size());
+
+        // Drag a paired point: it moves along the target, its partner follows
+        // to the mirrored spot, both stop being auto points, one undo step.
+        const Vector3 goal = vertexWorld(landmarkVertex("nostril_wing_l"));
+        const int partnerBefore = points[mouthR].targetMeshVertexIndex;
+        const int dragUndo = undo->Size();
+        AppWindowTestAccess::BeginPointDrag(*g_app, mouthL);
+        AppWindowTestAccess::DragPoint(*g_app, mouthL, PointSide::Target, rayAt(goal), false);
+        AppWindowTestAccess::EndPointDrag(*g_app, mouthL);
+        IM_CHECK((points[mouthL].targetMeshPosition - goal).Length() < 1.0f);
+        IM_CHECK(!points[mouthL].isAuto && points[mouthL].confidence < 0.0f);
+        IM_CHECK(points[mouthR].targetMeshVertexIndex != partnerBefore);
+        IM_CHECK(!points[mouthR].isAuto);
+        const Vector3 wingR = vertexWorld(landmarkVertex("nostril_wing_r"));
+        IM_CHECK((points[mouthR].targetMeshPosition - wingR).Length() < 1.0f);
+        // The partner sits on the surface at the reflected spot, not at the
+        // nearest vertex (the bundled head mirrors to within ~0.1 units).
+        {
+            const auto& plane = project->GetPointReferenceData();
+            const Vector3 n = plane.targetPlaneNormal.Normalized();
+            const Vector3 p = points[mouthL].targetMeshPosition;
+            const Vector3 reflected = p - n * (2.0f * (p - plane.targetPlanePoint).Dot(n));
+            IM_CHECK((points[mouthR].targetMeshPosition - reflected).Length() < 0.3f);
+        }
+        IM_CHECK_EQ(undo->Size(), dragUndo + 1);
+        IM_CHECK_STR_EQ(undo->UndoDescription().c_str(), "Move Point");
+        undo->Undo();
+        ctx->Yield();
+        IM_CHECK(points[mouthL].isAuto && points[mouthR].isAuto);
+        IM_CHECK_EQ(points[mouthR].targetMeshVertexIndex, partnerBefore);
+
+        // Alt (one side): the partner stays put.
+        AppWindowTestAccess::BeginPointDrag(*g_app, mouthL);
+        AppWindowTestAccess::DragPoint(*g_app, mouthL, PointSide::Target, rayAt(goal), true);
+        AppWindowTestAccess::EndPointDrag(*g_app, mouthL);
+        IM_CHECK((points[mouthL].targetMeshPosition - goal).Length() < 1.0f);
+        IM_CHECK_EQ(points[mouthR].targetMeshVertexIndex, partnerBefore);
+        IM_CHECK(points[mouthR].isAuto);
+        undo->Undo();
+        ctx->Yield();
+
+        // A midline point stays on the symmetry plane while locked, and
+        // follows the cursor once unlocked.
+        const int nose = indexOf("nose_tip");
+        IM_CHECK(nose >= 0);
+        if (nose < 0) return;
+        IM_CHECK(points[nose].isMidlineLandmark && !points[nose].midlineUnlocked);
+        const Vector3 cheek = vertexWorld(landmarkVertex("cheekbone_l"));
+        const auto& refData = project->GetPointReferenceData();
+        auto planeDistance = [&](const Vector3& p) {
+            return std::abs((p - refData.targetPlanePoint).Dot(refData.targetPlaneNormal.Normalized()));
+        };
+        AppWindowTestAccess::BeginPointDrag(*g_app, nose);
+        AppWindowTestAccess::DragPoint(*g_app, nose, PointSide::Target, rayAt(cheek), false);
+        AppWindowTestAccess::EndPointDrag(*g_app, nose);
+        // On the exact plane cut, not the nearest vertex beside it.
+        IM_CHECK(planeDistance(points[nose].targetMeshPosition) < 0.01f);
+        IM_CHECK((points[nose].targetMeshPosition - cheek).Length() > 2.0f);
+        undo->Undo();
+        ctx->Yield();
+        points[nose].midlineUnlocked = true;
+        AppWindowTestAccess::BeginPointDrag(*g_app, nose);
+        AppWindowTestAccess::DragPoint(*g_app, nose, PointSide::Target, rayAt(cheek), false);
+        AppWindowTestAccess::EndPointDrag(*g_app, nose);
+        IM_CHECK((points[nose].targetMeshPosition - cheek).Length() < 1.0f);
+
+        // A target scaled in Stage 1: a locked midline drag still lands on
+        // the plane under the cursor (ray-cast distances are in mesh units,
+        // which once filtered out every candidate).
+        {
+            Transform& tf = project->GetTargetMesh().transform;
+            const Transform saved = tf;
+            PointReferenceData& pr = project->GetPointReferenceData();
+            const Vector3 savedPlanePoint = pr.targetPlanePoint;
+            tf.SetScale(saved.GetScale() * 2.5f);
+            pr.targetPlanePoint = RayCaster::TransformPoint(
+                RayCaster::TransformPoint(savedPlanePoint, saved.GetMatrix().Inverse()), tf.GetMatrix());
+            Vector3 center;
+            for (const auto& lm : profile->landmarks) center = center + vertexWorld(lm.vertexIndex);
+            center = center * (1.0f / static_cast<float>(profile->landmarks.size()));
+            const Vector3 chin = vertexWorld(landmarkVertex("chin_point"));
+            const Vector3 out = (chin - center).Normalized();
+            points[nose].midlineUnlocked = false;
+            AppWindowTestAccess::BeginPointDrag(*g_app, nose);
+            AppWindowTestAccess::DragPoint(*g_app, nose, PointSide::Target,
+                                           Ray(chin + out * 150.0f, out * -1.0f), false);
+            AppWindowTestAccess::EndPointDrag(*g_app, nose);
+            IM_CHECK(planeDistance(points[nose].targetMeshPosition) < 0.02f);
+            IM_CHECK((points[nose].targetMeshPosition - chin).Length() < 1.5f);
+            undo->Undo();
+            ctx->Yield();
+            tf = saved;
+            pr.targetPlanePoint = savedPlanePoint;
+            points[nose].midlineUnlocked = true;
+            IM_CHECK((points[nose].targetMeshPosition - cheek).Length() < 1.0f);
+        }
+
+        // Re-run with Replace: the point the user moved is kept as it is;
+        // every other landmark is solved again, nothing duplicated.
+        const Vector3 moved = points[nose].targetMeshPosition;
+        ctx->SetRef(ctx->WindowInfo("//Stage/##stage2body").Window);
+        ctx->ItemClick("**/Auto-map");
+        ctx->Yield(2);
+        ctx->SetRef("//##AutoMapChoice");
+        ctx->ItemClick("Replace auto");
+        ctx->Yield(2);
+        waitForAutoMap();
+        IM_CHECK_EQ(points.size(), profile->landmarks.size());
+        const int noseAfter = indexOf("nose_tip");
+        IM_CHECK(noseAfter >= 0);
+        if (noseAfter >= 0) {
+            IM_CHECK(!points[noseAfter].isAuto);
+            IM_CHECK((points[noseAfter].targetMeshPosition - moved).Length() < 1e-4f);
+        }
+        IM_CHECK_STR_EQ(undo->UndoDescription().c_str(), "Auto-map Points");
+
+        // Cancel leaves the points as they were.
+        const size_t countBefore = points.size();
+        const int undoBeforeCancel = undo->Size();
+        AppWindowTestAccess::StartAutoMapFill(*g_app);
+        ctx->SetRef("//##AutoMapProgress");
+        ctx->ItemClick("Cancel");
+        waitForAutoMap();
+        IM_CHECK_EQ(points.size(), countBefore);
+        IM_CHECK_EQ(undo->Size(), undoBeforeCancel);
+
+        // A project switch mid-run drops the result.
+        AppWindowTestAccess::StartAutoMapFill(*g_app);
+        AppWindowTestAccess::NewProject(*g_app);
+        waitForAutoMap();
+        IM_CHECK(g_app->GetProject()->GetPointReferenceData().correspondences.empty());
+        ctx->SetRef("");
+    };
+}
+
+// Sprint 14 — custom source profiles: save source as profile, the profile
+// editor (place, mirror fill, custom pair, undo, mask, save, cancel, blocked
+// file actions), Manage profiles (duplicate, delete, default) and a profile
+// whose mesh copy is missing. User profiles live in a temporary folder set
+// in main(), never the real %APPDATA%.
+void RegisterScenario_CustomProfiles(ImGuiTestEngine* engine) {
+    ImGuiTest* t = IM_REGISTER_TEST(engine, "smoke", "custom_profiles");
+    t->TestFunc = [](ImGuiTestContext* ctx) {
+        if (!g_app || !g_app->GetUndoStack()) { IM_CHECK(false); return; }
+        DismissWelcomeModalIfOpen(ctx);
+        AppWindowTestAccess::NewProject(*g_app);
+        auto& profiles = AppWindowTestAccess::SourceProfiles(*g_app);
+        const SourceProfile* found = ProfileStore::FindById(profiles, "metahuman-head-lod0");
+        IM_CHECK(found != nullptr);
+        if (!found) return;
+        const SourceProfile builtIn = *found;
+        auto byName = [&](const char* name) -> const SourceProfile* {
+            for (const auto& p : AppWindowTestAccess::SourceProfiles(*g_app)) {
+                if (p.name == name) return &p;
+            }
+            return nullptr;
+        };
+        auto clickModal = [ctx](const char* modal, const char* button) {
+            ctx->SetRef(modal);
+            ctx->ItemClick(button);
+            ctx->Yield(2);
+            ctx->SetRef("");
+        };
+
+        Project* real = g_app->GetProject();
+        real->SetCurrentStage(WorkflowStage::Alignment);
+        RunOnMainThread(ctx, [&] { AppWindowTestAccess::SelectSourceProfile(*g_app, builtIn); });
+        IM_CHECK(real->GetMorphMesh().isLoaded);
+        const auto& verts = real->GetMorphMesh().mesh->GetVertices();
+        const Matrix4x4 model = real->GetMorphMesh().transform.GetMatrix();
+        auto world = [&](const char* landmarkId) {
+            for (const auto& lm : builtIn.landmarks) {
+                if (lm.id == landmarkId) return RayCaster::TransformPoint(verts[lm.vertexIndex], model);
+            }
+            return Vector3();
+        };
+        auto vertexOf = [&](const char* landmarkId) {
+            for (const auto& lm : builtIn.landmarks) if (lm.id == landmarkId) return lm.vertexIndex;
+            return -1;
+        };
+
+        // 1. Save source as profile: the built-in's landmarks shown as named
+        //    source points become a user profile, attached as one undo step.
+        real->SetCurrentStage(WorkflowStage::PointReference);
+        ctx->Yield(2);
+        ctx->SetRef("//##AppHostWindow");
+        ctx->MenuClick("Help/Show Profile Landmarks (Dev)");
+        ctx->Yield(2);
+        ctx->SetRef("");
+        IM_CHECK_EQ(real->GetPointReferenceData().correspondences.size(), builtIn.landmarks.size());
+        RunOnMainThread(ctx, [] { AppWindowTestAccess::RequestSaveSourceAsProfile(*g_app); });
+        // Typing the name ends with Enter, which saves.
+        ctx->SetRef("//##NamePrompt");
+        ctx->ItemInputValue("##name", "Test Saved");
+        ctx->Yield(2);
+        ctx->SetRef("");
+        const SourceProfile* saved = byName("Test Saved");
+        IM_CHECK(saved != nullptr);
+        if (!saved) return;
+        IM_CHECK(!saved->isBuiltIn && saved->landmarks.size() == builtIn.landmarks.size());
+        IM_CHECK(saved->HasMask() && saved->fingerprint == builtIn.fingerprint);
+        IM_CHECK(std::filesystem::exists(saved->resolvedMeshPath));
+        const std::string savedId = saved->id;
+        IM_CHECK_STR_EQ(real->GetSourceProfileId().c_str(), savedId.c_str());
+        IM_CHECK_STR_EQ(g_app->GetUndoStack()->UndoDescription().c_str(), "Save Source as Profile");
+        g_app->GetUndoStack()->Undo();
+        ctx->Yield();
+        IM_CHECK_STR_EQ(real->GetSourceProfileId().c_str(), "metahuman-head-lod0");
+        g_app->GetUndoStack()->Redo();
+        ctx->Yield();
+
+        // 2. Profile editor on this mesh: its own scratch project and history.
+        real->SetCurrentStage(WorkflowStage::Alignment);
+        const int realUndo = g_app->GetUndoStack()->Size();
+        RunOnMainThread(ctx, [] { AppWindowTestAccess::OpenProfileEditor(*g_app, nullptr); });
+        IM_CHECK(AppWindowTestAccess::EditorActive(*g_app));
+        Project* scratch = g_app->GetProject();
+        IM_CHECK(scratch != real);
+        IM_CHECK(scratch->GetPointReferenceData().correspondences.empty());
+        IM_CHECK_EQ(g_app->GetUndoStack()->Size(), 0);
+        auto& pts = scratch->GetPointReferenceData().correspondences;
+        auto indexOfLandmark = [&](const char* id) {
+            const auto& lms = AppWindowTestAccess::EditorLandmarks(*g_app);
+            for (size_t i = 0; i < lms.size(); ++i) if (lms[i].id == id) return static_cast<int>(i);
+            return -1;
+        };
+
+        // Place the left mouth corner; the right one fills in mirrored.
+        StageSidebar::Actions::EditorActions pick;
+        pick.selectLandmark = indexOfLandmark("mouth_corner_l");
+        AppWindowTestAccess::EditorActions(*g_app, pick);
+        AppWindowTestAccess::EditorPlacePoint(*g_app, world("mouth_corner_l"), vertexOf("mouth_corner_l"));
+        IM_CHECK_EQ(pts.size(), (size_t)2);
+        if (pts.size() == 2) {
+            IM_CHECK_STR_EQ(pts[1].landmarkId.c_str(), "mouth_corner_r");
+            IM_CHECK((pts[1].morphMeshPosition - world("mouth_corner_r")).Length() < 1.0f);
+            IM_CHECK(pts[0].isSymmetric && pts[0].symmetricPairID == pts[1].pointID);
+        }
+        // Editor undo is separate from the project's.
+        g_app->GetUndoStack()->Undo();
+        ctx->Yield();
+        IM_CHECK(pts.empty());
+        g_app->GetUndoStack()->Redo();
+        ctx->Yield();
+        IM_CHECK_EQ(pts.size(), (size_t)2);
+
+        // A custom left/right pair.
+        StageSidebar::Actions::EditorActions custom;
+        custom.addCustom = std::make_pair(std::string("Ear tip"), true);
+        AppWindowTestAccess::EditorActions(*g_app, custom);
+        AppWindowTestAccess::EditorPlacePoint(*g_app, world("ear_top_l"), vertexOf("ear_top_l"));
+        IM_CHECK_EQ(pts.size(), (size_t)4);
+
+        // Mask tab: the scratch project switches to the mask stage.
+        StageSidebar::Actions::EditorActions maskTab;
+        maskTab.maskTab = true;
+        RunOnMainThread(ctx, [&] { AppWindowTestAccess::EditorActions(*g_app, maskTab); });
+        IM_CHECK(scratch->GetCurrentStage() == WorkflowStage::Morph);
+        scratch->GetMorphData().vertexMask.assign(scratch->GetMorphData().vertexMask.size(), false);
+        scratch->GetMorphData().vertexMask[7] = true;
+
+        // File actions are blocked while editing.
+        AppWindowTestAccess::NewProject(*g_app);
+        ctx->Yield(2);
+        IM_CHECK(g_app->GetProject() == scratch);
+        clickModal("//##ErrorModal", "OK");
+
+        // Save: a named profile with the placed landmarks and the mask,
+        // attached to the real project, which is back with its history.
+        StageSidebar::Actions::EditorActions save;
+        save.rename = std::string("Editor Test");
+        save.save = true;
+        RunOnMainThread(ctx, [&] { AppWindowTestAccess::EditorActions(*g_app, save); });
+        IM_CHECK(!AppWindowTestAccess::EditorActive(*g_app));
+        IM_CHECK(g_app->GetProject() == real);
+        const SourceProfile* edited = byName("Editor Test");
+        IM_CHECK(edited != nullptr);
+        if (!edited) return;
+        IM_CHECK_EQ(edited->landmarks.size(), (size_t)4);
+        IM_CHECK(edited->Validate().empty());
+        IM_CHECK(edited->BuildMask().size() > 7 && edited->BuildMask()[7]);
+        IM_CHECK_STR_EQ(real->GetSourceProfileId().c_str(), edited->id.c_str());
+        IM_CHECK_EQ(g_app->GetUndoStack()->Size(), realUndo + 1);
+        IM_CHECK_STR_EQ(g_app->GetUndoStack()->UndoDescription().c_str(), "Use New Profile");
+
+        // Auto-map with the custom profile (4 landmarks) on the same head:
+        // every landmark lands next to its own vertex.
+        {
+            real->GetPointReferenceData().correspondences.clear();
+            real->GetTargetMesh().mesh = real->GetMorphMesh().mesh;
+            real->GetTargetMesh().transform = real->GetMorphMesh().transform;
+            real->GetTargetMesh().isLoaded = true;
+            real->SetCurrentStage(WorkflowStage::PointReference);
+            AppWindowTestAccess::RequestAutoMap(*g_app);
+            const auto until = std::chrono::steady_clock::now() + std::chrono::seconds(20);
+            while (AppWindowTestAccess::AutoMapRunning(*g_app) && std::chrono::steady_clock::now() < until) {
+                ctx->Yield();
+            }
+            ctx->Yield(2);
+            const auto& mapped = real->GetPointReferenceData().correspondences;
+            IM_CHECK_EQ(mapped.size(), edited->landmarks.size());
+            for (const auto& c : mapped) {
+                const auto& v = real->GetMorphMesh().mesh->GetVertices();
+                const Vector3 expected = RayCaster::TransformPoint(v[c.morphMeshVertexIndex], model);
+                IM_CHECK((c.targetMeshPosition - expected).Length() < 1.0f);
+            }
+            real->GetTargetMesh() = MeshReference();
+            real->GetPointReferenceData().correspondences.clear();
+            real->SetCurrentStage(WorkflowStage::Alignment);
+        }
+
+        // 3. Editing a user profile and cancelling with changes asks first.
+        const SourceProfile editedCopy = *edited;
+        RunOnMainThread(ctx, [&] { AppWindowTestAccess::OpenProfileEditor(*g_app, &editedCopy); });
+        IM_CHECK(AppWindowTestAccess::EditorActive(*g_app));
+        IM_CHECK_EQ(g_app->GetProject()->GetPointReferenceData().correspondences.size(), (size_t)4);
+        StageSidebar::Actions::EditorActions remove;
+        remove.selectLandmark = indexOfLandmark("mouth_corner_l");
+        remove.removeActive = true;
+        AppWindowTestAccess::EditorActions(*g_app, remove);
+        IM_CHECK_EQ(g_app->GetProject()->GetPointReferenceData().correspondences.size(), (size_t)3);
+        StageSidebar::Actions::EditorActions cancel;
+        cancel.cancel = true;
+        AppWindowTestAccess::EditorActions(*g_app, cancel);
+        ctx->Yield(2);
+        IM_CHECK(AppWindowTestAccess::EditorActive(*g_app));
+        ctx->SetRef("//##ConfirmModal");
+        ctx->ItemClick("Discard");
+        ctx->Yield(3);
+        ctx->SetRef("");
+        IM_CHECK(!AppWindowTestAccess::EditorActive(*g_app));
+        IM_CHECK(g_app->GetProject() == real);
+        IM_CHECK_EQ(byName("Editor Test")->landmarks.size(), (size_t)4);
+
+        // 4. Manage: duplicate the built-in, make it the default for File >
+        //    New, then delete it.
+        AppWindowTestAccess::ManageAction(*g_app, ProfileManageAction::Duplicate, "metahuman-head-lod0");
+        ctx->Yield(2);
+        clickModal("//##NamePrompt", "Duplicate");
+        const SourceProfile* copy = byName("MetaHuman Head (LOD0) copy");
+        IM_CHECK(copy != nullptr);
+        if (!copy) return;
+        IM_CHECK(!copy->isBuiltIn && copy->landmarks.size() == builtIn.landmarks.size());
+        const std::string copyId = copy->id;
+        AppWindowTestAccess::ManageAction(*g_app, ProfileManageAction::SetDefault, copyId);
+        IM_CHECK_STR_EQ(Config::Instance().DefaultSourceProfileId().c_str(), copyId.c_str());
+        RunOnMainThread(ctx, [] { AppWindowTestAccess::NewProjectWithDefault(*g_app); });
+        IM_CHECK_STR_EQ(g_app->GetProject()->GetSourceProfileId().c_str(), copyId.c_str());
+        IM_CHECK(g_app->GetProject()->GetMorphMesh().isLoaded);
+        IM_CHECK_EQ(g_app->GetUndoStack()->Size(), 0);
+        AppWindowTestAccess::ManageAction(*g_app, ProfileManageAction::Delete, copyId);
+        ctx->Yield(2);
+        clickModal("//##ConfirmModal", "Delete");
+        IM_CHECK(byName("MetaHuman Head (LOD0) copy") == nullptr);
+        IM_CHECK(Config::Instance().DefaultSourceProfileId().empty());
+
+        // 5. A profile whose mesh copy is gone is flagged and can't be edited.
+        const SourceProfile* victim = byName("Test Saved");
+        IM_CHECK(victim != nullptr);
+        if (!victim) return;
+        std::error_code ec;
+        std::filesystem::remove(victim->resolvedMeshPath, ec);
+        AppWindowTestAccess::ReloadProfiles(*g_app);
+        victim = byName("Test Saved");
+        IM_CHECK(victim != nullptr && victim->meshMissing);
+        if (victim) {
+            const SourceProfile missing = *victim;
+            RunOnMainThread(ctx, [&] { AppWindowTestAccess::OpenProfileEditor(*g_app, &missing); });
+            IM_CHECK(!AppWindowTestAccess::EditorActive(*g_app));
+            clickModal("//##ErrorModal", "OK");
+        }
+
+        AppWindowTestAccess::NewProject(*g_app);
+    };
+}
+
 } // namespace
 
 int main(int /*argc*/, char** /*argv*/) {
     Logger::Instance().SetFileLogging(false);
+    // Sprint 14 — user profiles go to a temporary folder for the whole run.
+    const std::filesystem::path profilesDir =
+        std::filesystem::temp_directory_path() / "metavisage_smoke_ui_profiles";
+    {
+        std::error_code ec;
+        std::filesystem::remove_all(profilesDir, ec);
+    }
+    ProfileStore::SetUserProfilesDirOverride(profilesDir.generic_string());
 
     AppWindow app;
     g_app = &app;
@@ -336,6 +1418,16 @@ int main(int /*argc*/, char** /*argv*/) {
     RegisterScenario_StageStepperProgression(engine);
     RegisterScenario_StandaloneBrushes(engine);
     RegisterScenario_ProjectSwitchDuringMorph(engine);
+    RegisterScenario_AlignmentTransformHotkeys(engine);
+    RegisterScenario_AlignmentGizmoTracksCursor(engine);
+    RegisterScenario_AlignmentGizmoAllViews(engine);
+    RegisterScenario_AlignmentTextureSurvivesTargetSwap(engine);
+    RegisterScenario_AlignmentTypedTransformEntry(engine);
+    RegisterScenario_ShellMenus(engine);
+    RegisterScenario_MorphResetToSource(engine);
+    RegisterScenario_SourceProfilePicker(engine);
+    RegisterScenario_AutoMapWorkflow(engine);
+    RegisterScenario_CustomProfiles(engine);
 
     ImGuiTestEngine_Start(engine, ImGui::GetCurrentContext());
     ImGuiTestEngine_QueueTests(engine, ImGuiTestGroup_Tests, /*filter=*/nullptr,
@@ -362,6 +1454,10 @@ int main(int /*argc*/, char** /*argv*/) {
         glfwPollEvents();
         int fbW = 0, fbH = 0;
         glfwGetFramebufferSize(window, &fbW, &fbH);
+        if (g_mainThreadTask) {
+            g_mainThreadTask();
+            g_mainThreadTask = nullptr;
+        }
         app.TickOnce(fbW, fbH);
         ImGuiTestEngine_PostSwap(engine);
     }

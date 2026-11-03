@@ -68,6 +68,13 @@ namespace Spacing {
     inline constexpr float S9 = 96.0f;
 }
 
+// Sprint 10.4 — menu popups get roomier rows than the global 6 px
+// ItemSpacing.y, which read as crowded in dropdowns.
+namespace Menu {
+    inline constexpr ImVec2 WindowPadding = ImVec2(Spacing::S2, Spacing::S2);
+    inline constexpr ImVec2 ItemSpacing   = ImVec2(Spacing::S4, Spacing::S3);
+}
+
 // =============================================================================
 // Type scale — concrete font-pixel sizes used at AddFontFromFileTTF time.
 // Each handle in `Font` below corresponds to one entry here.

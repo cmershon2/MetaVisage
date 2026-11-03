@@ -3,6 +3,7 @@
 #include "core/Project.h"
 #include "core/TextureData.h"
 #include "core/WrapPreset.h"
+#include "io/ProfileStore.h"
 #include "ui/MvIcons.h"
 #include "ui/MvInspectorPrimitives.h"
 #include "ui/MvStyle.h"
@@ -11,11 +12,13 @@
 #include <imgui.h>
 
 #include <cstdio>
+#include <cctype>
 #include <cstring>
 
 #include <algorithm>
 #include <array>
 #include <filesystem>
+#include <format>
 
 namespace MetaVisage {
 
@@ -76,6 +79,7 @@ StageSidebar::Actions StageSidebar::Render(Project* project,
                                            bool morphProcessing,
                                            float morphProgress,
                                            const std::vector<WrapPreset>& userPresets,
+                                           const std::vector<SourceProfile>& sourceProfiles,
                                            int selectedPointIndex) {
     Actions out;
     selectedPointIndexExternal_ = selectedPointIndex;
@@ -111,6 +115,12 @@ StageSidebar::Actions StageSidebar::Render(Project* project,
     // header/footer entirely. Remaining stages still use the legacy
     // generic header + footer so the workflow stays usable until each
     // story replaces them.
+    if (editorView_) {
+        RenderProfileEditor(*project, out);
+        ImGui::End();
+        return out;
+    }
+
     const bool ownsChrome = (stage == WorkflowStage::Alignment ||
                              stage == WorkflowStage::PointReference ||
                              stage == WorkflowStage::Morph     ||
@@ -127,8 +137,8 @@ StageSidebar::Actions StageSidebar::Render(Project* project,
 
     // Per-stage body
     switch (stage) {
-        case WorkflowStage::Alignment:      RenderAlignment(*project, out); break;
-        case WorkflowStage::PointReference: RenderPointReference(*project, out); break;
+        case WorkflowStage::Alignment:      RenderAlignment(*project, sourceProfiles, out); break;
+        case WorkflowStage::PointReference: RenderPointReference(*project, sourceProfiles, out); break;
         case WorkflowStage::Morph:          RenderMorph(*project, morphProcessing, morphProgress, userPresets, out); break;
         case WorkflowStage::TouchUp:        RenderTouchUp(*project, out); break;
     }
@@ -156,7 +166,9 @@ StageSidebar::Actions StageSidebar::Render(Project* project,
 // Stage 1 — Alignment
 // ---------------------------------------------------------------------------
 
-void StageSidebar::RenderAlignment(Project& project, Actions& out) {
+void StageSidebar::RenderAlignment(Project& project,
+                                   const std::vector<SourceProfile>& sourceProfiles,
+                                   Actions& out) {
     namespace I = MvInspector;
 
     auto& morph  = project.GetMorphMesh();
@@ -166,8 +178,8 @@ void StageSidebar::RenderAlignment(Project& project, Actions& out) {
     I::DrawStageHeader("STAGE 01 / 04",
                        "Align", "ment",
                        "Position the target mesh to roughly align with the "
-                       "morph mesh. Drag the X / Y / Z fields below or grab "
-                       "the gizmo handles in the viewport.");
+                       "morph mesh. Drag or double-click the X / Y / Z fields "
+                       "below, or grab the gizmo handles in the viewport.");
 
     // ---- Scrollable body ------------------------------------------------
     // Reserve room for a 56 px footer (hairline + 30 px button row + pad)
@@ -183,9 +195,13 @@ void StageSidebar::RenderAlignment(Project& project, Actions& out) {
         {
             MvStyle::ScopedFont f(MvStyle::Font.BodySm);
             ImGui::PushStyleColor(ImGuiCol_Text, MvStyle::MvFg3);
-            ImGui::TextWrapped("The MetaHuman head being wrapped.");
+            ImGui::TextWrapped("The MetaHuman head being wrapped. Pick a source "
+                               "profile, or import a mesh file.");
             ImGui::PopStyleColor();
         }
+        ImGui::Dummy(ImVec2(0.0f, 6.0f));
+        RenderSourcePicker(project, sourceProfiles, out);
+
         ImGui::Dummy(ImVec2(0.0f, 6.0f));
         const std::string srcName = FileNameOrEmpty(morph.filepath);
         {
@@ -193,14 +209,10 @@ void StageSidebar::RenderAlignment(Project& project, Actions& out) {
                 srcName.c_str(),
                 "No source mesh",
                 morph.isLoaded,
-                /*isPrimary=*/true,
-                morph.isLoaded ? "Source mesh loaded" : nullptr);
+                /*isPrimary=*/false,
+                morph.isLoaded ? "Source mesh loaded" : nullptr,
+                "Import mesh");
             if (srcSlot.importClicked) out.importMorphMeshRequested = true;
-        }
-
-        ImGui::Dummy(ImVec2(0.0f, 4.0f));
-        if (ImGui::Button("Use Default MetaHuman Head", ImVec2(-FLT_MIN, 30.0f))) {
-            out.useDefaultMorphMeshRequested = true;
         }
 
         // ---- Target mesh ------------------------------------------------
@@ -294,11 +306,19 @@ void StageSidebar::RenderAlignment(Project& project, Actions& out) {
             }
         };
 
+        // Sprint 9.3 — scale position drag speed to the target's size so a
+        // cm-scale head moves usefully per pixel (0.1% of the bounds
+        // diagonal; the fixed 0.01 crawled). Typed entry covers precision.
+        float posDragSpeed = 0.01f;
+        if (target.isLoaded && target.mesh) {
+            posDragSpeed = std::max(posDragSpeed,
+                                    target.mesh->GetBounds().Size().Length() * 0.001f);
+        }
         I::TransformValues3 pos{ xform.GetPosition().x,
                                  xform.GetPosition().y,
                                  xform.GetPosition().z };
         const auto rPos = I::DrawTransformGroup(
-            "Position", "cm", pos, /*uniform=*/false, /*dragSpeed=*/0.01f);
+            "Position", "cm", pos, /*uniform=*/false, posDragSpeed);
         if (rPos.changed) xform.SetPosition(Vector3(pos.x, pos.y, pos.z));
         handleEdit(rPos);
 
@@ -380,13 +400,124 @@ void StageSidebar::RenderAlignment(Project& project, Actions& out) {
     if (footer.previousClicked) out.previousStageRequested = true;
 }
 
+// Sprint 11 — Source Profile picker. Built-ins come first (ProfileStore
+// order), then user profiles after a separator. Selecting a profile only
+// emits a request; AppWindow decides whether to confirm and loads the mesh.
+void StageSidebar::RenderSourcePicker(Project& project,
+                                      const std::vector<SourceProfile>& sourceProfiles,
+                                      Actions& out) {
+    const auto& morph = project.GetMorphMesh();
+    const std::string& activeId = project.GetSourceProfileId();
+    const SourceProfile* active = nullptr;
+    for (const auto& p : sourceProfiles) {
+        if (p.id == activeId) { active = &p; break; }
+    }
+
+    std::string preview;
+    if (active)                     preview = active->name;
+    else if (!activeId.empty())     preview = "Profile not installed";
+    else if (morph.isLoaded)        preview = "Custom mesh (no profile)";
+    else if (sourceProfiles.empty()) preview = "No source profiles found";
+    else                            preview = "Select a source profile";
+
+    ImGui::SetNextItemWidth(-FLT_MIN);
+    ImGui::BeginDisabled(sourceProfiles.empty());
+    if (ImGui::BeginCombo("##sourceProfile", preview.c_str())) {
+        bool separated = false;
+        for (const auto& p : sourceProfiles) {
+            if (!p.isBuiltIn && !separated) {
+                if (&p != &sourceProfiles.front()) ImGui::Separator();
+                separated = true;
+            }
+            const std::string label = p.name + "##" + p.id;
+            const bool selected = (active == &p);
+            ImGui::BeginDisabled(p.meshMissing);
+            if (ImGui::Selectable(label.c_str(), selected) && !selected) {
+                out.selectSourceProfileId = p.id;
+            }
+            ImGui::EndDisabled();
+            if (p.meshMissing && ImGui::IsItemHovered(ImGuiHoveredFlags_AllowWhenDisabled)) {
+                ImGui::SetTooltip("This profile's mesh copy is missing:\n%s",
+                                  p.resolvedMeshPath.c_str());
+            }
+            if (selected) ImGui::SetItemDefaultFocus();
+        }
+        ImGui::EndCombo();
+    }
+    ImGui::EndDisabled();
+
+    // One-line summary of what the profile brings with it.
+    std::string summary;
+    if (active) {
+        const size_t n = active->landmarks.size();
+        summary = n == 0 ? std::string("No landmarks yet")
+                         : std::format("{} landmark{}", n, n == 1 ? "" : "s");
+        summary += active->HasMask() ? " · default mask" : " · no default mask";
+    } else if (morph.isLoaded) {
+        summary = "No profile matches this mesh's topology.";
+    }
+    if (!summary.empty()) {
+        MvStyle::ScopedFont f(MvStyle::Font.BodySm);
+        ImGui::PushStyleColor(ImGuiCol_Text, MvStyle::MvFg4);
+        ImGui::TextWrapped("%s", summary.c_str());
+        ImGui::PopStyleColor();
+    }
+
+    // Sprint 14 — profile tools.
+    if (ImGui::Button("Profile tools...", ImVec2(-FLT_MIN, 28.0f))) {
+        ImGui::OpenPopup("##profileTools");
+    }
+    if (ImGui::BeginPopup("##profileTools")) {
+        if (ImGui::MenuItem("New profile from this mesh...", nullptr, false, morph.isLoaded)) {
+            out.profileRequest = Actions::ProfileRequest::NewFromMesh;
+        }
+        const bool editable = active && !active->isBuiltIn && !active->meshMissing;
+        if (ImGui::MenuItem("Edit landmarks...", nullptr, false, editable)) {
+            out.profileRequest = Actions::ProfileRequest::EditActive;
+        }
+        if (active && active->isBuiltIn && ImGui::IsItemHovered(ImGuiHoveredFlags_AllowWhenDisabled)) {
+            ImGui::SetTooltip("Built-in profiles are read-only. Duplicate it in Manage profiles to edit.");
+        }
+        if (ImGui::MenuItem("Save source as profile...", nullptr, false, morph.isLoaded)) {
+            out.profileRequest = Actions::ProfileRequest::SaveSourceAsProfile;
+        }
+        ImGui::Separator();
+        if (ImGui::MenuItem("Manage profiles...")) {
+            out.profileRequest = Actions::ProfileRequest::Manage;
+        }
+        ImGui::EndPopup();
+    }
+}
+
 // ---------------------------------------------------------------------------
 // Stage 2 — Point Reference
 // ---------------------------------------------------------------------------
 
-void StageSidebar::RenderPointReference(Project& project, Actions& out) {
+void StageSidebar::RenderPointReference(Project& project,
+                                        const std::vector<SourceProfile>& sourceProfiles,
+                                        Actions& out) {
     namespace I = MvInspector;
     auto& data = project.GetPointReferenceData();
+
+    // Sprint 13 — auto-map needs a profile with landmarks and a target.
+    const SourceProfile* autoProfile =
+        ProfileStore::FindById(sourceProfiles, project.GetSourceProfileId());
+    const bool canAutoMap = autoProfile && autoProfile->HasLandmarks() &&
+                            project.GetMorphMesh().isLoaded &&
+                            project.GetTargetMesh().isLoaded;
+    int bandHigh = 0, bandReview = 0, bandLow = 0, midlineCount = 0, midlineUnlocked = 0;
+    for (const auto& c : data.correspondences) {
+        switch (BandOf(c)) {
+            case ConfidenceBand::High:   ++bandHigh; break;
+            case ConfidenceBand::Review: ++bandReview; break;
+            case ConfidenceBand::Low:    ++bandLow; break;
+            default: break;
+        }
+        if (c.isMidlineLandmark) {
+            ++midlineCount;
+            if (c.midlineUnlocked) ++midlineUnlocked;
+        }
+    }
 
     // Pre-tally correspondence counts — feeds the stat cards and the
     // Continue gating logic below.
@@ -466,6 +597,32 @@ void StageSidebar::RenderPointReference(Project& project, Actions& out) {
             ImGui::Dummy(ImVec2(availW, CardH));
         }
 
+        // ---- Auto-map confidence summary (Sprint 13) ---------------------
+        // Only while auto-placed points remain unchecked. Bands match the
+        // ring colours in the viewport.
+        if (bandHigh + bandReview + bandLow > 0) {
+            ImGui::Dummy(ImVec2(0.0f, 4.0f));
+            MvStyle::ScopedFont f(MvStyle::Font.MonoSm);
+            struct BandCount { const char* label; int count; ImVec4 color; };
+            const BandCount bands[3] = {
+                { "LOW",    bandLow,    MvStyle::MvDanger },
+                { "REVIEW", bandReview, MvStyle::MvWarning },
+                { "HIGH",   bandHigh,   MvStyle::MvSuccess },
+            };
+            ImGui::PushStyleColor(ImGuiCol_Text, MvStyle::MvFg3);
+            ImGui::TextUnformatted("AUTO-MAP");
+            ImGui::PopStyleColor();
+            for (const auto& b : bands) {
+                ImGui::SameLine(0.0f, 10.0f);
+                ImGui::PushStyleColor(ImGuiCol_Text, b.count > 0 ? b.color : MvStyle::MvFg4);
+                ImGui::Text("%d %s", b.count, b.label);
+                ImGui::PopStyleColor();
+            }
+            ImGui::PushStyleColor(ImGuiCol_Text, MvStyle::MvFg4);
+            ImGui::TextWrapped("Check low and review points first. Drag a point to fix it.");
+            ImGui::PopStyleColor();
+        }
+
         // ---- Points list ------------------------------------------------
         // Scrollable list of every correspondence. Each row matches the
         // design's stage2.jsx layout:
@@ -508,6 +665,20 @@ void StageSidebar::RenderPointReference(Project& project, Actions& out) {
 
             // 60 px-tall rows: 32 badge + 14 + 14 lines. Cap visible height
             // at ~6 rows so the SETTINGS block below stays reachable.
+            // Sprint 13 — low, then review points first, so the ones to
+            // check are at the top; otherwise the placement order.
+            std::vector<size_t> order(data.correspondences.size());
+            for (size_t k = 0; k < order.size(); ++k) order[k] = k;
+            auto rank = [&](size_t k) {
+                switch (BandOf(data.correspondences[k])) {
+                    case ConfidenceBand::Low:    return 0;
+                    case ConfidenceBand::Review: return 1;
+                    default:                     return 2;
+                }
+            };
+            std::stable_sort(order.begin(), order.end(),
+                             [&](size_t a, size_t b) { return rank(a) < rank(b); });
+
             constexpr float RowH     = 60.0f;
             constexpr float MaxListH = 6.0f * RowH + 8.0f;
             const float listH = std::min(
@@ -529,7 +700,7 @@ void StageSidebar::RenderPointReference(Project& project, Actions& out) {
                 const ImU32 colMissingBorder =
                     ImGui::ColorConvertFloat4ToU32(MvStyle::MvLine2);
 
-                for (size_t i = 0; i < data.correspondences.size(); ++i) {
+                for (const size_t i : order) {
                     const auto& corr = data.correspondences[i];
                     const bool hasSrc = corr.morphMeshVertexIndex  >= 0;
                     const bool hasTgt = corr.targetMeshVertexIndex >= 0;
@@ -544,7 +715,10 @@ void StageSidebar::RenderPointReference(Project& project, Actions& out) {
 
                     const ImVec2 rowMin = ImGui::GetCursorScreenPos();
                     constexpr float DelBtnW = 28.0f;
-                    const float bodyW = rowW - DelBtnW;
+                    // Midline landmarks get a lock toggle left of the squares.
+                    constexpr float LockBtnW = 24.0f;
+                    const float lockW = corr.isMidlineLandmark ? LockBtnW : 0.0f;
+                    const float bodyW = rowW - DelBtnW - lockW;
 
                     // Row body button — owns row-select hit-testing.
                     if (ImGui::InvisibleButton("##sel", ImVec2(bodyW, RowH))) {
@@ -552,6 +726,17 @@ void StageSidebar::RenderPointReference(Project& project, Actions& out) {
                     }
                     const bool rowHovered = ImGui::IsItemHovered();
                     const ImVec2 bodyMax(rowMin.x + bodyW, rowMin.y + RowH);
+
+                    bool lockHovered = false;
+                    ImVec2 lockMin(0.0f, 0.0f);
+                    if (corr.isMidlineLandmark) {
+                        ImGui::SameLine(0.0f, 0.0f);
+                        lockMin = ImGui::GetCursorScreenPos();
+                        if (ImGui::InvisibleButton("##lock", ImVec2(LockBtnW, RowH))) {
+                            out.toggleMidlineLockIndex = static_cast<int>(i);
+                        }
+                        lockHovered = ImGui::IsItemHovered();
+                    }
 
                     // X delete button — second item, adjacent on the same row.
                     ImGui::SameLine(0.0f, 0.0f);
@@ -569,7 +754,7 @@ void StageSidebar::RenderPointReference(Project& project, Actions& out) {
                         ImVec4 bg = MvStyle::MvBlue500; bg.w = 0.18f;
                         dl->AddRectFilled(rowMin, rowMax,
                                           ImGui::ColorConvertFloat4ToU32(bg));
-                    } else if (rowHovered || delHovered) {
+                    } else if (rowHovered || delHovered || lockHovered) {
                         ImVec4 bg = MvStyle::MvBlue500; bg.w = 0.06f;
                         dl->AddRectFilled(rowMin, rowMax,
                                           ImGui::ColorConvertFloat4ToU32(bg));
@@ -602,20 +787,38 @@ void StageSidebar::RenderPointReference(Project& project, Actions& out) {
                     const float textX = bMax.x + 12.0f;
                     {
                         // Body label
-                        char nameBuf[32];
-                        std::snprintf(nameBuf, sizeof(nameBuf), "Point %d", corr.pointID);
+                        char nameBuf[96];
+                        if (!corr.landmarkName.empty()) {
+                            std::snprintf(nameBuf, sizeof(nameBuf), "%s", corr.landmarkName.c_str());
+                        } else {
+                            std::snprintf(nameBuf, sizeof(nameBuf), "Point %d", corr.pointID);
+                        }
                         MvStyle::ScopedFont f(MvStyle::Font.BodyMd);
                         const float fs = ImGui::GetFontSize();
                         const float yTop = rowMin.y + (RowH * 0.5f) - fs - 1.0f;
-                        dl->AddText(ImVec2(textX, yTop),
+                        // Landmark names can be long; stop short of the
+                        // source/target squares drawn at the right edge.
+                        const ImVec4 clip(textX, rowMin.y, delMin.x - 48.0f, rowMin.y + RowH);
+                        dl->AddText(ImGui::GetFont(), fs, ImVec2(textX, yTop),
                                     ImGui::ColorConvertFloat4ToU32(MvStyle::MvFg1),
-                                    nameBuf);
+                                    nameBuf, nullptr, 0.0f, &clip);
                     }
                     {
-                        // Status sub-label.
+                        // Status sub-label. Unchecked auto points show
+                        // their confidence band instead of PAIRED.
                         const char* statusText;
                         ImVec4 statusColor;
-                        if (hasSrc && hasTgt) {
+                        const ConfidenceBand band = BandOf(corr);
+                        if (band == ConfidenceBand::Low) {
+                            statusText = "AUTO \xC2\xB7 LOW";
+                            statusColor = MvStyle::MvDanger;
+                        } else if (band == ConfidenceBand::Review) {
+                            statusText = "AUTO \xC2\xB7 REVIEW";
+                            statusColor = MvStyle::MvWarning;
+                        } else if (band == ConfidenceBand::High) {
+                            statusText = "AUTO \xC2\xB7 HIGH";
+                            statusColor = MvStyle::MvSuccess;
+                        } else if (hasSrc && hasTgt) {
                             statusText = "PAIRED";
                             statusColor = MvStyle::MvSuccess;
                         } else if (hasSrc && !hasTgt) {
@@ -656,10 +859,23 @@ void StageSidebar::RenderPointReference(Project& project, Actions& out) {
                                     xCol, MV_ICON_X);
                     }
 
+                    // Midline lock glyph, centred in its hit area.
+                    if (corr.isMidlineLandmark && MvStyle::Font.IconSm) {
+                        ImFont* iconFont = MvStyle::Font.IconSm;
+                        constexpr float lockSize = 13.0f;
+                        const char* glyph = corr.midlineUnlocked ? MV_ICON_LOCK_OPEN : MV_ICON_LOCK;
+                        const ImVec2 ts = iconFont->CalcTextSizeA(lockSize, FLT_MAX, 0.0f, glyph);
+                        const ImVec4 lockCol = lockHovered ? MvStyle::MvFg1
+                                             : (corr.midlineUnlocked ? MvStyle::MvWarning : MvStyle::MvFg3);
+                        dl->AddText(iconFont, lockSize,
+                                    ImVec2(lockMin.x + (LockBtnW - ts.x) * 0.5f, yMid - ts.y * 0.5f),
+                                    ImGui::ColorConvertFloat4ToU32(lockCol), glyph);
+                    }
+
                     // Squares — Source then Target. Both filled in the
                     // point's accent colour when present; hollow MvLine2
                     // outline when missing. Placed just left of the X.
-                    const float xClusterRight = delMin.x - SqClusterPad;
+                    const float xClusterRight = delMin.x - lockW - SqClusterPad;
                     const float tgtRight = xClusterRight;
                     const float tgtLeft  = tgtRight - SqSize;
                     const float srcRight = tgtLeft - SqPad;
@@ -678,7 +894,11 @@ void StageSidebar::RenderPointReference(Project& project, Actions& out) {
                     drawSquare(srcLeft, srcRight, hasSrc);
                     drawSquare(tgtLeft, tgtRight, hasTgt);
 
-                    if (rowHovered || delHovered) {
+                    if (lockHovered) {
+                        ImGui::SetTooltip(corr.midlineUnlocked
+                            ? "Unlocked: drags freely. Click to keep it on the symmetry plane."
+                            : "Locked to the symmetry plane while dragging. Click to unlock.");
+                    } else if (rowHovered || delHovered) {
                         if (delHovered) {
                             ImGui::SetTooltip("Delete point %d", corr.pointID);
                         } else {
@@ -706,11 +926,15 @@ void StageSidebar::RenderPointReference(Project& project, Actions& out) {
             ImGui::TableNextRow();
 
             ImGui::TableNextColumn();
-            ImGui::BeginDisabled();
-            ImGui::Button("Auto-detect", ImVec2(-FLT_MIN, 30.0f));
+            ImGui::BeginDisabled(!canAutoMap);
+            if (ImGui::Button("Auto-map", ImVec2(-FLT_MIN, 30.0f))) {
+                out.autoMapRequested = true;
+            }
             ImGui::EndDisabled();
             if (ImGui::IsItemHovered(ImGuiHoveredFlags_AllowWhenDisabled)) {
-                ImGui::SetTooltip("Coming in a future update");
+                ImGui::SetTooltip(canAutoMap
+                    ? "Place the source profile's landmarks on the target automatically"
+                    : "Needs a source profile with landmarks and a target mesh (Stage 1)");
             }
 
             ImGui::TableNextColumn();
@@ -741,6 +965,36 @@ void StageSidebar::RenderPointReference(Project& project, Actions& out) {
         }
         ImGui::PopItemWidth();
         ImGui::EndDisabled();
+
+        // Sprint 13 — dragging placed points.
+        bool mirrorDrag = data.mirrorDrag;
+        if (ImGui::Checkbox("Move mirrored pairs together", &mirrorDrag)) {
+            data.mirrorDrag = mirrorDrag;
+        }
+        if (ImGui::IsItemHovered()) {
+            ImGui::SetTooltip("Dragging one point of a left/right pair moves its partner. "
+                              "Hold Alt while dragging to move one side only.");
+        }
+        if (bandHigh + bandReview + bandLow > 0) {
+            bool showConfidence = data.showConfidence;
+            if (ImGui::Checkbox("Show confidence rings", &showConfidence)) {
+                data.showConfidence = showConfidence;
+            }
+            if (ImGui::IsItemHovered()) {
+                ImGui::SetTooltip("Green, amber and red rings on auto-placed target points, "
+                                  "by how sure auto-map is of each one.");
+            }
+        }
+        if (midlineCount > 0) {
+            bool allUnlocked = midlineUnlocked == midlineCount;
+            if (ImGui::Checkbox("Unlock midline points", &allUnlocked)) {
+                out.setAllMidlineUnlocked = allUnlocked;
+            }
+            if (ImGui::IsItemHovered()) {
+                ImGui::SetTooltip("Midline points stay on the symmetry plane while dragged. "
+                                  "Unlock them for asymmetrical features.");
+            }
+        }
 
         ImGui::Dummy(ImVec2(0.0f, 4.0f));
         ImGui::PushItemWidth(ImGui::GetContentRegionAvail().x);
@@ -1134,66 +1388,6 @@ void StageSidebar::RenderMorph(Project& project, bool processing, float progress
             ImGui::EndTable();
         }
 
-        // ---- Vertex mask (Story 5.1 — promoted to top of body) --------
-        // Masking is the most-used Stage 3 control once a morph is in
-        // flight, so it deserves first slot per the master plan layout.
-        // Existing mesh-ready guard preserved (no mesh = nothing to mask).
-        const bool morphMeshReady = project.GetMorphMesh().isLoaded || morph.isProcessed;
-        if (morphMeshReady) {
-            I::DrawSectionLabel("VERTEX MASK");
-
-            {
-                MvStyle::ScopedFont f(MvStyle::Font.BodySm);
-                ImGui::PushStyleColor(ImGuiCol_Text, MvStyle::MvFg3);
-                ImGui::TextWrapped("Paint to exclude vertices from the next "
-                                   "Process — useful for eyes, mouths, and "
-                                   "interior cavities.");
-                ImGui::PopStyleColor();
-            }
-            ImGui::Dummy(ImVec2(0.0f, 4.0f));
-
-            ImGui::Checkbox("Paint mask", &maskPaintingActive_);
-            ImGui::SameLine();
-            ImGui::Checkbox("Show mask", &maskShowMask_);
-
-            ImGui::BeginDisabled(!maskPaintingActive_);
-            ImGui::PushItemWidth(ImGui::GetContentRegionAvail().x * 0.55f);
-            ImGui::SliderFloat("Mask radius", &maskBrushRadius_, 0.5f, 50.0f, "%.1f");
-            ImGui::PopItemWidth();
-            ImGui::Checkbox("Erase", &maskEraseMode_);
-            ImGui::EndDisabled();
-
-            const bool hasMaskData = !morph.vertexMask.empty();
-            ImGui::Dummy(ImVec2(0.0f, 4.0f));
-            ImGui::BeginDisabled(!hasMaskData);
-            if (ImGui::BeginTable("##maskActions", 2,
-                                  ImGuiTableFlags_SizingStretchSame |
-                                  ImGuiTableFlags_NoPadOuterX)) {
-                ImGui::TableNextRow();
-                ImGui::TableNextColumn();
-                if (ImGui::Button("Clear mask", ImVec2(-FLT_MIN, 28.0f))) {
-                    out.clearMaskRequested = true;
-                }
-                ImGui::TableNextColumn();
-                if (ImGui::Button("Invert mask", ImVec2(-FLT_MIN, 28.0f))) {
-                    out.invertMaskRequested = true;
-                }
-                ImGui::EndTable();
-            }
-            ImGui::EndDisabled();
-
-            // Mirror the current mask controls onto the primary viewport.
-            out.maskPaintingActive = maskPaintingActive_;
-            out.maskShow           = maskShowMask_ || maskPaintingActive_;
-            out.maskEraseMode      = maskEraseMode_;
-            out.maskBrushRadius    = maskBrushRadius_;
-        } else {
-            // Ensure the viewport doesn't treat LMB as mask painting when
-            // no mesh is loaded yet.
-            out.maskPaintingActive = false;
-            out.maskShow           = false;
-        }
-
         // ---- Parameter edit tracking + collapsible-section helper -----
         // Track per-frame edits across the slider blocks below so any
         // manual tweak clears activePresetId_ and the active-card
@@ -1273,13 +1467,48 @@ void StageSidebar::RenderMorph(Project& project, bool processing, float progress
             ImGui::PopItemWidth();
         }
 
+        // ---- Vertex mask (Sprint 10.7 — own collapsible section) -------
+        // Between Advanced and "Reset to defaults", in its own section so
+        // it doesn't read as one of the wrap parameters. Default expanded; collapse state persists like General /
+        // Advanced. Mesh-ready guard preserved (no mesh = nothing to mask).
+        const bool morphMeshReady = project.GetMorphMesh().isLoaded || morph.isProcessed;
+        if (morphMeshReady &&
+            DrawCollapsibleSection("morph.mask", "Vertex Mask",
+                                   /*defaultExpanded=*/true)) {
+            {
+                MvStyle::ScopedFont f(MvStyle::Font.BodySm);
+                ImGui::PushStyleColor(ImGuiCol_Text, MvStyle::MvFg3);
+                ImGui::TextWrapped("Paint to exclude vertices from the next "
+                                   "Process — useful for eyes, mouths, and "
+                                   "interior cavities.");
+                ImGui::PopStyleColor();
+            }
+            ImGui::Dummy(ImVec2(0.0f, 4.0f));
+            RenderMaskControls(!morph.vertexMask.empty(), out);
+        }
+        if (morphMeshReady) {
+            // Mirror the current mask controls onto the primary viewport
+            // (also while the section is collapsed, so state is kept).
+            out.maskPaintingActive = maskPaintingActive_;
+            out.maskShow           = maskShowMask_ || maskPaintingActive_;
+            out.maskEraseMode      = maskEraseMode_;
+            out.maskBrushRadius    = maskBrushRadius_;
+        } else {
+            // Ensure the viewport doesn't treat LMB as mask painting when
+            // no mesh is loaded yet.
+            out.maskPaintingActive = false;
+            out.maskShow           = false;
+        }
+
+
         // ---- Reset to Defaults (Story 5.1 — relocated outside Advanced) -
-        // Previously hidden inside the collapsed Advanced section; now
-        // always visible so a tweaked-too-far parameter set is one click
-        // from a known-good baseline regardless of which sections are open.
+        // Always visible so a tweaked-too-far parameter set is one click
+        // from a known-good baseline. Sprint 10.6: resets parameters only
+        // (to the Quick Wrap project default) — the processed result,
+        // vertex mask and accepted flag are kept.
         ImGui::Dummy(ImVec2(0.0f, 4.0f));
         if (ImGui::Button("Reset to defaults", ImVec2(-FLT_MIN, 30.0f))) {
-            morph = MorphData();
+            WrapPreset::QuickWrap().ApplyTo(morph);
             activePresetId_.clear();
         }
 
@@ -1351,6 +1580,19 @@ void StageSidebar::RenderMorph(Project& project, bool processing, float progress
             ImGui::Text("Max disp.  %.3f mm", morph.maxDisplacement);
             ImGui::Text("Avg disp.  %.3f mm", morph.avgDisplacement);
             ImGui::PopStyleColor();
+        }
+
+        // ---- Reset to source mesh (Sprint 10.6) ------------------------
+        // Discards the processed result and shows the source mesh again.
+        // AppWindow runs it as an undoable command (and confirms first if
+        // the result was accepted). Parameters and mask are untouched.
+        if (!processing) {
+            ImGui::Dummy(ImVec2(0.0f, 4.0f));
+            ImGui::BeginDisabled(!morph.isProcessed);
+            if (ImGui::Button("Reset to source mesh", ImVec2(-FLT_MIN, 30.0f))) {
+                out.resetMorphResultRequested = true;
+            }
+            ImGui::EndDisabled();
         }
 
         ImGui::Dummy(ImVec2(0.0f, 12.0f));
@@ -1511,6 +1753,203 @@ void StageSidebar::RenderTouchUp(Project& project, Actions& out) {
         /*finishStyle=*/true);
     if (footer.previousClicked) out.previousStageRequested = true;
     if (footer.continueClicked) out.exportMeshRequested = true;
+}
+
+// ---------------------------------------------------------------------------
+// Shared mask controls (Stage 3 and the profile editor)
+// ---------------------------------------------------------------------------
+
+void StageSidebar::RenderMaskControls(bool hasMaskData, Actions& out) {
+    ImGui::Checkbox("Paint mask", &maskPaintingActive_);
+    ImGui::SameLine();
+    ImGui::Checkbox("Show mask", &maskShowMask_);
+
+    ImGui::BeginDisabled(!maskPaintingActive_);
+    ImGui::PushItemWidth(ImGui::GetContentRegionAvail().x * 0.55f);
+    ImGui::SliderFloat("Mask radius", &maskBrushRadius_, 0.5f, 50.0f, "%.1f");
+    ImGui::PopItemWidth();
+    ImGui::Checkbox("Erase", &maskEraseMode_);
+    ImGui::EndDisabled();
+
+    ImGui::Dummy(ImVec2(0.0f, 4.0f));
+    ImGui::BeginDisabled(!hasMaskData);
+    if (ImGui::BeginTable("##maskActions", 2,
+                          ImGuiTableFlags_SizingStretchSame |
+                          ImGuiTableFlags_NoPadOuterX)) {
+        ImGui::TableNextRow();
+        ImGui::TableNextColumn();
+        if (ImGui::Button("Clear mask", ImVec2(-FLT_MIN, 28.0f))) {
+            out.clearMaskRequested = true;
+        }
+        ImGui::TableNextColumn();
+        if (ImGui::Button("Invert mask", ImVec2(-FLT_MIN, 28.0f))) {
+            out.invertMaskRequested = true;
+        }
+        ImGui::EndTable();
+    }
+    ImGui::EndDisabled();
+}
+
+// ---------------------------------------------------------------------------
+// Profile editor (Sprint 14)
+// ---------------------------------------------------------------------------
+
+void StageSidebar::RenderProfileEditor(Project& project, Actions& out) {
+    namespace I = MvInspector;
+    const ProfileEditorView& view = *editorView_;
+    const auto& landmarks = *view.landmarks;
+    int placedCount = 0;
+    for (bool b : view.placed) placedCount += b ? 1 : 0;
+
+    I::DrawStageHeader("SOURCE PROFILE",
+                       view.isNew ? "New " : "Edit ", "profile",
+                       "Pick a landmark, then click the mesh to place it. Mirrored "
+                       "partners fill in for you; drag any point to adjust it.");
+
+    constexpr float FooterReserveH = 60.0f;
+    if (ImGui::BeginChild("##profileEditorBody", ImVec2(0.0f, -FooterReserveH), false,
+                          ImGuiWindowFlags_NoBackground)) {
+        // Name and symmetry.
+        if (editorNameFor_ != view.name || editorNameBuf_[0] == '\0') {
+            std::snprintf(editorNameBuf_, sizeof(editorNameBuf_), "%s", view.name.c_str());
+            editorNameFor_ = view.name;
+        }
+        I::DrawSectionLabel("PROFILE");
+        ImGui::SetNextItemWidth(-FLT_MIN);
+        if (ImGui::InputTextWithHint("##profileName", "Profile name", editorNameBuf_,
+                                     sizeof(editorNameBuf_))) {
+            out.editor.rename = std::string(editorNameBuf_);
+            editorNameFor_ = editorNameBuf_;
+        }
+        int axisIdx = view.symmetryAxis == Axis::Y ? 1 : (view.symmetryAxis == Axis::Z ? 2 : 0);
+        const char* axes[] = { "Symmetry: X axis", "Symmetry: Y axis", "Symmetry: Z axis" };
+        ImGui::SetNextItemWidth(-FLT_MIN);
+        if (ImGui::Combo("##profileAxis", &axisIdx, axes, 3)) {
+            out.editor.symmetryAxis = axisIdx == 1 ? Axis::Y : (axisIdx == 2 ? Axis::Z : Axis::X);
+        }
+
+        // Tabs.
+        ImGui::Dummy(ImVec2(0.0f, 4.0f));
+        if (ImGui::BeginTable("##editorTabs", 2, ImGuiTableFlags_SizingStretchSame |
+                                                 ImGuiTableFlags_NoPadOuterX)) {
+            ImGui::TableNextRow();
+            auto tab = [&](const char* label, bool selected, bool mask) {
+                ImGui::TableNextColumn();
+                if (selected) ImGui::PushStyleColor(ImGuiCol_Button, MvStyle::MvBlue600);
+                if (ImGui::Button(label, ImVec2(-FLT_MIN, 28.0f)) && !selected) {
+                    out.editor.maskTab = mask;
+                }
+                if (selected) ImGui::PopStyleColor();
+            };
+            tab("Landmarks", !view.maskTab, false);
+            tab("Default mask", view.maskTab, true);
+            ImGui::EndTable();
+        }
+
+        if (view.maskTab) {
+            I::DrawSectionLabel("DEFAULT MASK");
+            {
+                MvStyle::ScopedFont f(MvStyle::Font.BodySm);
+                ImGui::PushStyleColor(ImGuiCol_Text, MvStyle::MvFg3);
+                ImGui::TextWrapped("Paint the vertices the wrap should leave alone by default "
+                                   "(mouth interior, eyes). Projects using this profile start "
+                                   "with this mask.");
+                ImGui::PopStyleColor();
+            }
+            ImGui::Dummy(ImVec2(0.0f, 4.0f));
+            RenderMaskControls(view.hasMask, out);
+            out.maskPaintingActive = maskPaintingActive_;
+            out.maskShow           = maskShowMask_ || maskPaintingActive_;
+            out.maskEraseMode      = maskEraseMode_;
+            out.maskBrushRadius    = maskBrushRadius_;
+        } else {
+            out.maskPaintingActive = false;
+            out.maskShow           = false;
+
+            I::DrawSectionLabel("LANDMARKS");
+            ImGui::PushStyleColor(ImGuiCol_Text, MvStyle::MvFg3);
+            ImGui::Text("%d of %zu placed", placedCount, landmarks.size());
+            ImGui::PopStyleColor();
+            bool mirror = view.mirrorFill;
+            if (ImGui::Checkbox("Place mirrored partners", &mirror)) out.editor.mirrorFill = mirror;
+
+            // Checklist, grouped by region in list order.
+            const float listH = std::max(160.0f, ImGui::GetContentRegionAvail().y - 150.0f);
+            ImGui::PushStyleColor(ImGuiCol_ChildBg, MvStyle::MvBg1);
+            if (ImGui::BeginChild("##landmarkChecklist", ImVec2(-FLT_MIN, listH), true)) {
+                std::string lastRegion;
+                for (size_t i = 0; i < landmarks.size(); ++i) {
+                    const ProfileLandmark& lm = landmarks[i];
+                    if (lm.region != lastRegion) {
+                        lastRegion = lm.region;
+                        MvStyle::ScopedFont f(MvStyle::Font.MonoSm);
+                        ImGui::PushStyleColor(ImGuiCol_Text, MvStyle::MvFg4);
+                        std::string upper = lastRegion.empty() ? std::string("OTHER") : lastRegion;
+                        for (char& c : upper) c = static_cast<char>(std::toupper(static_cast<unsigned char>(c)));
+                        ImGui::TextUnformatted(upper.c_str());
+                        ImGui::PopStyleColor();
+                    }
+                    ImGui::PushID(static_cast<int>(i));
+                    const bool placed = i < view.placed.size() && view.placed[i];
+                    const bool isActive = static_cast<int>(i) == view.activeLandmark;
+                    ImGui::PushStyleColor(ImGuiCol_Text, placed ? MvStyle::MvSuccess : MvStyle::MvFg4);
+                    {
+                        MvStyle::ScopedFont icon(MvStyle::Font.IconSm);
+                        ImGui::TextUnformatted(placed ? MV_ICON_CHECK_CIRCLE : MV_ICON_CIRCLE_DASHED);
+                    }
+                    ImGui::PopStyleColor();
+                    ImGui::SameLine();
+                    if (ImGui::Selectable(lm.name.c_str(), isActive)) out.editor.selectLandmark = static_cast<int>(i);
+                    // Bring the active row into view only when it changes;
+                    // doing it every frame fought the user's own scrolling.
+                    if (isActive && view.activeLandmark != checklistScrolledTo_) {
+                        ImGui::SetScrollHereY(0.5f);
+                        checklistScrolledTo_ = view.activeLandmark;
+                    }
+                    ImGui::PopID();
+                }
+            }
+            ImGui::EndChild();
+            ImGui::PopStyleColor();
+
+            const bool activePlaced = view.activeLandmark >= 0 &&
+                                      view.activeLandmark < static_cast<int>(view.placed.size()) &&
+                                      view.placed[view.activeLandmark];
+            if (ImGui::BeginTable("##editorRowActions", 2, ImGuiTableFlags_SizingStretchSame |
+                                                           ImGuiTableFlags_NoPadOuterX)) {
+                ImGui::TableNextRow();
+                ImGui::TableNextColumn();
+                if (ImGui::Button("Skip", ImVec2(-FLT_MIN, 28.0f))) out.editor.skip = true;
+                ImGui::TableNextColumn();
+                ImGui::BeginDisabled(!activePlaced);
+                if (ImGui::Button("Remove point", ImVec2(-FLT_MIN, 28.0f))) out.editor.removeActive = true;
+                ImGui::EndDisabled();
+                ImGui::EndTable();
+            }
+
+            I::DrawSectionLabel("CUSTOM LANDMARK");
+            ImGui::SetNextItemWidth(-FLT_MIN);
+            ImGui::InputTextWithHint("##customName", "Name, e.g. Ear tip", customNameBuf_,
+                                     sizeof(customNameBuf_));
+            ImGui::Checkbox("Left/right pair", &customPaired_);
+            ImGui::SameLine();
+            ImGui::BeginDisabled(customNameBuf_[0] == '\0');
+            if (ImGui::Button("Add")) {
+                out.editor.addCustom = std::make_pair(std::string(customNameBuf_), customPaired_);
+                customNameBuf_[0] = '\0';
+            }
+            ImGui::EndDisabled();
+        }
+    }
+    ImGui::EndChild();
+    (void)project;
+
+    const auto footer = I::DrawInspectorFooter("PROFILE EDITOR", /*previousEnabled=*/true,
+                                               /*continueEnabled=*/editorNameBuf_[0] != '\0',
+                                               "Save profile", /*finishStyle=*/true,
+                                               "Cancel");
+    if (footer.continueClicked) out.editor.save = true;
+    if (footer.previousClicked) out.editor.cancel = true;
 }
 
 } // namespace MetaVisage

@@ -1,8 +1,19 @@
 cmake_minimum_required(VERSION 3.16)
-project(MetaVisage VERSION 2.0.0 LANGUAGES CXX)
+project(MetaVisage VERSION 2.1.0 LANGUAGES CXX)
 
 set(CMAKE_CXX_STANDARD 20)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
+
+# Release 2.1.0 — the project version is the single source for the version
+# shown in the app (METAVISAGE_VERSION). package-release.ps1 reads vcpkg.json,
+# so configure fails if the two disagree.
+file(READ "${CMAKE_CURRENT_SOURCE_DIR}/vcpkg.json" METAVISAGE_MANIFEST)
+string(REGEX MATCH "\"version-string\"[ \t]*:[ \t]*\"([^\"]+)\"" _mv_version_match "${METAVISAGE_MANIFEST}")
+if(NOT CMAKE_MATCH_1 STREQUAL PROJECT_VERSION)
+    message(FATAL_ERROR "vcpkg.json version-string '${CMAKE_MATCH_1}' does not match "
+                        "project(MetaVisage VERSION ${PROJECT_VERSION}). Bump both together.")
+endif()
+add_compile_definitions(METAVISAGE_VERSION="${PROJECT_VERSION}")
 
 # Sprint 3.7 — Qt6 fully removed. The application is now self-hosted on
 # GLFW + Dear ImGui + standard C++ libraries (std::format, std::filesystem,
@@ -51,6 +62,9 @@ find_package(nlohmann_json CONFIG REQUIRED)
 
 # Native File Dialog Extended — replaces QFileDialog (Sprint 3.6)
 find_package(nfd CONFIG REQUIRED)
+# Sprint 14 — profile packages (.mvprofile.zip). kubazip (MIT) is already in
+# the vcpkg tree as an Assimp dependency.
+find_package(zip CONFIG REQUIRED)
 
 # Eigen3 — deformation math (unchanged)
 find_package(Eigen3 CONFIG REQUIRED)
@@ -98,6 +112,7 @@ set(CORE_SOURCES
     src/core/UndoStack.cpp
     src/core/TextureData.cpp
     src/core/WrapPreset.cpp
+    src/core/SourceProfile.cpp
     src/rendering/Renderer.cpp
     src/rendering/MeshRenderer.cpp
     src/rendering/ShaderManager.cpp
@@ -121,6 +136,7 @@ set(CORE_SOURCES
     src/utils/SingleInstance.cpp
     src/deformation/MeshDeformer.cpp
     src/deformation/NRICPDeformer.cpp
+    src/deformation/TemplateFitSolver.cpp
     src/sculpting/SculptBrush.cpp
     src/sculpting/SmoothBrush.cpp
     src/sculpting/GrabBrush.cpp
@@ -130,6 +146,7 @@ set(CORE_SOURCES
     src/io/MeshExporter.cpp
     src/io/ProjectSerializer.cpp
     src/io/PresetStore.cpp
+    src/io/ProfileStore.cpp
     src/baking/TextureBaker.cpp
     src/baking/TextureWriter.cpp
 )
@@ -155,6 +172,7 @@ set(CORE_HEADERS
     include/core/UndoActions.h
     include/core/TextureData.h
     include/core/WrapPreset.h
+    include/core/SourceProfile.h
     include/rendering/Renderer.h
     include/rendering/MeshRenderer.h
     include/rendering/ShaderManager.h
@@ -169,6 +187,8 @@ set(CORE_HEADERS
     include/utils/SingleInstance.h
     include/deformation/MeshDeformer.h
     include/deformation/NRICPDeformer.h
+    include/deformation/LandmarkSolver.h
+    include/deformation/TemplateFitSolver.h
     include/sculpting/SculptBrush.h
     include/sculpting/SmoothBrush.h
     include/sculpting/GrabBrush.h
@@ -179,6 +199,7 @@ set(CORE_HEADERS
     include/io/MeshExporter.h
     include/io/ProjectSerializer.h
     include/io/PresetStore.h
+    include/io/ProfileStore.h
     include/baking/TextureBaker.h
     include/baking/TextureWriter.h
 )
@@ -206,6 +227,30 @@ target_link_libraries(${PROJECT_NAME}
         OpenGL::GL
 )
 
+# Sprint 10.5 — embed the MetaVisage icon. The resource is named GLFW_ICON so
+# GLFW also uses it for the window (title bar and taskbar). The .rc is
+# configured with an absolute icon path so it needs no include directories.
+if(WIN32)
+    set(METAVISAGE_ICON_PATH "${CMAKE_CURRENT_SOURCE_DIR}/assets/icons/metavisage.ico")
+    set(METAVISAGE_RC "${CMAKE_CURRENT_BINARY_DIR}/metavisage.rc")
+    configure_file(resources/metavisage.rc.in "${METAVISAGE_RC}" @ONLY)
+    enable_language(RC)
+    if(MINGW)
+        # windres runs the preprocessor through a shell command that splits
+        # -I paths containing spaces, and CMake passes every target include
+        # directory to .rc sources. Compile the resource on its own instead.
+        set(METAVISAGE_RC_OBJ "${CMAKE_CURRENT_BINARY_DIR}/metavisage_rc.obj")
+        add_custom_command(
+            OUTPUT "${METAVISAGE_RC_OBJ}"
+            COMMAND "${CMAKE_RC_COMPILER}" -O coff "${METAVISAGE_RC}" "${METAVISAGE_RC_OBJ}"
+            DEPENDS "${METAVISAGE_RC}" "${METAVISAGE_ICON_PATH}"
+            VERBATIM)
+        target_sources(${PROJECT_NAME} PRIVATE "${METAVISAGE_RC_OBJ}")
+    else()
+        target_sources(${PROJECT_NAME} PRIVATE "${METAVISAGE_RC}")
+    endif()
+endif()
+
 # ---------------------------------------------------------------------------
 # Link
 # ---------------------------------------------------------------------------
@@ -218,6 +263,7 @@ target_link_libraries(${PROJECT_NAME}Core
         nlohmann_json::nlohmann_json
         nfd::nfd
         Eigen3::Eigen
+        zip::zip
 )
 
 if(OpenMP_CXX_FOUND)
@@ -312,6 +358,66 @@ add_custom_command(TARGET metavisage_v1_compat POST_BUILD
 add_test(NAME smoke_v1_backward_compat
          COMMAND metavisage_v1_compat
          WORKING_DIRECTORY ${CMAKE_RUNTIME_OUTPUT_DIRECTORY})
+
+# ---------------------------------------------------------------------------
+# Source Profile smoke (Sprint 11)
+# ---------------------------------------------------------------------------
+# Topology fingerprint, mask ranges, profile validation, ProfileStore
+# save / load / delete against a temp directory, the dev draft export, and
+# the shipped built-in MetaHuman profile against the bundled head. Reads the
+# staged build/bin/<config>/assets/ tree like smoke_load_serialize_export.
+add_executable(metavisage_smoke_source_profile
+    tests/smoke/source_profile.cpp
+)
+target_link_libraries(metavisage_smoke_source_profile
+    PRIVATE
+        ${PROJECT_NAME}Core
+)
+if(MSVC)
+    target_compile_options(metavisage_smoke_source_profile PRIVATE /W4)
+else()
+    target_compile_options(metavisage_smoke_source_profile PRIVATE -Wall -Wextra)
+endif()
+
+add_test(NAME smoke_source_profile
+         COMMAND metavisage_smoke_source_profile
+         WORKING_DIRECTORY ${CMAKE_RUNTIME_OUTPUT_DIRECTORY})
+
+# ---------------------------------------------------------------------------
+# Landmark solver smoke (Sprint 12)
+# ---------------------------------------------------------------------------
+# Runs the auto-map solver on targets generated from the bundled head (moved,
+# stretched, bulged, noisy, slightly misaligned), where the right answer is
+# the same vertex, and checks accuracy, cancellation and refusal of an
+# unaligned target.
+add_executable(metavisage_smoke_landmark_solver
+    tests/smoke/landmark_solver.cpp
+)
+target_link_libraries(metavisage_smoke_landmark_solver
+    PRIVATE
+        ${PROJECT_NAME}Core
+)
+if(MSVC)
+    target_compile_options(metavisage_smoke_landmark_solver PRIVATE /W4)
+else()
+    target_compile_options(metavisage_smoke_landmark_solver PRIVATE -Wall -Wextra)
+endif()
+
+add_test(NAME smoke_landmark_solver
+         COMMAND metavisage_smoke_landmark_solver
+         WORKING_DIRECTORY ${CMAKE_RUNTIME_OUTPUT_DIRECTORY})
+set_tests_properties(smoke_landmark_solver PROPERTIES TIMEOUT 240)
+
+# Auto-map dataset benchmark (Sprint 12). Not a CTest target: it runs the
+# solver over a folder of saved projects with hand-placed reference points.
+# See tests/datasets/README.md.
+add_executable(metavisage_automap_bench
+    tools/automap_bench.cpp
+)
+target_link_libraries(metavisage_automap_bench
+    PRIVATE
+        ${PROJECT_NAME}Core
+)
 
 # ---------------------------------------------------------------------------
 # Wrap Engine behavioural-parity smoke (Story 4.6)

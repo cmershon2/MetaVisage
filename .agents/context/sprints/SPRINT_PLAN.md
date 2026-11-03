@@ -4,6 +4,18 @@
 supersedes the commercial distribution/auto-update roadmap below. Sprints 1-7
 remain historical records. The current application is MIT licensed and offline.
 
+**Latest**: [Sprint 14 - Custom Source Profiles](sprint-14.md), complete 2026-11-03, which
+completes Auto Point Reference with [Sprint 11](sprint-11.md), [Sprint 12](sprint-12.md) and
+[Sprint 13](sprint-13.md). Before them,
+[Sprint 10 - App Shell & Morph Stage Polish](sprint-10.md) and
+[Sprint 9 - Alignment Stage Usability Fixes](sprint-09.md) delivered the 2026-10-29
+feedback triage.
+
+**Next**: not yet planned; pick from the product backlog (small candidates: built-in profile
+landmark adjustments, an Unreal FBX fingerprint check). Auto Point Reference design and history:
+see
+[auto-point-reference.md](../design/auto-point-reference.md) for the design and roadmap.
+
 **Version:** 2.0  
 **Date:** April 19, 2026  
 **Total Duration:** 20 weeks (10 sprints @ 2 weeks each)  

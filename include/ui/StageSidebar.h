@@ -1,6 +1,7 @@
 #ifndef METAVISAGE_UI_STAGESIDEBAR_H
 #define METAVISAGE_UI_STAGESIDEBAR_H
 
+#include "core/SourceProfile.h"
 #include "core/Transform.h"
 #include "core/WrapPreset.h"
 
@@ -28,6 +29,7 @@ public:
         bool processMorphRequested = false;
         bool cancelMorphRequested = false;
         bool acceptMorphRequested = false;
+        bool resetMorphResultRequested = false;   // Sprint 10.6
         bool clearAllPointsRequested = false;
         bool clearMaskRequested = false;
         bool invertMaskRequested = false;
@@ -43,7 +45,9 @@ public:
         std::string targetPresetId;
 
         // Stage 1 extras
-        bool useDefaultMorphMeshRequested = false;
+        // Sprint 11 — the user picked a Source Profile in the source picker.
+        // AppWindow confirms if the swap would discard work, then loads it.
+        std::optional<std::string> selectSourceProfileId;
         // When non-empty, AppWindow opens an NFD picker, loads the texture,
         // and adds it to Project::GetTargetTextures() under this slot name.
         std::string importTextureSlot;
@@ -74,7 +78,50 @@ public:
         // X on that row; AppWindow erases the correspondence (and its
         // symmetric pair if present) and pushes a PointPlacementUndoAction.
         std::optional<int> deletePointIndex;
+
+        // Stage 2 — Sprint 13. Auto-map runs (or re-runs) the solver;
+        // the lock toggle frees or re-locks one midline point by row index;
+        // setAllMidlineUnlocked does it for every midline point.
+        bool autoMapRequested = false;
+        std::optional<int> toggleMidlineLockIndex;
+        std::optional<bool> setAllMidlineUnlocked;
+
+        // Sprint 14 — source profile tools (Stage 1 picker).
+        enum class ProfileRequest { None, NewFromMesh, EditActive, SaveSourceAsProfile, Manage };
+        ProfileRequest profileRequest = ProfileRequest::None;
+
+        // Sprint 14 — profile editor panel requests.
+        struct EditorActions {
+            std::optional<int> selectLandmark;
+            bool skip = false;
+            bool removeActive = false;
+            std::optional<std::pair<std::string, bool>> addCustom;   // name, paired
+            std::optional<bool> mirrorFill;
+            std::optional<Axis> symmetryAxis;
+            std::optional<std::string> rename;
+            std::optional<bool> maskTab;
+            bool save = false;
+            bool cancel = false;
+        } editor;
     };
+
+    // Sprint 14 — what the profile editor panel shows. AppWindow points this
+    // at its editor state while the editor is open, and clears it after.
+    struct ProfileEditorView {
+        std::string name;
+        bool isNew = true;
+        const std::vector<ProfileLandmark>* landmarks = nullptr;
+        std::vector<bool> placed;
+        int activeLandmark = -1;
+        bool mirrorFill = true;
+        Axis symmetryAxis = Axis::X;
+        bool maskTab = false;
+        bool hasMask = false;
+    };
+    void SetProfileEditorView(const ProfileEditorView* view) {
+        if (!view) checklistScrolledTo_ = -1;
+        editorView_ = view;
+    }
 
     // Render docked panel titled "Stage". Returns the actions requested this
     // frame — the caller (AppWindow) dispatches them to the appropriate
@@ -82,16 +129,31 @@ public:
     // so the active row stays highlighted when the user picks a point in
     // the viewport. `userPresets` is read by Stage 3's preset card row;
     // built-ins live in WrapPreset::BuiltIns() and are not in this list.
+    // `sourceProfiles` (built-ins first) feeds Stage 1's source picker.
     Actions Render(Project* project, bool morphProcessing, float morphProgress,
                    const std::vector<WrapPreset>& userPresets,
+                   const std::vector<SourceProfile>& sourceProfiles,
                    int selectedPointIndex = -1);
 
 private:
-    void RenderAlignment(Project& project, Actions& out);
-    void RenderPointReference(Project& project, Actions& out);
+    void RenderAlignment(Project& project, const std::vector<SourceProfile>& sourceProfiles,
+                         Actions& out);
+    void RenderSourcePicker(Project& project, const std::vector<SourceProfile>& sourceProfiles,
+                            Actions& out);
+    void RenderPointReference(Project& project, const std::vector<SourceProfile>& sourceProfiles,
+                              Actions& out);
     void RenderMorph(Project& project, bool processing, float progress,
                      const std::vector<WrapPreset>& userPresets, Actions& out);
     void RenderTouchUp(Project& project, Actions& out);
+    void RenderProfileEditor(Project& project, Actions& out);
+    void RenderMaskControls(bool hasMaskData, Actions& out);
+
+    const ProfileEditorView* editorView_ = nullptr;
+    char editorNameBuf_[128] = {};
+    std::string editorNameFor_;          // which name the buffer was filled from
+    char customNameBuf_[64] = {};
+    int checklistScrolledTo_ = -1;       // active landmark the checklist last scrolled to
+    bool customPaired_ = false;
 
     // Stage 3 mask painting — state persists across frames. When painting is
     // active, LMB in the morph viewport paints mask bits instead of doing

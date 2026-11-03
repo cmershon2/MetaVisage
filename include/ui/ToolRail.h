@@ -11,16 +11,15 @@ namespace ToolRail {
 
 // Sprint 3.8.4 — 56 px-wide vertical tool rail rendered as a left column of
 // the work area in stages where it applies. Two variants share the same
-// chrome (eyebrow header, 40×40 buttons, divider, Help anchored to bottom):
+// chrome (eyebrow header, 40×40 buttons, Help anchored to bottom):
 //
 //   Stage 1 (Alignment) — XFORM eyebrow:
-//     Move (W) / Rotate (E) / Scale (R)  → Viewport::SetTransformMode
-//     Symmetry X / Pivot snap            → visual stubs (no backend yet)
+//     Move (G) / Rotate (R) / Scale (S)  → Viewport::SetTransformMode
 //
 //   Stage 4 (Touch Up) — BRUSH eyebrow:
 //     Smooth / Grab / Push-Pull / Inflate → Viewport::SetBrushType +
 //                                            Project::SculptState::activeBrush
-//     Symmetry X                          → SculptState::symmetryEnabled
+//     divider, Symmetry X                 → SculptState::symmetryEnabled
 //
 // Stages 2 (Point Reference) and 3 (Morph) do not show the rail — the
 // caller is responsible for not invoking Render in those stages.

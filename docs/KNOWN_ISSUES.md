@@ -1,13 +1,22 @@
 # Known issues and validation limits
 
-These notes apply to the standalone `development` branch. Historical v1.0.0
-implementation notes are not a list of current defects.
+These notes apply to MetaVisage 2.1.0 and the `development` branch.
+Historical v1.0.0 implementation notes are not a list of current defects.
 
 ## Workflow limitations
 
 - **No auto-save or crash recovery**: Save frequently with `Ctrl+S`. Unsaved
   work can be lost if the application exits unexpectedly.
-- **Manual landmarks**: Automated landmark placement is not implemented.
+- **Auto-map accuracy varies by style**: Auto-map places landmarks well on
+  realistic heads; stylized features (very large eyes or ears, exaggerated
+  noses) are often off and get review or low confidence rings. Check those
+  points and drag them into place. Custom profiles with few landmarks are not
+  yet measured on real heads.
+- **Auto-map needs a source profile with landmarks**: Pick the built-in
+  MetaHuman profile or build one in the profile editor (Stage 1 > Profile
+  tools). A mesh without a profile is placed manually as before.
+- **Projects saved by 2.1.0 use format v3**: They don't open in 2.0.0. Older
+  projects open in 2.1.0 unchanged.
 - **Large-file responsiveness**: Mesh import, project save/load, and texture
   baking/export currently run synchronously and can temporarily pause the UI.
   Morph processing runs on a background worker. Moving the remaining heavy I/O
@@ -28,9 +37,9 @@ implementation notes are not a list of current defects.
   needs validation of the extracted package, runtime DLLs, assets, and local
   export before the next binary release.
 - **UI automation coverage is limited**: Startup, stage navigation, shading,
-  and brush selection are covered. Mesh-dependent Process/Accept and sculpt/undo
-  UI automation remain follow-up work; mesh/export behavior has separate smoke
-  coverage.
+  brush selection, source profiles, auto-map, point dragging and the profile
+  editor are covered. Sculpt/undo UI automation remains follow-up work;
+  mesh/export behavior has separate smoke coverage.
 
 ## Unreal workflow
 

@@ -78,6 +78,20 @@ public:
 
     void SetViewportLabel(const std::string& label) { viewportLabel_ = label; }
 
+    // Last rendered size in viewport-local pixels (the space input arrives in).
+    float GetPixelWidth() const { return lastW_; }
+    float GetPixelHeight() const { return lastH_; }
+
+    // --- Camera presets (Sprint 10.3) ---
+    // Shared by the numpad / Home / F keys and the View menu.
+    enum class ViewPreset { Front, Right, Top };
+    void ApplyViewPreset(ViewPreset preset);   // Numpad 1 / 3 / 7
+    void ToggleProjection();                   // Numpad 5
+    void ResetView();                          // Home
+    void FrameMeshes();                        // F
+    void SetShowGrid(bool show);
+    bool GetShowGrid() const;
+
     // --- Transform mode (Alignment stage) ---
     TransformMode GetTransformMode() const { return transformMode_; }
     AxisConstraint GetAxisConstraint() const { return axisConstraint_; }
@@ -98,6 +112,7 @@ public:
                              const std::vector<float>& displacements,
                              float maxDisplacement);
     void UploadMeshTexture(const Mesh* mesh, const TextureData& texture);
+    bool HasMeshTexture(const Mesh* mesh) const;
 
     // --- Sculpting (Touch Up) ---
     void SetBrushType(BrushType type);
@@ -138,6 +153,14 @@ public:
     std::function<void(PointSide, Vector3, int)> OnPointPlaced;
     std::function<void(int)> OnPointSelected;
     std::function<void()> OnPointDeleteRequested;
+    // Sprint 13 — dragging a placed point. Begin fires once the cursor has
+    // moved a few pixels after pressing on a point; Dragged fires on every
+    // move after that with the cursor ray (AppWindow snaps it to the mesh,
+    // keeps midline points on the plane and mirrors pairs); End fires on
+    // release. `oneSide` is true while Alt is held.
+    std::function<void(int)> OnPointDragBegin;
+    std::function<void(int, PointSide, const Ray&, bool)> OnPointDragged;
+    std::function<void(int)> OnPointDragEnd;
     std::function<void(float)> OnBrushRadiusChanged;
     std::function<void(Transform, Transform)> OnTransformApplied;
     std::function<void(BrushStroke)> OnSculptStrokeCompleted;
@@ -228,6 +251,12 @@ private:
 
     // Point reference
     int selectedPointIndex_ = -1;
+    // Sprint 13 — press on a point arms a drag; it starts once the cursor
+    // moves past a small threshold, so a plain click still just selects.
+    int pointDragIndex_ = -1;
+    bool pointDragActive_ = false;
+    float pointDragPressX_ = 0.0f;
+    float pointDragPressY_ = 0.0f;
 
     // Sculpt brushes (kept so Setters can tune them; strokes re-wire in 3.5.4)
     BrushType activeBrushType_ = BrushType::Smooth;

@@ -98,3 +98,49 @@ implemented or counted as completed delivery.
   - **Value**: Keeps future UI-heavy PRs aligned with the paid-feature CTA standard without relying on memory from live review
 
 - [ ] **Cloud rendering** — offload long morph computations to a remote worker
+
+### 2026-10-30 - Sprint 9 Alignment stage usability fixes
+
+- Completed: **Alignment gizmo moves at cursor speed**, **Alignment tool hotkeys match the tool rail** (kept Blender G/R/S; rail labels corrected), **Typed entry for target transform fields**, **Target textures persist across target mesh replacement**, **Remove placeholder Alignment rail tools**.
+- **Effort (Estimated)**: 10 points.
+- **Completed**: Sprint 9, 2026-10-30.
+- **Notes**: Casey confirmed by hand, including a full Stage 1 -> 4 -> Export run. Numpad view checks are automated only; hand-testing them moves to the Sprint 10 View menu. Also fixed the degenerate Numpad 7 top view. See `retrospectives/retro-sprint-09.md`.
+
+### 2026-10-30 - Sprint 10 app shell and Morph stage polish
+
+- Completed: **Debug HUD hidden by default**, **Remove stub Mesh menu**, **Working View menu** (plus a viewport-toolbar projection toggle and Auto Perspective), **Menu spacing pass**, **MetaVisage icon on the executable and window**, **Reset morph result to source mesh** (undoable; "Reset to defaults" now resets parameters only), **Vertex mask in its own Morph section**.
+- **Effort (Estimated)**: 12 points.
+- **Completed**: Sprint 10, 2026-10-30.
+- **Notes**: Casey confirmed by hand, including a full Stage 1 -> 4 -> Export run. This completes the 2026-10-29 feedback triage. See `retrospectives/retro-sprint-10.md`.
+
+### 2026-10-30 - Sprint 11 Source Profiles
+
+- ✅ **Source Profiles and built-in MetaHuman profile**
+  - Added a Source Profile (source mesh, topology fingerprint, landmarks, default mask, default transform), a `ProfileStore`, and the authored built-in MetaHuman profile. The Stage 1 source picker selects a profile, and projects store `sourceProfileId` (format v3).
+  - **Effort (Estimated)**: ~1 sprint (13 pts)
+  - **Completed**: Sprint 11, 2026-10-30
+  - **Notes**: Casey authored the 52 landmarks and the mouth-interior mask. Also fixed: reopened projects lost the vertex mask and newer wrap parameters; a new source import kept the old `originalMorphMesh`; undo did not refresh the mask overlay. See [retro-sprint-11.md](../retrospectives/retro-sprint-11.md).
+
+### 2026-11-03 - Sprint 12 auto-map landmark solver
+
+- ✅ **Auto-map landmark solver**
+  - Added a headless `LandmarkSolver` interface and `TemplateFitSolver`: similarity and bounded affine refinement, a facing check, per-feature refit of eyes and ears, a stiff coarse wrap, projection, a crease snap for the mouth, symmetry averaging and per-point confidence. Cancellable, with progress, and never changes Stage 1 transforms.
+  - **Effort (Estimated)**: ~1 sprint (13 pts)
+  - **Completed**: Sprint 12, 2026-11-03
+  - **Notes**: `smoke_landmark_solver` covers seven synthetic cases plus refusal, cancel and input checks. `metavisage_automap_bench` measures against Casey's six hand-placed heads (median 0.6-1.7% of head size). Casey's review led to click-and-drag refinement being added to Sprint 13. See [retro-sprint-12.md](../retrospectives/retro-sprint-12.md).
+
+### 2026-11-03 - Sprint 13 Stage 2 auto-map workflow
+
+- ✅ **Stage 2 auto-map workflow**
+  - Added the Auto / Manual prompt on entering Stage 2, a background auto-map run with progress and Cancel, auto-map as one undo step, confidence rings and a review-first point list, click-and-drag point editing along the mesh (exact mirrored partners, midline points locked to the symmetry plane with unlock, Alt for one side), and re-running auto-map to replace auto points or fill missing ones. Points save their landmark id, confidence and auto status (format v3, optional fields).
+  - **Effort (Estimated)**: ~1 sprint (13 pts committed, 15 delivered)
+  - **Completed**: Sprint 13, 2026-11-03
+  - **Notes**: Casey reviewed three rounds in the app; fixes covered vertex snapping of mirrored and midline points, target-only confidence rings with a toggle, and a unit mix-up that stalled midline drags on scaled targets. See [retro-sprint-13.md](../retrospectives/retro-sprint-13.md).
+
+### 2026-11-03 - Sprint 14 custom source profiles
+
+- ✅ **Custom source profiles**
+  - Added Profile tools in Stage 1: a profile editor (canonical landmark checklist by region, mirror fill, custom landmarks, dragging with the midline lock, default mask brush, its own undo history), Save source as profile, and Manage profiles (edit, rename, duplicate including built-ins, delete, default profile for File > New, import/export as one `.mvprofile.zip`). User profiles keep their own mesh copy (design decision 2).
+  - **Effort (Estimated)**: ~1 sprint (14 pts committed, 17 delivered)
+  - **Completed**: Sprint 14, 2026-11-03
+  - **Notes**: Completes Auto Point Reference (Sprints 11–14). Uses kubazip (MIT, already in the vcpkg tree) for packages. Also fixed confirm and error modals collapsing with long messages. See [retro-sprint-14.md](../retrospectives/retro-sprint-14.md).

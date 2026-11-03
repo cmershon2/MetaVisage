@@ -75,6 +75,10 @@ FileSlotResult DrawFileSlot(const char* filename,        // empty/null shows pla
 //      if (r.changed)      // apply
 //      if (r.editFinished) // diff capture vs current and push undo
 //
+//    Double-click or Ctrl+click switches to typed entry (Enter / focus loss
+//    commits, Esc cancels). The typing session reports as one gesture:
+//    editStarted on the opening click, editFinished when it closes.
+//
 //    InvisibleButton is the last ImGui item, so the call site can also
 //    use ImGui::IsItemActivated()/IsItemDeactivated() — but for the
 //    transform group below, the Z-axis InvisibleButton is the last item,
@@ -133,7 +137,8 @@ InspectorFooterResult DrawInspectorFooter(const char* stepLabel,
                                            bool previousEnabled,
                                            bool continueEnabled,
                                            const char* continueLabel = "Continue",
-                                           bool finishStyle = false);
+                                           bool finishStyle = false,
+                                           const char* previousLabel = nullptr);
 
 } // namespace MetaVisage::MvInspector
 

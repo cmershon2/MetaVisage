@@ -51,3 +51,61 @@ morph result cannot populate a replacement workspace, and keeps the public
 Wrap Engine name in progress messages and diagnostic metadata. A tiny in-memory
 mesh regression expands the UI lane to six scenarios; full loaded-asset
 Process/Accept and sculpt/undo coverage remains separate follow-up work.
+
+Release packaging now uses the standalone staged MSVC output, with a portable
+Windows ZIP, SHA-256 checksum, run instructions, and available vcpkg/stb notices.
+The helper preserves existing packages and excludes test/developer artifacts.
+Clean-machine validation and bundled-asset provenance remain release follow-ups;
+creating an archive is not publication or redistribution signoff.
+
+Sprint 9 makes Stage 1 Alignment usable without workarounds. The move gizmo
+keeps the mesh under the cursor in every view, the G/R/S hotkeys match the tool
+rail, transform fields accept typed values, and target textures survive a mesh
+swap. The orthographic top view is also fixed. The UI smoke lane now has eleven
+scenarios. Sprint 10 covers the shell and Morph-stage feedback from the same
+triage. See `retrospectives/retro-sprint-09.md`.
+
+Sprint 10 completes the 2026-10-29 feedback triage. Every visible menu item
+now works: the stub Mesh menu is gone, the View menu drives the grid and the
+camera presets, and developer aids (Debug HUD, Icon Glyph Explorer) are hidden
+under Help. A viewport-toolbar projection toggle and Blender-style Auto
+Perspective keep users from getting stuck in orthographic views. The EXE,
+window and taskbar show the MetaVisage icon. In the Morph stage, the processed
+result can be reset to the source mesh (undoable), and the vertex mask has its
+own section. The UI smoke lane has thirteen scenarios. See
+`retrospectives/retro-sprint-10.md`.
+
+Sprint 11 starts Auto Point Reference (Sprints 11-14, see
+`design/auto-point-reference.md`). Stage 1 now picks a Source Profile instead
+of a bare mesh: a source mesh plus its topology fingerprint, default transform,
+symmetry, named landmarks and default mask. The built-in MetaHuman profile
+ships with 52 authored landmarks and a mouth-interior mask; importing a mesh
+with a known topology attaches its profile automatically. Projects save the
+profile id (format v3), and reopening a project now keeps the painted mask and
+all wrap parameters. See `retrospectives/retro-sprint-11.md`.
+
+Sprint 12 adds the auto-map solver (headless; the Stage 2 UI is Sprint 13). A
+geometric template fit places all 52 landmarks on a Stage 1-aligned target in
+3-6 s, with a confidence per point, and never changes Stage 1. On Casey's six
+hand-placed reference heads the median error is 0.6-1.7% of the head's size:
+good on realistic heads, weaker on stylized features (cartoon lower lids,
+goblin ears). Further accuracy likely needs the learned detector (design
+decision 1) or profile point adjustments, so Sprint 13 adds click-and-drag
+refinement of placed points. See `retrospectives/retro-sprint-12.md`.
+
+Sprint 13 brings auto-map into Stage 2. Entering an empty Stage 2 offers
+auto-map; it runs in the background with Cancel and lands as one undo step.
+Target points carry confidence rings (toggleable) and the sidebar lists the
+ones to check first. Any point can be dragged along the mesh: mirrored
+partners follow to the exact reflected spot, midline points slide along the
+symmetry plane unless unlocked, and Alt moves one side alone. Re-running
+auto-map replaces or fills auto points and never touches the user's edits.
+See `retrospectives/retro-sprint-13.md`.
+
+Sprint 14 completes Auto Point Reference with custom source profiles. Any
+source mesh can become a profile: in a guided editor (canonical landmark
+checklist, mirror fill, custom landmarks, default mask) or by saving a manual
+Stage 2 setup. Profiles keep their own mesh copy, can be duplicated, renamed,
+deleted, set as the default for new projects, and shared as one
+`.mvprofile.zip`. Auto-map works with any profile that has landmarks. See
+`retrospectives/retro-sprint-14.md`.

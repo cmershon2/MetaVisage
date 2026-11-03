@@ -48,6 +48,15 @@ public:
     bool GetCollapsedSection(const std::string& key, bool defaultExpanded) const;
     void SetCollapsedSection(const std::string& key, bool expanded);
 
+    // Sprint 10.3 — View > Show Grid, applied to every viewport.
+    bool ShowGrid() const { return showGrid_; }
+    void SetShowGrid(bool show);
+
+    // Sprint 14 — source profile picked automatically for File > New. Empty
+    // means none (the user picks one in Stage 1).
+    const std::string& DefaultSourceProfileId() const { return defaultSourceProfileId_; }
+    void SetDefaultSourceProfileId(const std::string& id);
+
 private:
     Config();
     ~Config() = default;
@@ -62,6 +71,10 @@ private:
     std::vector<std::string> recentProjects_;
     // Story 5.1 — value is "section is expanded"; absence = use default.
     std::map<std::string, bool> collapsedSections_;
+    bool showGrid_ = true;
+    std::string defaultSourceProfileId_;
+    // Save() is a no-op until Load() has run, so a process that never read
+    // the user's config (the smoke harnesses) can't overwrite it.
     bool loaded_ = false;
 };
 

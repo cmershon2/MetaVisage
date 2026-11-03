@@ -58,7 +58,9 @@ private:
     std::string MakeRelativePath(const std::string& filepath, const std::string& projectDir) const;
     std::string ResolveRelativePath(const std::string& relativePath, const std::string& projectDir) const;
 
-    static const int FORMAT_VERSION = 2;
+    // v3 (Sprint 11): adds sourceProfileId. v1 / v2 files load with an
+    // empty id.
+    static const int FORMAT_VERSION = 3;
 };
 
 } // namespace MetaVisage

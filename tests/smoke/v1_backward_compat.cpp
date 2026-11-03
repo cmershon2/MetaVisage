@@ -94,9 +94,121 @@ int main(int /*argc*/, char** /*argv*/) {
             return stepBase + 3;
         }
 
+        if (!project.GetSourceProfileId().empty()) {
+            std::fprintf(stderr, "v1_compat: %s loaded a non-empty source profile id\n", fx.label);
+            return stepBase + 4;
+        }
+
         std::printf("v1_compat: %-18s (ordinal %d) -> NRICP OK\n",
                     fx.label, fx.historicalOrdinal);
         stepBase += 10;
+    }
+
+    // Sprint 11 — format v2 (pre-Source-Profile) fixture. Loads with an empty
+    // profile id, and the vertex mask plus the optimization / rigidity /
+    // sampling parameters survive the load (they were dropped before
+    // Sprint 11).
+    {
+        const std::string path = LocateFixture(exeDir, "v2_project.mmproj");
+        if (path.empty()) {
+            std::fprintf(stderr, "v1_compat: fixture not found: v2_project.mmproj\n");
+            return 100;
+        }
+        Project project;
+        ProjectSerializer serializer;
+        auto result = serializer.Load(project, path);
+        if (!result.success || !result.warnings.empty()) {
+            std::fprintf(stderr, "v1_compat: v2 fixture load failed or warned: %s\n",
+                         result.success ? result.warnings[0].c_str() : result.errorMessage.c_str());
+            return 101;
+        }
+        if (!project.GetSourceProfileId().empty()) {
+            std::fprintf(stderr, "v1_compat: v2 fixture has a non-empty source profile id\n");
+            return 102;
+        }
+        const MorphData& m = project.GetMorphData();
+        const std::vector<bool> expectedMask = {false, false, true, true, true, false};
+        if (m.vertexMask != expectedMask) {
+            std::fprintf(stderr, "v1_compat: v2 fixture vertex mask not restored (size %zu)\n",
+                         m.vertexMask.size());
+            return 103;
+        }
+        if (m.nricpOptimizationIterations != 3 || m.nricpGammaInitial != 2.0f ||
+            m.nricpSamplingFinal != 0.05f || m.nricpNormalizeSampling) {
+            std::fprintf(stderr, "v1_compat: v2 fixture wrap parameters not restored\n");
+            return 104;
+        }
+        if (project.GetPointReferenceData().correspondences.size() != 1) {
+            std::fprintf(stderr, "v1_compat: v2 fixture points not restored\n");
+            return 105;
+        }
+        // Sprint 13 — files without the auto-map fields load as manual points.
+        const PointReferenceData& refData = project.GetPointReferenceData();
+        const PointCorrespondence& old = refData.correspondences[0];
+        if (!old.landmarkId.empty() || old.isAuto || old.confidence >= 0.0f ||
+            old.midlineUnlocked || refData.hasTargetPlane || !refData.mirrorDrag ||
+            !refData.showConfidence) {
+            std::fprintf(stderr, "v1_compat: v2 fixture point picked up auto-map fields\n");
+            return 106;
+        }
+        std::printf("v1_compat: v2 fixture -> mask, parameters, points OK\n");
+    }
+
+    // Sprint 11 — format v3 round-trip of sourceProfileId and the mask.
+    {
+        namespace fs = std::filesystem;
+        const fs::path tmp = fs::temp_directory_path() / "metavisage_v3_roundtrip.mmproj";
+        Project original;
+        original.SetSourceProfileId("metahuman-head-lod0");
+        original.GetMorphData().vertexMask = {true, false, false, true};
+        // Sprint 13 — landmark fields on points, and the auto-map plane.
+        PointReferenceData& refData = original.GetPointReferenceData();
+        PointCorrespondence autoPoint;
+        autoPoint.pointID = 1;
+        autoPoint.landmarkId = "nose_tip";
+        autoPoint.isAuto = true;
+        autoPoint.confidence = 0.625f;
+        autoPoint.midlineUnlocked = true;
+        PointCorrespondence manualPoint;
+        manualPoint.pointID = 2;
+        refData.correspondences = {autoPoint, manualPoint};
+        refData.hasTargetPlane = true;
+        refData.targetPlanePoint = Vector3(1.0f, 2.0f, 3.0f);
+        refData.targetPlaneNormal = Vector3(0.0f, 0.0f, 1.0f);
+        refData.mirrorDrag = false;
+        refData.showConfidence = false;
+        ProjectSerializer serializer;
+        if (!serializer.Save(original, tmp.string()).success) {
+            std::fprintf(stderr, "v1_compat: v3 save failed\n");
+            return 110;
+        }
+        Project reloaded;
+        const auto result = serializer.Load(reloaded, tmp.string());
+        std::error_code ec;
+        fs::remove(tmp, ec);
+        if (!result.success) {
+            std::fprintf(stderr, "v1_compat: v3 reload failed: %s\n", result.errorMessage.c_str());
+            return 111;
+        }
+        if (reloaded.GetSourceProfileId() != "metahuman-head-lod0" ||
+            reloaded.GetMorphData().vertexMask != original.GetMorphData().vertexMask) {
+            std::fprintf(stderr, "v1_compat: v3 round-trip lost the profile id or mask\n");
+            return 112;
+        }
+        const PointReferenceData& back = reloaded.GetPointReferenceData();
+        if (back.correspondences.size() != 2 || !back.hasTargetPlane || back.mirrorDrag || back.showConfidence ||
+            back.targetPlanePoint.y != 2.0f || back.targetPlaneNormal.z != 1.0f) {
+            std::fprintf(stderr, "v1_compat: v3 round-trip lost the auto-map plane or settings\n");
+            return 113;
+        }
+        const PointCorrespondence& a = back.correspondences[0];
+        const PointCorrespondence& m = back.correspondences[1];
+        if (a.landmarkId != "nose_tip" || !a.isAuto || a.confidence != 0.625f || !a.midlineUnlocked ||
+            !m.landmarkId.empty() || m.isAuto || m.confidence >= 0.0f || m.midlineUnlocked) {
+            std::fprintf(stderr, "v1_compat: v3 round-trip lost point landmark fields\n");
+            return 114;
+        }
+        std::printf("v1_compat: v3 round-trip -> profile id, mask, landmark fields OK\n");
     }
 
     return 0;

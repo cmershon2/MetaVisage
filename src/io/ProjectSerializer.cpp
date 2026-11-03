@@ -81,6 +81,7 @@ SerializationResult ProjectSerializer::Save(const Project& project, const std::s
     }
     root["lastModified"] = IsoNow();
     root["currentStage"] = static_cast<int>(project.GetCurrentStage());
+    root["sourceProfileId"] = project.GetSourceProfileId();   // v3+
 
     // Mesh references
     root["morphMesh"] = SerializeMeshReference(project.GetMorphMesh(), projectDir);
@@ -155,6 +156,7 @@ SerializationResult ProjectSerializer::Load(Project& project, const std::string&
     // Project metadata
     project.SetName(GetStr(root, "projectName", "Untitled Project"));
     project.SetCurrentStage(static_cast<WorkflowStage>(GetOr<int>(root, "currentStage", 0)));
+    project.SetSourceProfileId(GetStr(root, "sourceProfileId"));   // v3+; empty before
 
     // Mesh references
     if (Has(root, "morphMesh")) {
@@ -199,6 +201,18 @@ SerializationResult ProjectSerializer::Load(Project& project, const std::string&
         morphData.nricpEpsilon = loaded.nricpEpsilon;
         morphData.nricpEnableBoundaryExclusion = loaded.nricpEnableBoundaryExclusion;
         morphData.nricpBoundaryExclusionHops = loaded.nricpBoundaryExclusionHops;
+        // Sprint 11 — these were serialized but never copied back, so a
+        // reopened project lost its painted mask and the optimization /
+        // rigidity / sampling parameters.
+        morphData.nricpOptimizationIterations = loaded.nricpOptimizationIterations;
+        morphData.nricpDpInitial = loaded.nricpDpInitial;
+        morphData.nricpDpFinal = loaded.nricpDpFinal;
+        morphData.nricpGammaInitial = loaded.nricpGammaInitial;
+        morphData.nricpGammaFinal = loaded.nricpGammaFinal;
+        morphData.nricpSamplingInitial = loaded.nricpSamplingInitial;
+        morphData.nricpSamplingFinal = loaded.nricpSamplingFinal;
+        morphData.nricpNormalizeSampling = loaded.nricpNormalizeSampling;
+        morphData.vertexMask = std::move(loaded.vertexMask);
     }
 
     // Texture data (v2+, backward compatible)
@@ -270,6 +284,12 @@ ProjectSerializer::Json ProjectSerializer::SerializePointCorrespondence(const Po
     obj["targetMeshVertexIndex"] = corr.targetMeshVertexIndex;
     obj["isSymmetric"] = corr.isSymmetric;
     obj["symmetricPairID"] = corr.symmetricPairID;
+    // Sprint 13 — optional; manual points leave them out, so older v3
+    // readers and files are unaffected.
+    if (!corr.landmarkId.empty()) obj["landmarkId"] = corr.landmarkId;
+    if (corr.isAuto) obj["isAuto"] = true;
+    if (corr.confidence >= 0.0f) obj["confidence"] = static_cast<double>(corr.confidence);
+    if (corr.midlineUnlocked) obj["midlineUnlocked"] = true;
     return obj;
 }
 
@@ -278,6 +298,12 @@ ProjectSerializer::Json ProjectSerializer::SerializePointReferenceData(const Poi
     obj["symmetryEnabled"] = data.symmetryEnabled;
     obj["symmetryAxis"] = static_cast<int>(data.symmetryAxis);
     obj["symmetryPlaneOffset"] = static_cast<double>(data.symmetryPlaneOffset);
+    obj["mirrorDrag"] = data.mirrorDrag;
+    obj["showConfidence"] = data.showConfidence;
+    if (data.hasTargetPlane) {
+        obj["targetPlanePoint"] = SerializeVector3(data.targetPlanePoint);
+        obj["targetPlaneNormal"] = SerializeVector3(data.targetPlaneNormal);
+    }
 
     Json correspondences = Json::array();
     for (const auto& corr : data.correspondences) {
@@ -445,6 +471,10 @@ PointCorrespondence ProjectSerializer::DeserializePointCorrespondence(const Json
     corr.targetMeshVertexIndex = GetOr<int>(obj, "targetMeshVertexIndex", -1);
     corr.isSymmetric = GetOr<bool>(obj, "isSymmetric", false);
     corr.symmetricPairID = GetOr<int>(obj, "symmetricPairID", -1);
+    corr.landmarkId = GetStr(obj, "landmarkId");
+    corr.isAuto = GetOr<bool>(obj, "isAuto", false);
+    corr.confidence = static_cast<float>(GetOr<double>(obj, "confidence", -1.0));
+    corr.midlineUnlocked = GetOr<bool>(obj, "midlineUnlocked", false);
     return corr;
 }
 
@@ -453,6 +483,13 @@ PointReferenceData ProjectSerializer::DeserializePointReferenceData(const Json& 
     data.symmetryEnabled = GetOr<bool>(obj, "symmetryEnabled", false);
     data.symmetryAxis = static_cast<Axis>(GetOr<int>(obj, "symmetryAxis", 0));
     data.symmetryPlaneOffset = static_cast<float>(GetOr<double>(obj, "symmetryPlaneOffset", 0.0));
+    data.mirrorDrag = GetOr<bool>(obj, "mirrorDrag", true);
+    data.showConfidence = GetOr<bool>(obj, "showConfidence", true);
+    if (Has(obj, "targetPlanePoint") && Has(obj, "targetPlaneNormal")) {
+        data.hasTargetPlane = true;
+        data.targetPlanePoint = DeserializeVector3(obj["targetPlanePoint"]);
+        data.targetPlaneNormal = DeserializeVector3(obj["targetPlaneNormal"]);
+    }
 
     if (Has(obj, "correspondences") && obj["correspondences"].is_array()) {
         for (const auto& val : obj["correspondences"]) {

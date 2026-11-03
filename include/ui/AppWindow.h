@@ -1,7 +1,10 @@
 #ifndef APPWINDOW_H
 #define APPWINDOW_H
 
+#include "core/Project.h"
+#include "core/SourceProfile.h"
 #include "core/WrapPreset.h"
+#include "deformation/LandmarkSolver.h"
 #include "ui/Modals.h"
 #include "ui/StageSidebar.h"
 
@@ -39,7 +42,9 @@ public:
         ImportTargetMesh,
         ExportMesh,
         ShowKeyboardShortcuts,
-        ShowAbout
+        ShowAbout,
+        ExportSourceProfileDraft,  // Help > Export Source Profile Draft (Dev)
+        ShowProfileLandmarks       // Help > Show Profile Landmarks (Dev)
     };
 
     AppWindow();
@@ -92,14 +97,37 @@ private:
     void OnFileExit();
     void OnEditUndo();
     void OnEditRedo();
+    void RefreshMaskOverlay();
 
     // Story 3.6.3 handlers
     void OpenProjectFromDisk(const std::string& path);
     void SaveProjectToDisk(const std::string& path);
     void ImportMorphMeshFromDisk(const std::string& path);
     void ImportTargetMeshFromDisk(const std::string& path);
-    void UseDefaultMorphMesh();
+
+    // Sprint 11 — Source Profiles. Picking a profile or importing a source
+    // mesh replaces everything tied to the source's vertex indices (points,
+    // mask, morph result), so both paths confirm first when that would
+    // discard work, then commit through CommitSourceMesh as one undo step.
+    // Importing a mesh whose topology fingerprint matches a profile attaches
+    // that profile (landmarks and mask) but keeps the current transform.
+    bool SourceSwapDiscardsWork() const;
+    void RunAfterSourceSwapConfirm(std::function<void()> swap);
+    void RequestSelectSourceProfile(const std::string& profileId);
+    void SelectSourceProfile(const SourceProfile& profile);
+    std::shared_ptr<Mesh> LoadProfileMesh(const SourceProfile& profile);
+    void CommitSourceMesh(std::shared_ptr<Mesh> mesh, const std::string& path,
+                          const SourceProfile* profile, bool applyProfileDefaults);
+    void ExportSourceProfileDraft();
+    // Replaces the Stage 2 points with the source profile's landmarks as
+    // named, source-only points so authored placement can be reviewed. One
+    // undo step restores the previous points.
+    void ShowProfileLandmarks();
     void ImportTextureForSlot(const std::string& slot);
+    // Sprint 9.4 — uploads the project's Albedo to the current target mesh's
+    // renderer. Textures live on the project but the GPU copy is per mesh, so
+    // this runs after texture import, target mesh replacement and project open.
+    void RefreshTargetTexturePreview();
     void DoExport();
 
     // Keep ViewportHost dual-mode flag in sync with the current stage — dual
@@ -115,6 +143,71 @@ private:
     void CancelMorph();
     void PollMorphCompletion();
     void AcceptMorph();
+    // Sprint 10.6 — discard the processed morph and show the source mesh.
+    // Request confirms first when the result was accepted (Touch Up work
+    // lives on the deformed mesh); Reset pushes a MorphUndoAction.
+    void RequestResetMorphResult();
+    void ResetMorphResult();
+
+    // Sprint 13 — auto-map. RequestAutoMap asks replace-or-fill when Stage 2
+    // already has points; StartAutoMap runs the TemplateFitSolver on a worker
+    // with the progress modal up; PollAutoMapCompletion applies the result as
+    // one undo step (called each frame). Points the user placed or moved are
+    // never touched.
+    enum class AutoMapMode { Fresh, Replace, Fill };
+    void RequestAutoMap();
+    void StartAutoMap(AutoMapMode mode);
+    void CancelAutoMap();
+    void PollAutoMapCompletion();
+    void ApplyAutoMapResult(const LandmarkSolveResult& result, AutoMapMode mode);
+    void HandleAutoMapChoice();
+    // The project's source profile when it has landmarks, else nullptr.
+    const SourceProfile* AutoMapProfile() const;
+    // Fill each point's landmark name and midline flag from its landmark id.
+    void ResolveLandmarkNames(std::vector<PointCorrespondence>& points) const;
+
+    // Sprint 13 — dragging placed points along the mesh. One drag is one
+    // undo step. Midline landmarks stay on the side's symmetry plane unless
+    // unlocked; a symmetric partner follows to the mirrored spot unless Alt
+    // is held or "Move mirrored pairs together" is off.
+    void BeginPointDrag(int index);
+    void DragPoint(int index, PointSide side, const Ray& ray, bool oneSide);
+    void EndPointDrag(int index);
+    // World-space symmetry plane for one side: the profile's plane on the
+    // source, the auto-map plane on the target, else the Stage 2 setting.
+    bool SymmetryPlaneFor(PointSide side, Vector3& point, Vector3& normal) const;
+    void BuildMidlineCache(PointSide side, const Vector3& planePoint, const Vector3& planeNormal);
+    // Closest surface point (and nearest vertex) of `ref` to a world point.
+    bool ClosestSurfacePoint(const MeshReference& ref, const Vector3& world,
+                             Vector3& pos, int& vertex) const;
+
+    // Sprint 14 — custom source profiles. The profile editor swaps in a
+    // scratch project (the profile's mesh, its landmarks as source-side
+    // points, its mask) and a fresh undo stack, so Stage 2 placement and
+    // dragging and the Stage 3 mask brush work unchanged; Save writes the
+    // profile, Cancel discards it, and both restore the real project.
+    void HandleProfileRequest(StageSidebar::Actions::ProfileRequest request);
+    void RequestSaveSourceAsProfile();
+    void SaveSourceAsProfile(const std::string& name);
+    void OpenProfileEditor(const SourceProfile* existing);
+    void CloseProfileEditor();
+    void SaveProfileEditor();
+    void RequestCancelProfileEditor();
+    void HandleProfileEditorActions(const StageSidebar::Actions::EditorActions& actions);
+    void RefreshProfileEditorView();
+    void EditorPlacePoint(const Vector3& pos, int vertex);
+    void EditorRemovePoint(int pointIndex);
+    int EditorNextUnplaced(int from) const;
+    int EditorPointIndexOf(const std::string& landmarkId) const;
+    void HandleManageAction();
+    void AttachProfileToProject(const std::string& profileId, const std::string& description);
+    void ReloadSourceProfiles();
+    bool BlockedByProfileEditor();
+    // File > New, Ctrl+N and the welcome screen: a new project with the
+    // default source profile (Manage profiles > Set as default) loaded.
+    void NewProjectWithDefaultProfile();
+    void ExportProfilePackage(const SourceProfile& profile);
+    void ImportProfilePackage();
 
     GLFWwindow* window_ = nullptr;
     bool imguiContextCreated_ = false;
@@ -132,6 +225,10 @@ private:
     // this vector — they live in WrapPreset::BuiltIns(). The sidebar is
     // handed a const reference each Render() call.
     std::vector<WrapPreset> userPresets_;
+
+    // Sprint 11 — built-in then user Source Profiles, loaded once on
+    // Initialize from assets/profiles and %APPDATA%\MetaVisage\profiles.
+    std::vector<SourceProfile> sourceProfiles_;
 
     PendingAction pendingAction_ = PendingAction::None;
     std::string statusMessage_;
@@ -154,6 +251,7 @@ private:
     // Modal state — every struct is inert until its Open() is called.
     bool showAbout_ = false;
     bool showIconExplorer_ = false;        // Dev tool, gated by Help menu
+    bool showDebugHud_ = false;            // Dev tool, gated by Help menu
 
     ConfirmModalState confirmModal_;
     ErrorModalState errorModal_;
@@ -193,6 +291,55 @@ private:
     std::vector<float> morphResultDisplacements_;
     float morphResultMaxDisp_ = 0.0f;
     float morphResultAvgDisp_ = 0.0f;
+
+    // Auto-map worker state (Sprint 13), same pattern as the morph worker.
+    AutoMapModalState autoMapModal_;
+    std::thread autoMapThread_;
+    std::atomic<bool> autoMapRunning_{false};
+    std::atomic<bool> autoMapFinished_{false};
+    std::atomic<bool> autoMapCancel_{false};
+    std::atomic<float> autoMapProgress_{0.0f};
+    std::mutex autoMapMutex_;
+    std::string autoMapStageText_;
+    LandmarkSolveResult autoMapResult_;
+    AutoMapMode autoMapMode_ = AutoMapMode::Fresh;
+    std::uint64_t autoMapProjectGeneration_ = 0;
+
+    // Point drag state (Sprint 13). The midline cache holds the line where
+    // the symmetry plane cuts the dragged side's mesh, one segment per face
+    // it crosses, with the nearer mesh vertex at each end for the index.
+    struct MidlineSegment {
+        Vector3 a, b;
+        int vertexA = -1, vertexB = -1;
+    };
+    struct MidlineCache {
+        bool valid = false;
+        PointSide side = PointSide::Target;
+        std::vector<MidlineSegment> segments;
+        float diagonal = 0.0f;
+    };
+    std::vector<PointCorrespondence> dragBefore_;
+    bool dragMoved_ = false;
+    MidlineCache midlineCache_;
+
+    // Profile editor state (Sprint 14). `draft.landmarks` is the checklist;
+    // placements live as points in the scratch project while editing.
+    struct ProfileEditor {
+        bool active = false;
+        bool isNew = true;
+        bool ownMesh = false;       // the scratch mesh was loaded for the editor
+        bool dirty = false;         // edits outside the undo stack (name, axis, customs)
+        bool mirrorFill = true;
+        int activeLandmark = -1;
+        SourceProfile draft;
+        std::string sourceMeshPath;
+        std::unique_ptr<Project> savedProject;
+        std::unique_ptr<UndoStack> savedUndo;
+    };
+    ProfileEditor editor_;
+    StageSidebar::ProfileEditorView editorView_;
+    NamePromptModalState namePrompt_;
+    ManageProfilesModalState manageProfiles_;
 };
 
 } // namespace MetaVisage

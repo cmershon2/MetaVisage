@@ -24,11 +24,14 @@
 #include "core/Types.h"
 #include "deformation/MeshDeformer.h"
 #include "deformation/NRICPDeformer.h"
+#include "deformation/TemplateFitSolver.h"
 #include "io/ProjectSerializer.h"
 #include "io/MeshExporter.h"
 #include "io/PresetStore.h"
+#include "io/ProfileStore.h"
 #include "baking/TextureBaker.h"
 #include "baking/TextureWriter.h"
+#include "utils/BVH.h"
 #include "utils/Config.h"
 #include "utils/Logger.h"
 #include "utils/Paths.h"
@@ -48,6 +51,8 @@
 #include <filesystem>
 #include <format>
 #include <string>
+#include <unordered_map>
+#include <unordered_set>
 
 // Sprint 3.8 follow-up — frameless OS window + custom title bar. We expose
 // the Win32 HWND so our WM_NCHITTEST handler can tell Windows where the
@@ -350,6 +355,8 @@ bool AppWindow::Initialize(int width, int height, const char* title) {
         return false;
     }
 
+    viewportHost_->SetShowGrid(Config::Instance().ShowGrid());
+
     project_ = std::make_unique<Project>();
     // Quick Wrap is the canonical project default per AGENTS.md and the
     // Sprint 4 plan — apply on every fresh-project construction so the
@@ -359,6 +366,8 @@ bool AppWindow::Initialize(int width, int height, const char* title) {
     viewportHost_->SetProject(project_.get());
 
     userPresets_ = PresetStore::LoadAll();
+    sourceProfiles_ = ProfileStore::LoadAll();
+    MV_LOG_INFO(std::format("Loaded {} source profile(s)", sourceProfiles_.size()));
     statusMessage_ = "Ready";
 
     // Stage 2 point placement: both viewports fire OnPointPlaced when the user
@@ -367,6 +376,10 @@ bool AppWindow::Initialize(int width, int height, const char* title) {
     // so a callback is always in place. Port of MainWindow::OnPointPlaced.
     auto onPointPlaced = [this](PointSide side, Vector3 pos, int vertexIndex) {
         if (!project_) return;
+        if (editor_.active) {
+            EditorPlacePoint(pos, vertexIndex);
+            return;
+        }
         auto& data = project_->GetPointReferenceData();
         auto& correspondences = data.correspondences;
 
@@ -496,6 +509,12 @@ bool AppWindow::Initialize(int width, int height, const char* title) {
         if (!project_ || !viewportHost_) return;
         auto& correspondences = project_->GetPointReferenceData().correspondences;
         if (index < 0 || index >= static_cast<int>(correspondences.size())) return;
+        if (editor_.active) {
+            // The editor removes one landmark; its partner stays placed.
+            EditorRemovePoint(index);
+            viewportHost_->SetSelectedPointIndex(-1);
+            return;
+        }
 
         const std::vector<PointCorrespondence> beforeSnapshot = correspondences;
 
@@ -581,6 +600,9 @@ bool AppWindow::Initialize(int width, int height, const char* title) {
     if (auto* left = viewportHost_->GetPrimaryViewport()) {
         left->OnPointPlaced            = onPointPlaced;
         left->OnPointDeleteRequested   = onPointDelete;
+        left->OnPointDragBegin = [this](int i) { BeginPointDrag(i); };
+        left->OnPointDragged   = [this](int i, PointSide s, const Ray& r, bool one) { DragPoint(i, s, r, one); };
+        left->OnPointDragEnd   = [this](int i) { EndPointDrag(i); };
         left->OnTransformApplied       = onTransformApplied;
         left->OnMaskStrokeCompleted    = onMaskStrokeCompleted;
         left->OnSculptStrokeCompleted  = onSculptStrokeCompleted;
@@ -588,6 +610,9 @@ bool AppWindow::Initialize(int width, int height, const char* title) {
     if (auto* right = viewportHost_->GetSecondaryViewport()) {
         right->OnPointPlaced            = onPointPlaced;
         right->OnPointDeleteRequested   = onPointDelete;
+        right->OnPointDragBegin = [this](int i) { BeginPointDrag(i); };
+        right->OnPointDragged   = [this](int i, PointSide s, const Ray& r, bool one) { DragPoint(i, s, r, one); };
+        right->OnPointDragEnd   = [this](int i) { EndPointDrag(i); };
         right->OnTransformApplied       = onTransformApplied;
         right->OnMaskStrokeCompleted    = onMaskStrokeCompleted;
         right->OnSculptStrokeCompleted  = onSculptStrokeCompleted;
@@ -643,8 +668,7 @@ bool AppWindow::Initialize(int width, int height, const char* title) {
         // Application-global shortcuts (Ctrl-modified) are intercepted before
         // the viewport so they fire regardless of keyboard focus. Text-editing
         // ImGui widgets still receive character input through the char callback
-        // above, so Ctrl+Z inside a text field would need its own guard — but
-        // no editable text widget currently exists in Sprint 3.6.1.
+        // above; HandleGlobalShortcut leaves Ctrl+Z to them while typing.
         if (self->HandleGlobalShortcut(key, action, mods)) return;
         if (!self->viewportHost_) return;
         if (ImGui::GetIO().WantCaptureKeyboard) return;
@@ -729,6 +753,7 @@ void AppWindow::TickOnce(int fbWidth, int fbHeight) {
     // the progress bar + enable/disable of the Process Morph button
     // reflect current worker status.
     PollMorphCompletion();
+    PollAutoMapCompletion();
 
     // Stage sidebar docks into the left side of AppDockSpace. Kept after
     // the dockspace is declared (inside RenderAppShell) and before modal
@@ -742,10 +767,13 @@ void AppWindow::TickOnce(int fbWidth, int fbHeight) {
             (viewportHost_ && viewportHost_->GetPrimaryViewport())
                 ? viewportHost_->GetPrimaryViewport()->GetSelectedPointIndex()
                 : -1;
+        RefreshProfileEditorView();
+        stageSidebar_.SetProfileEditorView(editor_.active ? &editorView_ : nullptr);
         auto actions = stageSidebar_.Render(project_.get(),
                                             morphRunning_.load(),
                                             morphProgress_.load(),
                                             userPresets_,
+                                            sourceProfiles_,
                                             selectedPointIdx);
 
         if (actions.selectPointIndex && viewportHost_) {
@@ -756,10 +784,42 @@ void AppWindow::TickOnce(int fbWidth, int fbHeight) {
         }
 
         if (actions.nextStageRequested && project_) {
-            const int cur = static_cast<int>(project_->GetCurrentStage());
-            if (cur < static_cast<int>(WorkflowStage::TouchUp)) {
-                project_->SetCurrentStage(static_cast<WorkflowStage>(cur + 1));
+            const WorkflowStage cur = project_->GetCurrentStage();
+            if (static_cast<int>(cur) < static_cast<int>(WorkflowStage::TouchUp)) {
+                project_->SetCurrentStage(static_cast<WorkflowStage>(static_cast<int>(cur) + 1));
                 ApplyStageViewportMode();
+                // Sprint 13 — offer auto-map on the way into an empty Stage 2.
+                if (cur == WorkflowStage::Alignment &&
+                    project_->GetPointReferenceData().correspondences.empty() &&
+                    project_->GetTargetMesh().isLoaded) {
+                    if (const SourceProfile* profile = AutoMapProfile()) {
+                        autoMapModal_.OpenPrompt(profile->name);
+                    }
+                }
+            }
+        }
+        if (actions.autoMapRequested) RequestAutoMap();
+        if (actions.profileRequest != StageSidebar::Actions::ProfileRequest::None) {
+            HandleProfileRequest(actions.profileRequest);
+        }
+        if (editor_.active) HandleProfileEditorActions(actions.editor);
+        // Sprint 13 — midline lock toggles are undoable point edits.
+        if ((actions.toggleMidlineLockIndex || actions.setAllMidlineUnlocked) && project_) {
+            auto& points = project_->GetPointReferenceData().correspondences;
+            const std::vector<PointCorrespondence> before = points;
+            if (actions.toggleMidlineLockIndex) {
+                const int i = *actions.toggleMidlineLockIndex;
+                if (i >= 0 && i < static_cast<int>(points.size())) {
+                    points[i].midlineUnlocked = !points[i].midlineUnlocked;
+                }
+            } else {
+                for (auto& p : points) {
+                    if (p.isMidlineLandmark) p.midlineUnlocked = *actions.setAllMidlineUnlocked;
+                }
+            }
+            if (undoStack_) {
+                undoStack_->Push(std::make_unique<PointPlacementUndoAction>(
+                    project_.get(), before, points, "Midline Lock"));
             }
         }
         if (actions.previousStageRequested && project_) {
@@ -772,7 +832,7 @@ void AppWindow::TickOnce(int fbWidth, int fbHeight) {
         if (actions.importMorphMeshRequested)  pendingAction_ = PendingAction::ImportMorphMesh;
         if (actions.importTargetMeshRequested) pendingAction_ = PendingAction::ImportTargetMesh;
         if (actions.exportMeshRequested)       pendingAction_ = PendingAction::ExportMesh;
-        if (actions.useDefaultMorphMeshRequested) UseDefaultMorphMesh();
+        if (actions.selectSourceProfileId) RequestSelectSourceProfile(*actions.selectSourceProfileId);
         if (!actions.importTextureSlot.empty()) ImportTextureForSlot(actions.importTextureSlot);
         if (actions.resetTransformRequested && project_) {
             if (undoStack_) {
@@ -796,6 +856,7 @@ void AppWindow::TickOnce(int fbWidth, int fbHeight) {
         if (actions.processMorphRequested) StartMorph();
         if (actions.cancelMorphRequested)  CancelMorph();
         if (actions.acceptMorphRequested)  AcceptMorph();
+        if (actions.resetMorphResultRequested) RequestResetMorphResult();
         // finalize is a Sprint 4 no-op (Export handles end-of-workflow).
 
         // Story 4.4 — Wrap preset card row actions.
@@ -965,7 +1026,7 @@ void AppWindow::RenderAppShell() {
     //   ┌─────────────────────────────────────────┐  ← OS native title bar
     //   │ ◇ MetaVisage · file.mmproj > STAGE 01 … │ 36 px ##MvTitleBar window
     //   ├─────────────────────────────────────────┤
-    //   │ File Edit View Mesh Help …  Saved · LL │ ~26 px BeginMenuBar
+    //   │ File Edit View Help …  Saved · LL      │ ~26 px BeginMenuBar
     //   ├─────────────────────────────────────────┤
     //   │  DockSpace (sidebar + viewport)         │
     //   ├─────────────────────────────────────────┤
@@ -1033,8 +1094,11 @@ void AppWindow::RenderAppShell() {
     // nullopt. Forward-jump validation lives inside StageStepper::Render
     // (mirroring StageSidebar's `Next >` gate); we re-validate the result
     // here as a belt-and-braces guard before mutating Project state.
-    if (auto clicked = StageStepper::Render(project_.get(),
-                                            ImGui::GetContentRegionAvail().x)) {
+    // Hidden while the profile editor is open (Sprint 14): it edits a profile,
+    // not a workflow stage, and its scratch project's stage is internal.
+    if (auto clicked = editor_.active
+            ? std::nullopt
+            : StageStepper::Render(project_.get(), ImGui::GetContentRegionAvail().x)) {
         if (project_) {
             const int target  = *clicked;
             const int current = static_cast<int>(project_->GetCurrentStage());
@@ -1372,14 +1436,34 @@ void AppWindow::RenderTitleBar() {
     ImGui::End();
 }
 
+namespace {
+
+// Sprint 10.4 — menu popups use MvStyle::Menu spacing. WindowPadding is read
+// when BeginMenu creates the popup; ItemSpacing is pushed only inside it so
+// the menu bar's own layout is unchanged.
+bool BeginStyledMenu(const char* label) {
+    ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding, MvStyle::Menu::WindowPadding);
+    const bool open = ImGui::BeginMenu(label);
+    ImGui::PopStyleVar();
+    if (open) ImGui::PushStyleVar(ImGuiStyleVar_ItemSpacing, MvStyle::Menu::ItemSpacing);
+    return open;
+}
+
+void EndStyledMenu() {
+    ImGui::PopStyleVar();
+    ImGui::EndMenu();
+}
+
+} // namespace
+
 void AppWindow::RenderMainMenuBar() {
     if (!ImGui::BeginMenuBar()) return;
 
     const bool canUndo = undoStack_ && undoStack_->CanUndo();
     const bool canRedo = undoStack_ && undoStack_->CanRedo();
 
-    if (ImGui::BeginMenu("File")) {
-        if (ImGui::MenuItem("New Project", "Ctrl+N")) OnFileNewProject();
+    if (BeginStyledMenu("File")) {
+        if (ImGui::MenuItem("New Project", "Ctrl+N")) NewProjectWithDefaultProfile();
         if (ImGui::MenuItem("Open Project...", "Ctrl+O")) pendingAction_ = PendingAction::OpenProject;
         ImGui::Separator();
         if (ImGui::MenuItem("Save Project", "Ctrl+S")) pendingAction_ = PendingAction::SaveProject;
@@ -1389,54 +1473,63 @@ void AppWindow::RenderMainMenuBar() {
         // stage-gated in the sidebar — duplicating them here confused users
         // about when they apply. Decision kept in Sprint 3.6.
         if (ImGui::MenuItem("Exit", "Alt+F4")) OnFileExit();
-        ImGui::EndMenu();
+        EndStyledMenu();
     }
 
-    if (ImGui::BeginMenu("Edit")) {
+    if (BeginStyledMenu("Edit")) {
         ImGui::BeginDisabled(!canUndo);
         if (ImGui::MenuItem("Undo", "Ctrl+Z")) OnEditUndo();
         ImGui::EndDisabled();
         ImGui::BeginDisabled(!canRedo);
         if (ImGui::MenuItem("Redo", "Ctrl+Shift+Z")) OnEditRedo();
         ImGui::EndDisabled();
-        ImGui::EndMenu();
+        EndStyledMenu();
     }
 
-    if (ImGui::BeginMenu("View")) {
-        // Shading mode lives on the viewport overlay (Stage-3 Story 3.8.5
-        // moves it into the new top-centre toolbar). The grid and camera
-        // presets remain stubbed for a future story.
-        ImGui::MenuItem("Show Grid", nullptr, false, false);
+    // Sprint 10.3 — camera presets act on the pane keyboard input goes to
+    // (dual-mode cameras are synced), so these match the numpad / Home / F
+    // keys exactly. Shading mode lives on the viewport toolbar.
+    if (BeginStyledMenu("View")) {
+        Viewport* vp = viewportHost_ ? viewportHost_->GetKeyboardViewport() : nullptr;
+        const bool hasVp = vp != nullptr;
+        bool grid = hasVp && viewportHost_->GetShowGrid();
+        if (ImGui::MenuItem("Show Grid", nullptr, &grid, hasVp)) {
+            viewportHost_->SetShowGrid(grid);
+            Config::Instance().SetShowGrid(grid);
+        }
         ImGui::Separator();
-        ImGui::MenuItem("Front View (Numpad 1)", nullptr, false, false);
-        ImGui::MenuItem("Right View (Numpad 3)", nullptr, false, false);
-        ImGui::MenuItem("Top View (Numpad 7)", nullptr, false, false);
-        ImGui::MenuItem("Perspective (Home)", nullptr, false, false);
-        ImGui::EndMenu();
-    }
-
-    // Story 3.8.2 — new "Mesh" menu, scaffolded with the entries the design
-    // file shows. All items are stubbed disabled until the corresponding
-    // backend lands; surfacing them now matches the design and lets keyboard
-    // users discover the planned commands.
-    if (ImGui::BeginMenu("Mesh")) {
-        ImGui::MenuItem("Recompute Normals",   nullptr, false, false);
-        ImGui::MenuItem("Validate Topology",   nullptr, false, false);
+        if (ImGui::MenuItem("Front", "Numpad 1", false, hasVp)) vp->ApplyViewPreset(Viewport::ViewPreset::Front);
+        if (ImGui::MenuItem("Right", "Numpad 3", false, hasVp)) vp->ApplyViewPreset(Viewport::ViewPreset::Right);
+        if (ImGui::MenuItem("Top",   "Numpad 7", false, hasVp)) vp->ApplyViewPreset(Viewport::ViewPreset::Top);
+        const bool perspective = hasVp &&
+            vp->GetCameraConst().GetProjectionMode() == ProjectionMode::Perspective;
+        if (ImGui::MenuItem("Perspective", "Numpad 5", perspective, hasVp)) vp->ToggleProjection();
         ImGui::Separator();
-        ImGui::MenuItem("Center on Origin",    nullptr, false, false);
-        ImGui::MenuItem("Snap to Floor",       nullptr, false, false);
-        ImGui::EndMenu();
+        if (ImGui::MenuItem("Frame Meshes", "F",    false, hasVp)) vp->FrameMeshes();
+        if (ImGui::MenuItem("Reset Camera", "Home", false, hasVp)) vp->ResetView();
+        EndStyledMenu();
     }
 
-    if (ImGui::BeginMenu("Help")) {
+    if (BeginStyledMenu("Help")) {
         if (ImGui::MenuItem("Keyboard Shortcuts")) pendingAction_ = PendingAction::ShowKeyboardShortcuts;
         if (ImGui::MenuItem("About MetaVisage")) pendingAction_ = PendingAction::ShowAbout;
         ImGui::Separator();
-        // Sprint 3.8.5 dev aid — browse the Lucide icon font's loaded glyphs
-        // and copy codepoints into MvIcons.h. Will move behind a debug build
-        // flag once the icon constants are stable.
+        // Developer aids, hidden until opened from here: the Lucide glyph
+        // browser (Sprint 3.8.5) and the frame-time / GL version HUD
+        // (Sprint 10.1).
         ImGui::MenuItem("Icon Glyph Explorer (Dev)", nullptr, &showIconExplorer_);
-        ImGui::EndMenu();
+        ImGui::MenuItem("Debug HUD (Dev)", nullptr, &showDebugHud_);
+        // Sprint 11 — writes the source mesh's points and mask as a Source
+        // Profile draft; used to author the built-in profiles.
+        if (ImGui::MenuItem("Export Source Profile Draft (Dev)")) {
+            pendingAction_ = PendingAction::ExportSourceProfileDraft;
+        }
+        // Loads the source profile's landmarks as named Stage 2 points so
+        // the authored placement can be checked on the mesh.
+        if (ImGui::MenuItem("Show Profile Landmarks (Dev)")) {
+            pendingAction_ = PendingAction::ShowProfileLandmarks;
+        }
+        EndStyledMenu();
     }
 
     // Keep the save indicator aligned to the right when space permits.
@@ -1559,6 +1652,9 @@ void AppWindow::DispatchPendingAction() {
     const PendingAction action = pendingAction_;
     if (action == PendingAction::None) return;
     pendingAction_ = PendingAction::None;
+    // File and dev actions act on the real project; the editor holds a
+    // scratch one until it is saved or cancelled.
+    if (BlockedByProfileEditor()) return;
 
     switch (action) {
         case PendingAction::None: break;
@@ -1596,7 +1692,8 @@ void AppWindow::DispatchPendingAction() {
         }
         case PendingAction::ImportMorphMesh: {
             if (auto picked = FileDialogs::OpenFile(MeshImportFilters())) {
-                ImportMorphMeshFromDisk(*picked);
+                const std::string path = *picked;
+                RunAfterSourceSwapConfirm([this, path]() { ImportMorphMeshFromDisk(path); });
             }
             break;
         }
@@ -1616,6 +1713,12 @@ void AppWindow::DispatchPendingAction() {
             break;
         case PendingAction::ShowAbout:
             showAbout_ = true;
+            break;
+        case PendingAction::ExportSourceProfileDraft:
+            ExportSourceProfileDraft();
+            break;
+        case PendingAction::ShowProfileLandmarks:
+            ShowProfileLandmarks();
             break;
     }
 }
@@ -1757,7 +1860,7 @@ void AppWindow::RenderAboutModal() {
     }
     if (ImGui::BeginPopupModal("About MetaVisage", nullptr, ImGuiWindowFlags_AlwaysAutoResize)) {
         ImGui::Text("MetaVisage");
-        ImGui::Text("Version 2.0.0");
+        ImGui::Text("Version %s", METAVISAGE_VERSION);
         ImGui::Separator();
         ImGui::TextWrapped("MetaHuman mesh morphing for Unreal Engine 5.x.");
         ImGui::Spacing();
@@ -1772,11 +1875,17 @@ void AppWindow::RenderModals() {
     RenderConfirmModal(confirmModal_);
     RenderErrorModal(errorModal_);
     RenderShortcutsModal(shortcutsModal_);
+    RenderAutoMapModals(autoMapModal_);
+    HandleAutoMapChoice();
+    RenderNamePromptModal(namePrompt_);
+    RenderManageProfilesModal(manageProfiles_, sourceProfiles_,
+                              Config::Instance().DefaultSourceProfileId());
+    HandleManageAction();
 
     RenderWelcomeModal(welcomeModal_);
     if (welcomeModal_.action != WelcomeAction::None) {
         switch (welcomeModal_.action) {
-            case WelcomeAction::NewProject:  OnFileNewProject(); break;
+            case WelcomeAction::NewProject:  NewProjectWithDefaultProfile(); break;
             case WelcomeAction::OpenProject: pendingAction_ = PendingAction::OpenProject; break;
             case WelcomeAction::OpenRecent:  OpenProjectFromDisk(welcomeModal_.selectedRecent); break;
             case WelcomeAction::None: break;
@@ -1867,7 +1976,7 @@ bool AppWindow::HandleGlobalShortcut(int key, int action, int mods) {
     // match the File menu's Export entry.
     switch (key) {
         case GLFW_KEY_N:
-            if (!shift) { OnFileNewProject(); return true; }
+            if (!shift) { NewProjectWithDefaultProfile(); return true; }
             return false;
         case GLFW_KEY_O:
             if (!shift) { pendingAction_ = PendingAction::OpenProject; return true; }
@@ -1883,6 +1992,10 @@ bool AppWindow::HandleGlobalShortcut(int key, int action, int mods) {
             }
             return false;
         case GLFW_KEY_Z:
+            // Leave Ctrl+Z to the text field while one is being typed in
+            // (Sprint 9.3 typed transform entry); otherwise an app undo would
+            // run underneath an open typing gesture.
+            if (ImGui::GetIO().WantTextInput) return false;
             if (shift) OnEditRedo(); else OnEditUndo();
             return true;
         default:
@@ -1891,6 +2004,7 @@ bool AppWindow::HandleGlobalShortcut(int key, int action, int mods) {
 }
 
 void AppWindow::OnFileNewProject() {
+    if (BlockedByProfileEditor()) return;
     ++projectGeneration_;
     project_ = std::make_unique<Project>();
     WrapPreset::QuickWrap().ApplyTo(project_->GetMorphData());
@@ -1902,7 +2016,7 @@ void AppWindow::OnFileNewProject() {
 }
 
 void AppWindow::OpenProjectFromDisk(const std::string& path) {
-    if (path.empty()) return;
+    if (path.empty() || BlockedByProfileEditor()) return;
     auto fresh = std::make_unique<Project>();
     ProjectSerializer serializer;
     const SerializationResult result = serializer.Load(*fresh, path);
@@ -1914,6 +2028,13 @@ void AppWindow::OpenProjectFromDisk(const std::string& path) {
     project_ = std::move(fresh);
     projectPath_ = path;
     project_->SetPath(path);
+    // Points and mask live in the project, so a missing profile only matters
+    // to features that read the profile itself (auto-map, Sprint 12+).
+    const std::string& profileId = project_->GetSourceProfileId();
+    if (!profileId.empty() && !ProfileStore::FindById(sourceProfiles_, profileId)) {
+        MV_LOG_WARNING(std::format("Project source profile '{}' is not installed", profileId));
+    }
+    ResolveLandmarkNames(project_->GetPointReferenceData().correspondences);
 
     // Reconstruct the deformed morph mesh from saved vertex/normal data —
     // ProjectSerializer parks the arrays in MorphData::savedDeformed*; the
@@ -1954,6 +2075,8 @@ void AppWindow::OpenProjectFromDisk(const std::string& path) {
                                  morphData.vertexMask);
         }
     }
+
+    RefreshTargetTexturePreview();
 
     // Aim the camera at whatever mesh is on screen so a freshly loaded
     // project doesn't open with the model parked off-frame.
@@ -1997,28 +2120,35 @@ void AppWindow::SaveProjectToDisk(const std::string& path) {
 
 void AppWindow::ImportMorphMeshFromDisk(const std::string& path) {
     if (!project_ || path.empty()) return;
-    MeshReference& ref = project_->GetMorphMesh();
-    ref.mesh = std::make_shared<Mesh>();
-    if (!ref.mesh->Load(path)) {
-        ref.mesh.reset();
-        ref.isLoaded = false;
-        errorModal_.Open(std::format("Failed to load morph mesh:\n{}", path));
+    auto mesh = std::make_shared<Mesh>();
+    if (!mesh->Load(path)) {
+        errorModal_.Open(std::format("Failed to load source mesh:\n{}", path));
         return;
     }
-    ref.filepath = path;
-    ref.isLoaded = true;
-    // Renderer lazy-uploads on first RenderMesh(); framing the bounds triggers
-    // a paint and gives the user immediate visual feedback.
-    if (viewportHost_ && viewportHost_->GetPrimaryViewport()) {
-        viewportHost_->GetPrimaryViewport()->GetCamera()->FocusOnBounds(ref.mesh->GetBounds());
-    }
-    statusMessage_ = std::format("Loaded morph mesh: {}", FileName(path));
-    MV_LOG_INFO(std::format("Loaded morph mesh: {}", path));
+    // A mesh with a known topology (for example the MetaHuman head exported
+    // to FBX) picks up that profile's landmarks and mask automatically.
+    const SourceProfile* match =
+        ProfileStore::FindByFingerprint(sourceProfiles_, TopologyFingerprint::FromMesh(*mesh));
+    CommitSourceMesh(mesh, path, match, /*applyProfileDefaults=*/false);
+    statusMessage_ = match
+        ? std::format("Loaded source mesh: {} (matched profile '{}')", FileName(path), match->name)
+        : std::format("Loaded source mesh: {}", FileName(path));
+    MV_LOG_INFO(std::format("Loaded source mesh: {}{}", path,
+                            match ? std::format(" (profile {})", match->id) : std::string()));
 }
 
 void AppWindow::ImportTargetMeshFromDisk(const std::string& path) {
     if (!project_ || path.empty()) return;
     MeshReference& ref = project_->GetTargetMesh();
+    // Drop the replaced mesh's GPU buffers and texture. Renderers cache by
+    // Mesh pointer, so a stale entry would also be reused if the new mesh
+    // were allocated at the old address.
+    if (ref.mesh && viewportHost_) {
+        for (Viewport* vp : {viewportHost_->GetPrimaryViewport(),
+                             viewportHost_->GetSecondaryViewport()}) {
+            if (vp) vp->InvalidateMesh(ref.mesh.get());
+        }
+    }
     ref.mesh = std::make_shared<Mesh>();
     if (!ref.mesh->Load(path)) {
         ref.mesh.reset();
@@ -2031,31 +2161,250 @@ void AppWindow::ImportTargetMeshFromDisk(const std::string& path) {
     if (viewportHost_ && viewportHost_->GetPrimaryViewport()) {
         viewportHost_->GetPrimaryViewport()->GetCamera()->FocusOnBounds(ref.mesh->GetBounds());
     }
+    // Textures belong to the project, not the mesh — re-apply them so the
+    // new target isn't rendered untextured while the sidebar lists them.
+    RefreshTargetTexturePreview();
     statusMessage_ = std::format("Loaded target mesh: {}", FileName(path));
     MV_LOG_INFO(std::format("Loaded target mesh: {}", path));
 }
 
-void AppWindow::UseDefaultMorphMesh() {
+bool AppWindow::SourceSwapDiscardsWork() const {
+    if (!project_) return false;
+    if (!project_->GetPointReferenceData().correspondences.empty()) return true;
+    const MorphData& morph = project_->GetMorphData();
+    if (morph.isProcessed) return true;
+    // A mask counts as work only when it differs from what the current
+    // profile would apply again by default.
+    if (std::none_of(morph.vertexMask.begin(), morph.vertexMask.end(),
+                     [](bool masked) { return masked; })) {
+        return false;
+    }
+    const SourceProfile* current =
+        ProfileStore::FindById(sourceProfiles_, project_->GetSourceProfileId());
+    return !current || morph.vertexMask != current->BuildMask();
+}
+
+void AppWindow::RunAfterSourceSwapConfirm(std::function<void()> swap) {
     if (!project_) return;
+    if (morphRunning_.load()) {
+        statusMessage_ = "Wait for processing to finish before changing the source mesh";
+        return;
+    }
+    if (!SourceSwapDiscardsWork()) {
+        swap();
+        return;
+    }
+    confirmModal_.Open(
+        "Replace source mesh?",
+        "Changing the source mesh clears the reference points, vertex mask and "
+        "morph result, which all depend on the current source. Undo (Ctrl+Z) "
+        "restores them.",
+        std::move(swap),
+        "Replace");
+}
+
+void AppWindow::RequestSelectSourceProfile(const std::string& profileId) {
+    const SourceProfile* profile = ProfileStore::FindById(sourceProfiles_, profileId);
+    if (!profile) return;
+    // Copy: the confirm callback may run after sourceProfiles_ is reloaded.
+    const SourceProfile chosen = *profile;
+    RunAfterSourceSwapConfirm([this, chosen]() { SelectSourceProfile(chosen); });
+}
+
+void AppWindow::SelectSourceProfile(const SourceProfile& profile) {
+    if (!project_) return;
+    auto mesh = LoadProfileMesh(profile);
+    if (!mesh) return;
+    CommitSourceMesh(mesh, profile.resolvedMeshPath, &profile, /*applyProfileDefaults=*/true);
+    statusMessage_ = std::format("Source profile: {}", profile.name);
+    MV_LOG_INFO(std::format("Selected source profile {} ({})", profile.id,
+                            profile.resolvedMeshPath));
+}
+
+std::shared_ptr<Mesh> AppWindow::LoadProfileMesh(const SourceProfile& profile) {
+    std::error_code ec;
+    if (profile.resolvedMeshPath.empty() ||
+        !std::filesystem::exists(profile.resolvedMeshPath, ec)) {
+        errorModal_.Open(std::format("The mesh for source profile '{}' was not found at:\n{}",
+                                     profile.name, profile.resolvedMeshPath));
+        return nullptr;
+    }
+    auto mesh = std::make_shared<Mesh>();
+    if (!mesh->Load(profile.resolvedMeshPath)) {
+        errorModal_.Open(std::format("Failed to load the mesh for source profile '{}':\n{}",
+                                     profile.name, profile.resolvedMeshPath));
+        return nullptr;
+    }
+    const TopologyFingerprint fp = TopologyFingerprint::FromMesh(*mesh);
+    if (fp != profile.fingerprint) {
+        // Landmark and mask indices would land on the wrong vertices.
+        errorModal_.Open(std::format(
+            "{} does not have the topology source profile '{}' was made for.\n\n"
+            "Profile: {} vertices, {} faces (topology {}).\n"
+            "Mesh: {} vertices, {} faces (topology {}).",
+            FileName(profile.resolvedMeshPath), profile.name,
+            profile.fingerprint.vertexCount, profile.fingerprint.faceCount,
+            profile.fingerprint.HashHex(), fp.vertexCount, fp.faceCount, fp.HashHex()));
+        MV_LOG_WARNING(std::format("Source profile {} fingerprint mismatch for {}",
+                                   profile.id, profile.resolvedMeshPath));
+        return nullptr;
+    }
+    return mesh;
+}
+
+void AppWindow::CommitSourceMesh(std::shared_ptr<Mesh> mesh, const std::string& path,
+                                 const SourceProfile* profile, bool applyProfileDefaults) {
+    if (!project_ || !mesh) return;
+    auto before = SourceSwapUndoAction::SourceState::Capture(*project_);
+
+    MeshReference& ref = project_->GetMorphMesh();
+    MorphData& morph = project_->GetMorphData();
+    // Renderers cache GPU buffers by Mesh*. The replaced meshes stay alive in
+    // the undo action and re-upload lazily if it restores them.
+    if (viewportHost_) {
+        for (Viewport* vp : {viewportHost_->GetPrimaryViewport(),
+                             viewportHost_->GetSecondaryViewport()}) {
+            if (!vp) continue;
+            if (ref.mesh) vp->InvalidateMesh(ref.mesh.get());
+            if (morph.deformedMorphMesh) vp->InvalidateMesh(morph.deformedMorphMesh.get());
+        }
+    }
+
+    ref.mesh = mesh;
+    ref.filepath = path;
+    ref.isLoaded = true;
+    if (profile && applyProfileDefaults) ref.transform = profile->defaultTransform;
+    project_->SetSourceProfileId(profile ? profile->id : std::string());
+
+    // Everything indexed by source vertices starts over.
+    project_->GetPointReferenceData().correspondences.clear();
+    project_->GetPointReferenceData().activeSelection.Clear();
+    morph.vertexMask = profile ? profile->BuildMask() : std::vector<bool>();
+    morph.originalMorphMesh.reset();
+    morph.deformedMorphMesh.reset();
+    morph.isProcessed = false;
+    morph.isAccepted = false;
+    morph.displacementMagnitudes.clear();
+    morph.maxDisplacement = 0.0f;
+    morph.avgDisplacement = 0.0f;
+
+    if (profile && applyProfileDefaults && !profile->defaultWrapPresetId.empty()) {
+        const WrapPreset* preset = nullptr;
+        const auto builtIns = WrapPreset::BuiltIns();
+        for (const auto& p : builtIns) {
+            if (p.id == profile->defaultWrapPresetId) { preset = &p; break; }
+        }
+        for (const auto& p : userPresets_) {
+            if (!preset && p.id == profile->defaultWrapPresetId) { preset = &p; break; }
+        }
+        if (preset) {
+            preset->ApplyTo(morph);
+        } else {
+            MV_LOG_WARNING(std::format("Source profile {} names unknown wrap preset '{}'",
+                                       profile->id, profile->defaultWrapPresetId));
+        }
+    }
+
+    if (undoStack_) {
+        undoStack_->Push(std::make_unique<SourceSwapUndoAction>(
+            project_.get(), std::move(before),
+            SourceSwapUndoAction::SourceState::Capture(*project_)));
+    }
+
+    if (viewportHost_) {
+        viewportHost_->SetSelectedPointIndex(-1);
+        if (Viewport* vp = viewportHost_->GetPrimaryViewport()) {
+            if (!morph.vertexMask.empty()) vp->UploadMaskColors(mesh.get(), morph.vertexMask);
+            vp->GetCamera()->FocusOnBounds(mesh->GetBounds());
+        }
+    }
+}
+
+void AppWindow::ExportSourceProfileDraft() {
+    if (!project_ || !project_->GetMorphMesh().isLoaded || !project_->GetMorphMesh().mesh) {
+        errorModal_.Open("Load a source mesh before exporting a source profile draft.");
+        return;
+    }
     const std::string exeDir = Paths::ExecutableDir();
-    if (exeDir.empty()) {
-        errorModal_.Open("Could not locate the application directory.");
+    const std::string assetsDir = exeDir.empty()
+        ? std::string()
+        : (std::filesystem::path(exeDir) / "assets").generic_string();
+    const SourceProfile draft = SourceProfile::DraftFromProject(*project_, assetsDir);
+
+    auto picked = FileDialogs::SaveFile({{"Source profile", "json"}},
+                                        draft.id + ".mvprofile.json");
+    if (!picked) return;
+    if (!ProfileStore::WriteFile(draft, *picked)) {
+        errorModal_.Open(std::format("Could not write source profile draft:\n{}", *picked));
         return;
     }
-    const std::string path = exeDir + "/assets/models/MetaHumanHeadLod0.obj";
-    if (!std::filesystem::exists(path)) {
-        errorModal_.Open(std::format("Default MetaHuman head not found at:\n{}", path));
+    const auto problems = draft.Validate();
+    errorModal_.OpenInfo(
+        std::format("Wrote {} landmark(s) and {} mask range(s) to:\n{}{}",
+                    draft.landmarks.size(), draft.maskRanges.size(), *picked,
+                    problems.empty()
+                        ? std::string()
+                        : std::format("\n\nValidation: {} problem(s), first: {}",
+                                      problems.size(), problems.front())),
+        "Profile Draft Exported");
+    MV_LOG_INFO(std::format("Exported source profile draft {} to {}", draft.id, *picked));
+}
+
+void AppWindow::ShowProfileLandmarks() {
+    if (!project_) return;
+    const MeshReference& source = project_->GetMorphMesh();
+    const SourceProfile* profile =
+        ProfileStore::FindById(sourceProfiles_, project_->GetSourceProfileId());
+    if (!source.isLoaded || !source.mesh || !profile) {
+        errorModal_.Open("Pick a source profile in Stage 1 before showing its landmarks.");
         return;
     }
-    ImportMorphMeshFromDisk(path);
-    // -90° Y-axis rotation orients the bundled head to face camera-forward.
-    // Uses FromAxisAngle to side-step the param-order quirk in FromEulerAngles
-    // (the second arg — documented as yaw/Y — produces a Z-axis rotation in
-    // the current implementation).
-    if (project_->GetMorphMesh().isLoaded) {
-        project_->GetMorphMesh().transform.SetRotation(
-            Quaternion::FromAxisAngle(Vector3(1.0f, 0.0f, 0.0f), -90.0f));
+    if (!profile->HasLandmarks()) {
+        errorModal_.Open(std::format("{} has no landmarks yet.", profile->name));
+        return;
     }
+    if (project_->GetCurrentStage() != WorkflowStage::PointReference) {
+        errorModal_.Open("Open Stage 2 (Point Reference) to show profile landmarks.");
+        return;
+    }
+
+    // Point ids follow profile order, so mirrors resolve by landmark id.
+    std::unordered_map<std::string, int> pointIdByLandmark;
+    for (size_t i = 0; i < profile->landmarks.size(); ++i) {
+        pointIdByLandmark[profile->landmarks[i].id] = static_cast<int>(i) + 1;
+    }
+    const auto& vertices = source.mesh->GetVertices();
+    const Matrix4x4 model = source.transform.GetMatrix();
+    std::vector<PointCorrespondence> points;
+    points.reserve(profile->landmarks.size());
+    for (const auto& lm : profile->landmarks) {
+        if (lm.vertexIndex < 0 || lm.vertexIndex >= static_cast<int>(vertices.size())) continue;
+        PointCorrespondence pc;
+        pc.pointID              = pointIdByLandmark[lm.id];
+        pc.morphMeshVertexIndex = lm.vertexIndex;
+        pc.morphMeshPosition    = RayCaster::TransformPoint(vertices[lm.vertexIndex], model);
+        pc.landmarkId           = lm.id;
+        if (const auto it = pointIdByLandmark.find(lm.mirrorId);
+            !lm.mirrorId.empty() && it != pointIdByLandmark.end()) {
+            pc.isSymmetric     = true;
+            pc.symmetricPairID = it->second;
+        }
+        points.push_back(std::move(pc));
+    }
+
+    ResolveLandmarkNames(points);
+    auto& correspondences = project_->GetPointReferenceData().correspondences;
+    const std::vector<PointCorrespondence> before = correspondences;
+    correspondences = points;
+    if (undoStack_) {
+        undoStack_->Push(std::make_unique<PointPlacementUndoAction>(
+            project_.get(), before, correspondences, "Show Profile Landmarks"));
+    }
+    if (viewportHost_) viewportHost_->SetSelectedPointIndex(-1);
+    statusMessage_ = std::format("Showing {} landmarks from {}. Ctrl+Z restores your points.",
+                                 points.size(), profile->name);
+    MV_LOG_INFO(std::format("Showing {} landmarks from source profile {}",
+                            points.size(), profile->id));
 }
 
 void AppWindow::ImportTextureForSlot(const std::string& slot) {
@@ -2073,20 +2422,32 @@ void AppWindow::ImportTextureForSlot(const std::string& slot) {
         return;
     }
     project_->GetTargetTextures().Add(slot, tex);
-    // Mirror Qt-era behaviour: only Albedo is uploaded as the active mesh
-    // texture for preview; other slots are stored for baking/export use.
-    if (slot == "Albedo" &&
-        viewportHost_ && viewportHost_->GetPrimaryViewport() &&
-        project_->GetTargetMesh().mesh) {
-        viewportHost_->GetPrimaryViewport()->UploadMeshTexture(
-            project_->GetTargetMesh().mesh.get(), *tex);
-    }
+    if (slot == "Albedo") RefreshTargetTexturePreview();
     statusMessage_ = std::format("Loaded {} texture: {}", slot, FileName(*picked));
     MV_LOG_INFO(std::format("Loaded {} texture: {}", slot, *picked));
 }
 
+void AppWindow::RefreshTargetTexturePreview() {
+    // Mirror Qt-era behaviour: only Albedo is uploaded as the active mesh
+    // texture for preview; other slots are stored for baking/export use.
+    if (!project_ || !viewportHost_) return;
+    const MeshReference& target = project_->GetTargetMesh();
+    const TextureSet& textures = project_->GetTargetTextures();
+    if (!target.isLoaded || !target.mesh || !textures.HasAlbedo()) return;
+    if (Viewport* vp = viewportHost_->GetPrimaryViewport()) {
+        vp->UploadMeshTexture(target.mesh.get(), *textures.GetAlbedo());
+    }
+}
+
 void AppWindow::ApplyStageViewportMode() {
     if (!viewportHost_ || !project_) return;
+    if (editor_.active) {
+        viewportHost_->SetDualMode(false);
+        if (Viewport* vp = viewportHost_->GetPrimaryViewport()) {
+            vp->SetRenderFilter(RenderFilter::MorphOnly);
+        }
+        return;
+    }
     const bool dual = project_->GetCurrentStage() == WorkflowStage::PointReference;
     viewportHost_->SetDualMode(dual);
 }
@@ -2211,6 +2572,7 @@ void AppWindow::OnEditUndo() {
     // takes them back to Stage 2). Sync the viewport host's dual-pane
     // state to match the new current stage.
     ApplyStageViewportMode();
+    RefreshMaskOverlay();
     statusMessage_ = "Undo";
 }
 
@@ -2218,14 +2580,33 @@ void AppWindow::OnEditRedo() {
     if (!undoStack_ || !undoStack_->CanRedo()) return;
     undoStack_->Redo();
     ApplyStageViewportMode();
+    RefreshMaskOverlay();
     statusMessage_ = "Redo";
 }
 
+void AppWindow::RefreshMaskOverlay() {
+    // Mask colours reach the GPU only when painted, so an undone stroke or
+    // source change would otherwise keep showing the replaced mask.
+    if (!project_ || !viewportHost_) return;
+    const MorphData& morph = project_->GetMorphData();
+    if (morph.vertexMask.empty()) return;
+    Viewport* vp = viewportHost_->GetPrimaryViewport();
+    if (!vp) return;
+    const Mesh* shown = (morph.isProcessed && morph.deformedMorphMesh)
+        ? morph.deformedMorphMesh.get()
+        : project_->GetMorphMesh().mesh.get();
+    if (shown && shown->GetVertexCount() == morph.vertexMask.size()) {
+        vp->UploadMaskColors(shown, morph.vertexMask);
+    }
+}
+
 void AppWindow::RenderFrame(int /*fbWidth*/, int /*fbHeight*/) {
-    // Debug HUD retained behind a single dockable window — useful during the
-    // 3.6 rebuild. Removed before Sprint 3.6 closes.
+    // Debug HUD — developer aid, hidden by default and opened from
+    // Help > Debug HUD (Dev) (Sprint 10.1). Not submitting the window keeps
+    // it closed regardless of imgui.ini.
+    if (!showDebugHud_) return;
     ImGui::SetNextWindowSize(ImVec2(320.0f, 110.0f), ImGuiCond_FirstUseEver);
-    if (ImGui::Begin("Debug HUD")) {
+    if (ImGui::Begin("Debug HUD", &showDebugHud_)) {
         ImGui::Text("Frame: %.3f ms (%.1f FPS)",
                     1000.0f / ImGui::GetIO().Framerate,
                     ImGui::GetIO().Framerate);
@@ -2242,6 +2623,8 @@ void AppWindow::Shutdown() {
     if (morphDeformer_) morphDeformer_->Cancel();
     if (morphThread_.joinable()) morphThread_.join();
     morphDeformer_.reset();
+    autoMapCancel_.store(true);
+    if (autoMapThread_.joinable()) autoMapThread_.join();
 
     if (viewportHost_) viewportHost_->SetProject(nullptr);
     undoStack_.reset();
@@ -2434,6 +2817,1174 @@ void AppWindow::AcceptMorph() {
     MorphData& morphData = project_->GetMorphData();
     if (!morphData.isProcessed) return;
     morphData.isAccepted = true;
+}
+
+void AppWindow::RequestResetMorphResult() {
+    if (!project_ || morphRunning_.load()) return;
+    const MorphData& morphData = project_->GetMorphData();
+    if (!morphData.isProcessed) return;
+    if (!morphData.isAccepted) {
+        ResetMorphResult();
+        return;
+    }
+    confirmModal_.Open(
+        "Reset to source mesh?",
+        "This discards the accepted morph result, including any Touch Up "
+        "sculpting. Undo (Ctrl+Z) restores it.",
+        [this]() { ResetMorphResult(); },
+        "Reset");
+}
+
+void AppWindow::ResetMorphResult() {
+    if (!project_ || morphRunning_.load()) return;
+    MorphData& morphData = project_->GetMorphData();
+    if (!morphData.isProcessed) return;
+
+    // The undo action keeps the deformed mesh alive (shared_ptr, no copy),
+    // so sculpt-stroke undo entries that point at it stay valid, and its
+    // renderer cache entry is kept for an undo.
+    const MorphUndoAction::MorphState before{
+        morphData.deformedMorphMesh, morphData.isProcessed, morphData.isAccepted,
+        morphData.displacementMagnitudes, morphData.maxDisplacement,
+        morphData.avgDisplacement};
+    const MorphUndoAction::MorphState after{nullptr, false, false, {}, 0.0f, 0.0f};
+
+    morphData.deformedMorphMesh.reset();
+    morphData.isProcessed = false;
+    morphData.isAccepted  = false;
+    morphData.displacementMagnitudes.clear();
+    morphData.maxDisplacement = 0.0f;
+    morphData.avgDisplacement = 0.0f;
+    if (undoStack_) {
+        undoStack_->Push(std::make_unique<MorphUndoAction>(project_.get(), before, after));
+    }
+
+    // The mask overlay was drawn on the deformed mesh; repaint it on the
+    // source mesh that is now shown.
+    const MeshReference& source = project_->GetMorphMesh();
+    if (viewportHost_ && source.mesh && !morphData.vertexMask.empty()) {
+        if (Viewport* vp = viewportHost_->GetPrimaryViewport()) {
+            vp->UploadMaskColors(source.mesh.get(), morphData.vertexMask);
+        }
+    }
+    statusMessage_ = "Morph result reset to source mesh";
+}
+
+// ---------------------------------------------------------------------------
+// Stage 2 — Auto-map worker lifecycle (Sprint 13)
+// ---------------------------------------------------------------------------
+
+const SourceProfile* AppWindow::AutoMapProfile() const {
+    if (!project_) return nullptr;
+    const SourceProfile* profile =
+        ProfileStore::FindById(sourceProfiles_, project_->GetSourceProfileId());
+    return (profile && profile->HasLandmarks()) ? profile : nullptr;
+}
+
+void AppWindow::ResolveLandmarkNames(std::vector<PointCorrespondence>& points) const {
+    const SourceProfile* profile = editor_.active ? &editor_.draft
+        : project_ ? ProfileStore::FindById(sourceProfiles_, project_->GetSourceProfileId())
+                   : nullptr;
+    for (auto& pc : points) {
+        pc.landmarkName.clear();
+        pc.isMidlineLandmark = false;
+        if (pc.landmarkId.empty() || !profile) continue;
+        for (const auto& lm : profile->landmarks) {
+            if (lm.id == pc.landmarkId) {
+                pc.landmarkName = lm.name;
+                pc.isMidlineLandmark = lm.mirrorId.empty();
+                break;
+            }
+        }
+    }
+}
+
+void AppWindow::RequestAutoMap() {
+    if (!project_ || autoMapRunning_.load() || morphRunning_.load()) return;
+    if (!AutoMapProfile()) {
+        errorModal_.Open("Auto-map needs a source profile with landmarks. Pick one in Stage 1.",
+                         "Auto-map Unavailable");
+        return;
+    }
+    if (!project_->GetTargetMesh().isLoaded || !project_->GetTargetMesh().mesh) {
+        errorModal_.Open("Import a target mesh in Stage 1 before auto-mapping.",
+                         "Auto-map Unavailable");
+        return;
+    }
+    if (project_->GetPointReferenceData().correspondences.empty()) {
+        StartAutoMap(AutoMapMode::Fresh);
+    } else {
+        autoMapModal_.OpenRerun();
+    }
+}
+
+void AppWindow::HandleAutoMapChoice() {
+    const AutoMapChoice choice = autoMapModal_.choice;
+    if (choice == AutoMapChoice::None) return;
+    autoMapModal_.choice = AutoMapChoice::None;
+    switch (choice) {
+        case AutoMapChoice::AutoMap:   RequestAutoMap(); break;
+        case AutoMapChoice::Replace:   StartAutoMap(AutoMapMode::Replace); break;
+        case AutoMapChoice::Fill:      StartAutoMap(AutoMapMode::Fill); break;
+        case AutoMapChoice::CancelRun: CancelAutoMap(); break;
+        default: break;
+    }
+}
+
+void AppWindow::StartAutoMap(AutoMapMode mode) {
+    if (!project_ || autoMapRunning_.load()) return;
+    const SourceProfile* profile = AutoMapProfile();
+    const MeshReference& source = project_->GetMorphMesh();
+    const MeshReference& target = project_->GetTargetMesh();
+    if (!profile || !source.isLoaded || !source.mesh || !target.isLoaded || !target.mesh) return;
+
+    // Join any stale thread from a prior run before reusing the handle.
+    if (autoMapThread_.joinable()) autoMapThread_.join();
+
+    // The worker gets its own copies (the meshes are shared and not changed
+    // in Stage 2), so the UI keeps drawing and a project switch cannot pull
+    // anything out from under it.
+    LandmarkSolveInput in;
+    in.source = source.mesh;
+    in.sourceTransform = source.transform;
+    in.target = target.mesh;
+    in.targetTransform = target.transform;
+    in.landmarks = profile->landmarks;
+    in.symmetryAxis = profile->symmetryAxis;
+    in.symmetryPlaneOffset = profile->symmetryPlaneOffset;
+    in.mask = profile->BuildMask();
+
+    autoMapMode_ = mode;
+    autoMapProjectGeneration_ = projectGeneration_;
+    autoMapProgress_.store(0.0f);
+    autoMapCancel_.store(false);
+    autoMapFinished_.store(false);
+    autoMapRunning_.store(true);
+    {
+        std::lock_guard<std::mutex> lock(autoMapMutex_);
+        autoMapStageText_.clear();
+        autoMapResult_ = LandmarkSolveResult{};
+    }
+    autoMapModal_.OpenProgress();
+    statusMessage_ = "Auto-mapping points...";
+
+    autoMapThread_ = std::thread([this, in = std::move(in)]() {
+        TemplateFitSolver solver;
+        LandmarkSolveResult result = solver.Solve(
+            in,
+            [this](float p, const std::string& message) {
+                autoMapProgress_.store(p);
+                std::lock_guard<std::mutex> lock(autoMapMutex_);
+                autoMapStageText_ = message;
+            },
+            autoMapCancel_);
+        {
+            std::lock_guard<std::mutex> lock(autoMapMutex_);
+            autoMapResult_ = std::move(result);
+        }
+        autoMapFinished_.store(true);
+    });
+}
+
+void AppWindow::CancelAutoMap() {
+    if (autoMapRunning_.load()) autoMapCancel_.store(true);
+}
+
+void AppWindow::PollAutoMapCompletion() {
+    if (autoMapRunning_.load()) {
+        autoMapModal_.progress = autoMapProgress_.load();
+        std::lock_guard<std::mutex> lock(autoMapMutex_);
+        autoMapModal_.stageText = autoMapStageText_;
+    }
+    if (!autoMapFinished_.load()) return;
+
+    if (autoMapThread_.joinable()) autoMapThread_.join();
+    autoMapRunning_.store(false);
+    autoMapFinished_.store(false);
+    autoMapModal_.running = false;
+
+    LandmarkSolveResult result;
+    {
+        std::lock_guard<std::mutex> lock(autoMapMutex_);
+        result = std::move(autoMapResult_);
+    }
+    // A result belongs only to the project that started it.
+    if (!project_ || autoMapProjectGeneration_ != projectGeneration_) return;
+    if (autoMapCancel_.load()) {
+        autoMapCancel_.store(false);
+        statusMessage_ = "Auto-map cancelled";
+        return;
+    }
+    if (!result.success) {
+        statusMessage_ = "Auto-map failed";
+        errorModal_.Open(result.errorMessage, "Auto-map Failed");
+        return;
+    }
+    ApplyAutoMapResult(result, autoMapMode_);
+}
+
+void AppWindow::ApplyAutoMapResult(const LandmarkSolveResult& result, AutoMapMode mode) {
+    const SourceProfile* profile = AutoMapProfile();
+    const MeshReference& source = project_->GetMorphMesh();
+    if (!profile || !source.mesh) return;
+
+    PointReferenceData& data = project_->GetPointReferenceData();
+    std::vector<PointCorrespondence>& correspondences = data.correspondences;
+    const std::vector<PointCorrespondence> before = correspondences;
+
+    // Points the user placed or moved (not auto) always survive. Fill keeps
+    // the auto points too; Replace solves them again; Fresh starts empty.
+    std::vector<PointCorrespondence> points;
+    if (mode == AutoMapMode::Fill) {
+        points = correspondences;
+    } else if (mode == AutoMapMode::Replace) {
+        for (const auto& c : correspondences) {
+            if (!c.isAuto) points.push_back(c);
+        }
+    }
+    std::unordered_set<int> keptIds;
+    std::unordered_set<std::string> present;
+    std::unordered_map<std::string, int> idByLandmark;
+    int nextID = 1;
+    for (const auto& c : points) {
+        keptIds.insert(c.pointID);
+        nextID = std::max(nextID, c.pointID + 1);
+        if (!c.landmarkId.empty()) {
+            present.insert(c.landmarkId);
+            idByLandmark[c.landmarkId] = c.pointID;
+        }
+    }
+    // A kept point whose partner was replaced loses the stale link; the
+    // pairing pass below links it to the new partner.
+    for (auto& c : points) {
+        if (c.isSymmetric && !keptIds.count(c.symmetricPairID)) {
+            c.isSymmetric = false;
+            c.symmetricPairID = -1;
+        }
+    }
+
+    const auto& vertices = source.mesh->GetVertices();
+    const Matrix4x4 model = source.transform.GetMatrix();
+    int added = 0;
+    for (const SolvedLandmark& s : result.landmarks) {
+        if (present.count(s.landmarkId)) continue;
+        if (s.sourceVertex < 0 || s.sourceVertex >= static_cast<int>(vertices.size())) continue;
+        PointCorrespondence pc;
+        pc.pointID               = nextID++;
+        pc.morphMeshVertexIndex  = s.sourceVertex;
+        pc.morphMeshPosition     = RayCaster::TransformPoint(vertices[s.sourceVertex], model);
+        pc.targetMeshVertexIndex = s.targetVertex;
+        pc.targetMeshPosition    = s.targetPosition;
+        pc.landmarkId            = s.landmarkId;
+        pc.confidence            = s.confidence;
+        pc.isAuto                = true;
+        idByLandmark[pc.landmarkId] = pc.pointID;
+        points.push_back(std::move(pc));
+        ++added;
+    }
+    if (added == 0 && mode == AutoMapMode::Fill) {
+        statusMessage_ = "Every landmark already has a point";
+        return;
+    }
+
+    // Link left/right landmarks as symmetric pairs, so deleting or dragging
+    // one acts on both. Existing manual pairings are left alone.
+    std::unordered_map<std::string, std::string> mirrorOf;
+    for (const auto& lm : profile->landmarks) mirrorOf[lm.id] = lm.mirrorId;
+    for (auto& c : points) {
+        if (c.landmarkId.empty() || c.isSymmetric) continue;
+        const auto m = mirrorOf.find(c.landmarkId);
+        if (m == mirrorOf.end() || m->second.empty()) continue;
+        const auto partner = idByLandmark.find(m->second);
+        if (partner == idByLandmark.end()) continue;
+        c.isSymmetric = true;
+        c.symmetricPairID = partner->second;
+    }
+    ResolveLandmarkNames(points);
+
+    correspondences = std::move(points);
+    data.hasTargetPlane = true;
+    data.targetPlanePoint = result.targetPlanePoint;
+    data.targetPlaneNormal = result.targetPlaneNormal;
+    if (undoStack_) {
+        undoStack_->Push(std::make_unique<PointPlacementUndoAction>(
+            project_.get(), before, correspondences, "Auto-map Points"));
+    }
+    if (viewportHost_) viewportHost_->SetSelectedPointIndex(-1);
+
+    int high = 0, review = 0, low = 0;
+    for (const auto& c : correspondences) {
+        switch (BandOf(c)) {
+            case ConfidenceBand::High:   ++high; break;
+            case ConfidenceBand::Review: ++review; break;
+            case ConfidenceBand::Low:    ++low; break;
+            default: break;
+        }
+    }
+    statusMessage_ = std::format("Auto-mapped {} points: {} to review, {} low", added, review, low);
+    MV_LOG_INFO(std::format("Auto-map applied {} points in {:.1f} s ({} high, {} review, {} low)",
+                            added, result.seconds, high, review, low));
+}
+
+// ---------------------------------------------------------------------------
+// Stage 2 — dragging placed points (Sprint 13)
+// ---------------------------------------------------------------------------
+
+bool AppWindow::SymmetryPlaneFor(PointSide side, Vector3& point, Vector3& normal) const {
+    auto unit = [](Axis axis) {
+        switch (axis) {
+            case Axis::Y: return Vector3(0.0f, 1.0f, 0.0f);
+            case Axis::Z: return Vector3(0.0f, 0.0f, 1.0f);
+            default:      return Vector3(1.0f, 0.0f, 0.0f);
+        }
+    };
+    if (!project_) return false;
+    const PointReferenceData& data = project_->GetPointReferenceData();
+    if (side == PointSide::Target && data.hasTargetPlane) {
+        point = data.targetPlanePoint;
+        normal = data.targetPlaneNormal.Normalized();
+        return true;
+    }
+    if (side == PointSide::Morph) {
+        if (const SourceProfile* profile = editor_.active ? &editor_.draft
+                : ProfileStore::FindById(sourceProfiles_, project_->GetSourceProfileId())) {
+            const Matrix4x4 m = project_->GetMorphMesh().transform.GetMatrix();
+            const Vector3 axis = unit(profile->symmetryAxis);
+            const Vector3 local = axis * profile->symmetryPlaneOffset;
+            point = RayCaster::TransformPoint(local, m);
+            // Profile transforms are rotation and uniform scale, so the axis
+            // maps straight onto the plane normal.
+            normal = (RayCaster::TransformPoint(local + axis, m) - point).Normalized();
+            return true;
+        }
+    }
+    // No profile or auto-map plane: the Stage 2 mirror setting, as placement
+    // mirroring uses it.
+    normal = unit(data.symmetryAxis);
+    point = normal * data.symmetryPlaneOffset;
+    return true;
+}
+
+void AppWindow::BuildMidlineCache(PointSide side, const Vector3& planePoint, const Vector3& planeNormal) {
+    midlineCache_ = MidlineCache{};
+    midlineCache_.side = side;
+    const MeshReference& ref = side == PointSide::Target ? project_->GetTargetMesh()
+                                                         : project_->GetMorphMesh();
+    if (!ref.mesh) return;
+    const Matrix4x4 m = ref.transform.GetMatrix();
+    const auto& local = ref.mesh->GetVertices();
+    std::vector<Vector3> world(local.size());
+    std::vector<float> dist(local.size());
+    Vector3 lo = local.empty() ? Vector3() : RayCaster::TransformPoint(local[0], m);
+    Vector3 hi = lo;
+    for (size_t i = 0; i < local.size(); ++i) {
+        world[i] = RayCaster::TransformPoint(local[i], m);
+        dist[i] = (world[i] - planePoint).Dot(planeNormal);
+        lo = Vector3(std::min(lo.x, world[i].x), std::min(lo.y, world[i].y), std::min(lo.z, world[i].z));
+        hi = Vector3(std::max(hi.x, world[i].x), std::max(hi.y, world[i].y), std::max(hi.z, world[i].z));
+    }
+    // Where the plane cuts the mesh: each face it crosses contributes the
+    // segment between its two edge crossings, so a point slides along the
+    // exact cut rather than hopping between vertices (the mesh may have no
+    // vertex on the plane at all). Each end also records the nearer vertex.
+    for (const Face& f : ref.mesh->GetFaces()) {
+        const auto& vi = f.vertexIndices;
+        Vector3 cross[2];
+        int crossVertex[2] = {-1, -1};
+        int n = 0;
+        for (size_t e = 0; e < vi.size() && n < 2; ++e) {
+            const unsigned a = vi[e], b = vi[(e + 1) % vi.size()];
+            if ((dist[a] < 0.0f) == (dist[b] < 0.0f)) continue;
+            const float s = dist[a] / (dist[a] - dist[b]);
+            cross[n] = world[a] + (world[b] - world[a]) * s;
+            crossVertex[n] = static_cast<int>(s < 0.5f ? a : b);
+            ++n;
+        }
+        if (n == 2) {
+            midlineCache_.segments.push_back({cross[0], cross[1], crossVertex[0], crossVertex[1]});
+        }
+    }
+    midlineCache_.diagonal = (hi - lo).Length();
+    midlineCache_.valid = true;
+}
+
+void AppWindow::BeginPointDrag(int index) {
+    if (!project_) return;
+    (void)index;
+    dragBefore_ = project_->GetPointReferenceData().correspondences;
+    dragMoved_ = false;
+    midlineCache_.valid = false;
+}
+
+void AppWindow::DragPoint(int index, PointSide side, const Ray& ray, bool oneSide) {
+    if (!project_) return;
+    PointReferenceData& data = project_->GetPointReferenceData();
+    auto& points = data.correspondences;
+    if (index < 0 || index >= static_cast<int>(points.size())) return;
+    MeshReference& ref = side == PointSide::Target ? project_->GetTargetMesh()
+                                                   : project_->GetMorphMesh();
+    if (!ref.isLoaded || !ref.mesh) return;
+
+    Ray r = ray;
+    r.direction = r.direction.Normalized();
+    BVH* bvh = ref.mesh->GetBVH();
+    const RaycastHit hit = bvh ? RayCaster::RayIntersectMeshBVH(r, *ref.mesh, ref.transform, *bvh)
+                               : RayCaster::RayIntersectMesh(r, *ref.mesh, ref.transform);
+    Vector3 planePoint, planeNormal;
+    SymmetryPlaneFor(side, planePoint, planeNormal);
+
+    PointCorrespondence& corr = points[index];
+    Vector3 pos;
+    int vertex = -1;
+    if (corr.isMidlineLandmark && !corr.midlineUnlocked) {
+        // Locked to the plane: the point on the plane cut nearest the cursor
+        // ray, preferring the one nearest the surface under the cursor so
+        // the far side of the head never wins.
+        if (!midlineCache_.valid || midlineCache_.side != side) {
+            BuildMidlineCache(side, planePoint, planeNormal);
+        }
+        // Measured along the world ray: RaycastHit::distance is in the mesh's
+        // local units, and a filter built on it rejected every candidate on a
+        // target scaled in Stage 1, so the point stopped following the cursor.
+        const float hitT = hit.hit ? (hit.position - r.origin).Dot(r.direction) : 0.0f;
+        float best = std::numeric_limits<float>::max();
+        for (const MidlineSegment& seg : midlineCache_.segments) {
+            // Closest point on the segment to the ray's line, clamped to the
+            // segment.
+            const Vector3 u = seg.b - seg.a;
+            const Vector3 w0 = seg.a - r.origin;
+            const float a = u.Dot(u);
+            const float b = u.Dot(r.direction);
+            const float d = u.Dot(w0);
+            const float e = r.direction.Dot(w0);
+            const float denom = a - b * b;
+            float s = denom > 1e-12f ? (b * e - d) / denom : 0.0f;
+            s = std::clamp(s, 0.0f, 1.0f);
+            const Vector3 onSeg = seg.a + u * s;
+            const float t = (onSeg - r.origin).Dot(r.direction);
+            if (t < 0.0f) continue;
+            // Distance from the ray, plus a small pull toward the surface
+            // under the cursor: a grazing ray can pass near the cut twice
+            // (the chin, then the dip above it, or the back of the head) and
+            // should pick the point it reaches first.
+            const float score = (onSeg - (r.origin + r.direction * t)).Length() +
+                                (hit.hit ? 0.05f * std::abs(t - hitT) : 0.0f);
+            if (score < best) {
+                best = score;
+                pos = onSeg;
+                vertex = s < 0.5f ? seg.vertexA : seg.vertexB;
+            }
+        }
+        if (vertex < 0) return;
+    } else {
+        if (!hit.hit) return;  // off the mesh: keep the last surface position
+        pos = hit.position;
+        vertex = hit.vertexIndex;
+    }
+
+    auto setSide = [side](PointCorrespondence& c, const Vector3& p, int v) {
+        if (side == PointSide::Target) {
+            c.targetMeshPosition = p;
+            c.targetMeshVertexIndex = v;
+        } else {
+            c.morphMeshPosition = p;
+            c.morphMeshVertexIndex = v;
+        }
+        // Moved by the user, so it is checked: no longer an auto point.
+        c.isAuto = false;
+        c.confidence = -1.0f;
+    };
+    setSide(corr, pos, vertex);
+    dragMoved_ = true;
+
+    // Mirrored drag: the partner follows to the reflected spot, unless Alt
+    // is held or the setting is off.
+    if (!data.mirrorDrag || oneSide || !corr.isSymmetric || corr.symmetricPairID < 0) return;
+    for (auto& partner : points) {
+        if (partner.pointID != corr.symmetricPairID) continue;
+        // The closest surface point to the reflected position, not the
+        // nearest vertex, so the partner moves as smoothly as the cursor.
+        const Vector3 mirrored = pos - planeNormal * (2.0f * (pos - planePoint).Dot(planeNormal));
+        if (bvh) {
+            const Matrix4x4 m = ref.transform.GetMatrix();
+            const auto& verts = ref.mesh->GetVertices();
+            const BVHClosestPointResult c =
+                bvh->FindClosestPoint(RayCaster::TransformPoint(mirrored, m.Inverse()), verts);
+            if (c.found) {
+                unsigned nearest = c.i0;
+                for (unsigned idx : {c.i1, c.i2}) {
+                    if ((verts[idx] - c.point).Length() < (verts[nearest] - c.point).Length()) nearest = idx;
+                }
+                setSide(partner, RayCaster::TransformPoint(c.point, m), static_cast<int>(nearest));
+            }
+        } else {
+            const int mv = RayCaster::FindNearestVertex(mirrored, *ref.mesh, ref.transform);
+            if (mv >= 0) {
+                setSide(partner,
+                        RayCaster::TransformPoint(ref.mesh->GetVertices()[mv], ref.transform.GetMatrix()),
+                        mv);
+            }
+        }
+        break;
+    }
+}
+
+void AppWindow::EndPointDrag(int index) {
+    (void)index;
+    if (project_ && dragMoved_ && undoStack_) {
+        undoStack_->Push(std::make_unique<PointPlacementUndoAction>(
+            project_.get(), dragBefore_, project_->GetPointReferenceData().correspondences,
+            "Move Point"));
+    }
+    dragBefore_.clear();
+    dragMoved_ = false;
+    midlineCache_.valid = false;
+}
+
+// ---------------------------------------------------------------------------
+// Sprint 14 — custom source profiles
+// ---------------------------------------------------------------------------
+
+bool AppWindow::ClosestSurfacePoint(const MeshReference& ref, const Vector3& world,
+                                    Vector3& pos, int& vertex) const {
+    if (!ref.mesh) return false;
+    const Matrix4x4 m = ref.transform.GetMatrix();
+    const auto& verts = ref.mesh->GetVertices();
+    if (BVH* bvh = ref.mesh->GetBVH()) {
+        const BVHClosestPointResult c =
+            bvh->FindClosestPoint(RayCaster::TransformPoint(world, m.Inverse()), verts);
+        if (!c.found) return false;
+        unsigned nearest = c.i0;
+        for (unsigned idx : {c.i1, c.i2}) {
+            if ((verts[idx] - c.point).Length() < (verts[nearest] - c.point).Length()) nearest = idx;
+        }
+        pos = RayCaster::TransformPoint(c.point, m);
+        vertex = static_cast<int>(nearest);
+        return true;
+    }
+    const int v = RayCaster::FindNearestVertex(world, *ref.mesh, ref.transform);
+    if (v < 0) return false;
+    pos = RayCaster::TransformPoint(verts[v], m);
+    vertex = v;
+    return true;
+}
+
+bool AppWindow::BlockedByProfileEditor() {
+    if (!editor_.active) return false;
+    errorModal_.Open("Save or cancel the profile editor first.", "Profile Editor Open");
+    return true;
+}
+
+void AppWindow::ReloadSourceProfiles() {
+    sourceProfiles_ = ProfileStore::LoadAll();
+    if (project_ && !editor_.active) {
+        ResolveLandmarkNames(project_->GetPointReferenceData().correspondences);
+    }
+}
+
+void AppWindow::NewProjectWithDefaultProfile() {
+    if (BlockedByProfileEditor()) return;
+    OnFileNewProject();
+    const std::string& id = Config::Instance().DefaultSourceProfileId();
+    const SourceProfile* profile = ProfileStore::FindById(sourceProfiles_, id);
+    if (!profile || profile->meshMissing) return;
+    SelectSourceProfile(*profile);
+    // A new project starts with a clean history.
+    if (undoStack_) undoStack_->Clear();
+}
+
+void AppWindow::AttachProfileToProject(const std::string& profileId, const std::string& description) {
+    if (!project_ || project_->GetSourceProfileId() == profileId) return;
+    auto before = SourceSwapUndoAction::SourceState::Capture(*project_);
+    project_->SetSourceProfileId(profileId);
+    ResolveLandmarkNames(project_->GetPointReferenceData().correspondences);
+    auto after = SourceSwapUndoAction::SourceState::Capture(*project_);
+    if (undoStack_) {
+        undoStack_->Push(std::make_unique<SourceSwapUndoAction>(
+            project_.get(), std::move(before), std::move(after), description));
+    }
+}
+
+void AppWindow::HandleProfileRequest(StageSidebar::Actions::ProfileRequest request) {
+    using R = StageSidebar::Actions::ProfileRequest;
+    switch (request) {
+        case R::NewFromMesh: OpenProfileEditor(nullptr); break;
+        case R::EditActive:
+            if (project_) {
+                if (const SourceProfile* p =
+                        ProfileStore::FindById(sourceProfiles_, project_->GetSourceProfileId())) {
+                    const SourceProfile copy = *p;
+                    OpenProfileEditor(&copy);
+                }
+            }
+            break;
+        case R::SaveSourceAsProfile: RequestSaveSourceAsProfile(); break;
+        case R::Manage: manageProfiles_.Open(); break;
+        default: break;
+    }
+}
+
+void AppWindow::RequestSaveSourceAsProfile() {
+    if (!project_) return;
+    const MeshReference& src = project_->GetMorphMesh();
+    if (!src.isLoaded || !src.mesh) {
+        errorModal_.Open("Load a source mesh in Stage 1 first.", "Save Source as Profile");
+        return;
+    }
+    if (src.filepath.empty()) {
+        errorModal_.Open("The source mesh has no file on disk to copy into a profile.",
+                         "Save Source as Profile");
+        return;
+    }
+    const std::string stem = std::filesystem::path(src.filepath).stem().string();
+    namePrompt_.Open("Save source as profile",
+                     "Saves the source mesh, its points as landmarks, and its mask as a "
+                     "reusable profile. The mesh is copied into the profile.",
+                     stem.empty() ? std::string("My profile") : stem,
+                     [this](const std::string& name) { SaveSourceAsProfile(name); });
+}
+
+void AppWindow::SaveSourceAsProfile(const std::string& name) {
+    if (!project_) return;
+    SourceProfile profile = SourceProfile::DraftFromProject(*project_, "");
+    profile.id = ProfileStore::GenerateUserProfileId();
+    profile.name = name;
+    profile.description.clear();
+    profile.isBuiltIn = false;
+    // A profile-based source keeps its profile's symmetry and wrap preset;
+    // the Stage 2 symmetry setting only drives placement mirroring.
+    if (const SourceProfile* current =
+            ProfileStore::FindById(sourceProfiles_, project_->GetSourceProfileId())) {
+        profile.symmetryAxis = current->symmetryAxis;
+        profile.symmetryPlaneOffset = current->symmetryPlaneOffset;
+        profile.defaultWrapPresetId = current->defaultWrapPresetId;
+    }
+    const auto problems = profile.Validate();
+    if (!problems.empty()) {
+        errorModal_.Open(std::format("The profile couldn't be saved:\n{}", problems.front()),
+                         "Save Source as Profile");
+        return;
+    }
+    if (!ProfileStore::SaveWithMesh(profile, project_->GetMorphMesh().filepath)) {
+        errorModal_.Open("The profile couldn't be written. Check that %APPDATA%\\MetaVisage\\profiles "
+                         "is writable.", "Save Source as Profile");
+        return;
+    }
+    ReloadSourceProfiles();
+    AttachProfileToProject(profile.id, "Save Source as Profile");
+    statusMessage_ = std::format("Saved source profile \"{}\" ({} landmarks)", profile.name,
+                                 profile.landmarks.size());
+    MV_LOG_INFO(std::format("Saved source profile {} ({})", profile.id, profile.name));
+}
+
+int AppWindow::EditorPointIndexOf(const std::string& landmarkId) const {
+    if (!project_) return -1;
+    const auto& points = project_->GetPointReferenceData().correspondences;
+    for (size_t i = 0; i < points.size(); ++i) {
+        if (points[i].landmarkId == landmarkId) return static_cast<int>(i);
+    }
+    return -1;
+}
+
+int AppWindow::EditorNextUnplaced(int from) const {
+    const auto& lms = editor_.draft.landmarks;
+    const int n = static_cast<int>(lms.size());
+    for (int k = 1; k <= n; ++k) {
+        const int i = ((from < 0 ? -1 : from) + k) % n;
+        if (EditorPointIndexOf(lms[i].id) < 0) return i;
+    }
+    return -1;
+}
+
+void AppWindow::OpenProfileEditor(const SourceProfile* existing) {
+    if (!project_ || editor_.active) return;
+    if (morphRunning_.load() || autoMapRunning_.load()) {
+        errorModal_.Open("Wait for processing to finish before editing a profile.", "Profile Editor");
+        return;
+    }
+    std::shared_ptr<Mesh> mesh;
+    Transform transform;
+    SourceProfile draft;
+    std::string meshPath;
+    bool ownMesh = false;
+    if (existing) {
+        if (existing->isBuiltIn) {
+            errorModal_.Open("Built-in profiles are read-only. Duplicate it in Manage profiles "
+                             "to edit a copy.", "Profile Editor");
+            return;
+        }
+        mesh = std::make_shared<Mesh>();
+        if (existing->meshMissing || !mesh->Load(existing->resolvedMeshPath) ||
+            TopologyFingerprint::FromMesh(*mesh) != existing->fingerprint) {
+            errorModal_.Open(std::format("The mesh for \"{}\" is missing or no longer matches the "
+                                         "profile:\n{}", existing->name, existing->resolvedMeshPath),
+                             "Profile Editor");
+            return;
+        }
+        ownMesh = true;
+        draft = *existing;
+        transform = existing->defaultTransform;
+        meshPath = existing->resolvedMeshPath;
+        // Offer the canonical landmarks the profile doesn't have yet.
+        for (const auto& c : SourceProfile::CanonicalLandmarks()) {
+            const bool has = std::any_of(draft.landmarks.begin(), draft.landmarks.end(),
+                                         [&](const ProfileLandmark& l) { return l.id == c.id; });
+            if (!has) draft.landmarks.push_back(c);
+        }
+    } else {
+        const MeshReference& src = project_->GetMorphMesh();
+        if (!src.isLoaded || !src.mesh) {
+            errorModal_.Open("Load a source mesh in Stage 1 first.", "Profile Editor");
+            return;
+        }
+        if (src.filepath.empty()) {
+            errorModal_.Open("The source mesh has no file on disk to copy into a profile.",
+                             "Profile Editor");
+            return;
+        }
+        mesh = src.mesh;
+        transform = src.transform;
+        meshPath = src.filepath;
+        const std::string stem = std::filesystem::path(meshPath).stem().string();
+        draft.name = stem.empty() ? std::string("New profile") : stem + " profile";
+        draft.fingerprint = TopologyFingerprint::FromMesh(*mesh);
+        draft.defaultTransform = transform;
+        if (const SourceProfile* current =
+                ProfileStore::FindById(sourceProfiles_, project_->GetSourceProfileId())) {
+            draft.symmetryAxis = current->symmetryAxis;
+            draft.symmetryPlaneOffset = current->symmetryPlaneOffset;
+        }
+        draft.landmarks = SourceProfile::CanonicalLandmarks();
+        const auto& mask = project_->GetMorphData().vertexMask;
+        if (mask.size() == mesh->GetVertexCount()) draft.maskRanges = MaskRanges::FromMask(mask);
+    }
+
+    // The editor runs on a scratch project with its own history, so Stage 2
+    // placement, dragging and the Stage 3 mask brush work unchanged and the
+    // real project's undo stack is untouched.
+    auto scratch = std::make_unique<Project>();
+    MeshReference& ref = scratch->GetMorphMesh();
+    ref.mesh = mesh;
+    ref.isLoaded = true;
+    ref.filepath = meshPath;
+    ref.transform = transform;
+    scratch->SetSourceProfileId(draft.id);
+    scratch->SetCurrentStage(WorkflowStage::PointReference);
+    std::vector<bool> mask(mesh->GetVertexCount(), false);
+    if (draft.HasMask()) {
+        std::vector<bool> built = draft.BuildMask();
+        if (built.size() == mask.size()) mask = std::move(built);
+    }
+    scratch->GetMorphData().vertexMask = std::move(mask);
+    PointReferenceData& data = scratch->GetPointReferenceData();
+    data.symmetryAxis = draft.symmetryAxis;
+    data.symmetryPlaneOffset = draft.symmetryPlaneOffset;
+    const Matrix4x4 model = transform.GetMatrix();
+    const auto& verts = mesh->GetVertices();
+    std::unordered_map<std::string, int> pointIdOf;
+    for (size_t i = 0; i < draft.landmarks.size(); ++i) {
+        const ProfileLandmark& lm = draft.landmarks[i];
+        if (lm.vertexIndex < 0 || lm.vertexIndex >= static_cast<int>(verts.size())) continue;
+        PointCorrespondence pc;
+        pc.pointID = static_cast<int>(i) + 1;
+        pc.landmarkId = lm.id;
+        pc.morphMeshVertexIndex = lm.vertexIndex;
+        pc.morphMeshPosition = RayCaster::TransformPoint(verts[lm.vertexIndex], model);
+        pointIdOf[lm.id] = pc.pointID;
+        data.correspondences.push_back(std::move(pc));
+    }
+    for (auto& pc : data.correspondences) {
+        const ProfileLandmark& lm = draft.landmarks[pc.pointID - 1];
+        const auto partner = pointIdOf.find(lm.mirrorId);
+        if (!lm.mirrorId.empty() && partner != pointIdOf.end()) {
+            pc.isSymmetric = true;
+            pc.symmetricPairID = partner->second;
+        }
+    }
+
+    editor_.isNew = existing == nullptr;
+    editor_.draft = std::move(draft);
+    editor_.sourceMeshPath = meshPath;
+    editor_.ownMesh = ownMesh;
+    editor_.mirrorFill = true;
+    editor_.dirty = false;
+    editor_.savedProject = std::move(project_);
+    project_ = std::move(scratch);
+    editor_.savedUndo = std::move(undoStack_);
+    undoStack_ = std::make_unique<UndoStack>();
+    editor_.active = true;
+    midlineCache_.valid = false;
+    ResolveLandmarkNames(project_->GetPointReferenceData().correspondences);
+    editor_.activeLandmark = EditorNextUnplaced(-1);
+    if (viewportHost_) {
+        viewportHost_->SetProject(project_.get());
+        viewportHost_->SetSelectedPointIndex(-1);
+    }
+    ApplyStageViewportMode();
+    RefreshMaskOverlay();
+    statusMessage_ = editor_.isNew ? "Profile editor: new profile" : "Profile editor: editing profile";
+}
+
+void AppWindow::CloseProfileEditor() {
+    if (!editor_.active) return;
+    Mesh* editorMesh = editor_.ownMesh ? project_->GetMorphMesh().mesh.get() : nullptr;
+    if (viewportHost_ && editorMesh) {
+        for (Viewport* vp : {viewportHost_->GetPrimaryViewport(), viewportHost_->GetSecondaryViewport()}) {
+            if (vp) vp->InvalidateMesh(editorMesh);
+        }
+    }
+    std::unique_ptr<Project> scratch = std::move(project_);
+    project_ = std::move(editor_.savedProject);
+    undoStack_ = std::move(editor_.savedUndo);
+    editor_ = ProfileEditor{};
+    midlineCache_.valid = false;
+    if (viewportHost_) {
+        viewportHost_->SetProject(project_.get());
+        viewportHost_->SetSelectedPointIndex(-1);
+        // The viewport may still point at the scratch project's mask.
+        if (Viewport* vp = viewportHost_->GetPrimaryViewport()) {
+            vp->SetMaskData(project_ ? &project_->GetMorphData().vertexMask : nullptr);
+        }
+    }
+    ApplyStageViewportMode();
+    RefreshMaskOverlay();
+    scratch.reset();
+}
+
+void AppWindow::RequestCancelProfileEditor() {
+    if (!editor_.active) return;
+    if (!editor_.dirty && !(undoStack_ && undoStack_->CanUndo())) {
+        CloseProfileEditor();
+        statusMessage_ = "Profile editor closed";
+        return;
+    }
+    confirmModal_.Open("Discard profile changes?",
+                       "The landmarks and mask you changed in the profile editor will be lost.",
+                       [this]() {
+                           CloseProfileEditor();
+                           statusMessage_ = "Profile changes discarded";
+                       },
+                       "Discard");
+}
+
+void AppWindow::SaveProfileEditor() {
+    if (!editor_.active || !project_) return;
+    const auto& points = project_->GetPointReferenceData().correspondences;
+    SourceProfile out = editor_.draft;
+    out.landmarks.clear();
+    std::unordered_set<std::string> placed;
+    for (const ProfileLandmark& lm : editor_.draft.landmarks) {
+        const int idx = EditorPointIndexOf(lm.id);
+        if (idx < 0 || points[idx].morphMeshVertexIndex < 0) continue;
+        ProfileLandmark l = lm;
+        l.vertexIndex = points[idx].morphMeshVertexIndex;
+        out.landmarks.push_back(std::move(l));
+        placed.insert(lm.id);
+    }
+    // A pair saves as a pair only when both sides are placed.
+    for (auto& l : out.landmarks) {
+        if (!l.mirrorId.empty() && !placed.count(l.mirrorId)) l.mirrorId.clear();
+    }
+    out.maskRanges = MaskRanges::FromMask(project_->GetMorphData().vertexMask);
+    out.defaultTransform = project_->GetMorphMesh().transform;
+    while (!out.name.empty() && out.name.back() == ' ') out.name.pop_back();
+    if (out.name.empty()) {
+        errorModal_.Open("Give the profile a name before saving.", "Profile Editor");
+        return;
+    }
+    const auto problems = out.Validate();
+    if (!problems.empty()) {
+        errorModal_.Open(std::format("The profile couldn't be saved:\n{}", problems.front()),
+                         "Profile Editor");
+        return;
+    }
+    const bool isNew = editor_.isNew;
+    if (isNew) {
+        out.id = ProfileStore::GenerateUserProfileId();
+        out.isBuiltIn = false;
+    }
+    if (!ProfileStore::SaveWithMesh(out, editor_.sourceMeshPath)) {
+        errorModal_.Open("The profile couldn't be written. Check that %APPDATA%\\MetaVisage\\profiles "
+                         "is writable.", "Profile Editor");
+        return;
+    }
+    CloseProfileEditor();
+    ReloadSourceProfiles();
+    // A profile made from this project's source applies to it; an edit of the
+    // profile the project uses refreshes its landmark names.
+    if (project_ && project_->GetMorphMesh().mesh &&
+        TopologyFingerprint::FromMesh(*project_->GetMorphMesh().mesh) == out.fingerprint && isNew) {
+        AttachProfileToProject(out.id, "Use New Profile");
+    }
+    statusMessage_ = std::format("Saved source profile \"{}\" ({} landmarks)", out.name,
+                                 out.landmarks.size());
+    MV_LOG_INFO(std::format("Profile editor saved {} ({}, {} landmarks)", out.id, out.name,
+                            out.landmarks.size()));
+}
+
+void AppWindow::EditorPlacePoint(const Vector3& pos, int vertex) {
+    auto& lms = editor_.draft.landmarks;
+    if (lms.empty() || !project_) return;
+    int a = editor_.activeLandmark;
+    if (a < 0 || a >= static_cast<int>(lms.size()) || EditorPointIndexOf(lms[a].id) >= 0) {
+        a = EditorNextUnplaced(a);
+    }
+    if (a < 0) {
+        statusMessage_ = "Every landmark is placed. Drag a point to move it.";
+        return;
+    }
+    auto& points = project_->GetPointReferenceData().correspondences;
+    const std::vector<PointCorrespondence> before = points;
+    auto add = [&](int landmark, const Vector3& p, int v) {
+        PointCorrespondence pc;
+        pc.pointID = landmark + 1;
+        pc.landmarkId = lms[landmark].id;
+        pc.morphMeshPosition = p;
+        pc.morphMeshVertexIndex = v;
+        points.push_back(std::move(pc));
+        return static_cast<int>(points.size()) - 1;
+    };
+    const int placedIdx = add(a, pos, vertex);
+
+    // Mirrored partner: fill it at the reflected surface point, or link it if
+    // it's already placed.
+    const std::string& mirrorId = lms[a].mirrorId;
+    int b = -1;
+    for (size_t i = 0; i < lms.size() && !mirrorId.empty(); ++i) {
+        if (lms[i].id == mirrorId) { b = static_cast<int>(i); break; }
+    }
+    if (b >= 0) {
+        int partnerIdx = EditorPointIndexOf(lms[b].id);
+        if (partnerIdx < 0 && editor_.mirrorFill) {
+            Vector3 planePoint, planeNormal;
+            SymmetryPlaneFor(PointSide::Morph, planePoint, planeNormal);
+            const Vector3 mirrored = pos - planeNormal * (2.0f * (pos - planePoint).Dot(planeNormal));
+            Vector3 mp;
+            int mv = -1;
+            if (ClosestSurfacePoint(project_->GetMorphMesh(), mirrored, mp, mv)) {
+                partnerIdx = add(b, mp, mv);
+            }
+        }
+        if (partnerIdx >= 0) {
+            points[placedIdx].isSymmetric = true;
+            points[placedIdx].symmetricPairID = points[partnerIdx].pointID;
+            points[partnerIdx].isSymmetric = true;
+            points[partnerIdx].symmetricPairID = points[placedIdx].pointID;
+        }
+    }
+    ResolveLandmarkNames(points);
+    if (undoStack_) {
+        undoStack_->Push(std::make_unique<PointPlacementUndoAction>(
+            project_.get(), before, points, "Place Landmark"));
+    }
+    editor_.activeLandmark = EditorNextUnplaced(a);
+}
+
+void AppWindow::EditorRemovePoint(int pointIndex) {
+    if (!project_) return;
+    auto& points = project_->GetPointReferenceData().correspondences;
+    if (pointIndex < 0 || pointIndex >= static_cast<int>(points.size())) return;
+    const std::vector<PointCorrespondence> before = points;
+    const int id = points[pointIndex].pointID;
+    for (auto& p : points) {
+        if (p.isSymmetric && p.symmetricPairID == id) {
+            p.isSymmetric = false;
+            p.symmetricPairID = -1;
+        }
+    }
+    const std::string landmarkId = points[pointIndex].landmarkId;
+    points.erase(points.begin() + pointIndex);
+    if (undoStack_) {
+        undoStack_->Push(std::make_unique<PointPlacementUndoAction>(
+            project_.get(), before, points, "Remove Landmark"));
+    }
+    for (size_t i = 0; i < editor_.draft.landmarks.size(); ++i) {
+        if (editor_.draft.landmarks[i].id == landmarkId) editor_.activeLandmark = static_cast<int>(i);
+    }
+}
+
+void AppWindow::HandleProfileEditorActions(const StageSidebar::Actions::EditorActions& a) {
+    if (!editor_.active || !project_) return;
+    auto& lms = editor_.draft.landmarks;
+    if (a.selectLandmark && *a.selectLandmark >= 0 && *a.selectLandmark < static_cast<int>(lms.size())) {
+        editor_.activeLandmark = *a.selectLandmark;
+        const int idx = EditorPointIndexOf(lms[editor_.activeLandmark].id);
+        if (viewportHost_) viewportHost_->SetSelectedPointIndex(idx);
+    }
+    if (a.skip) editor_.activeLandmark = EditorNextUnplaced(editor_.activeLandmark);
+    if (a.removeActive && editor_.activeLandmark >= 0 && editor_.activeLandmark < static_cast<int>(lms.size())) {
+        EditorRemovePoint(EditorPointIndexOf(lms[editor_.activeLandmark].id));
+        if (viewportHost_) viewportHost_->SetSelectedPointIndex(-1);
+    }
+    if (a.addCustom && !a.addCustom->first.empty()) {
+        auto taken = [&](const std::string& id) {
+            return std::any_of(lms.begin(), lms.end(), [&](const ProfileLandmark& l) { return l.id == id; });
+        };
+        int k = 1;
+        while (taken(std::format("custom_{}", k)) || taken(std::format("custom_{}_l", k))) ++k;
+        const std::string base = std::format("custom_{}", k);
+        const std::string& name = a.addCustom->first;
+        editor_.activeLandmark = static_cast<int>(lms.size());
+        if (a.addCustom->second) {
+            lms.push_back({base + "_l", name + " (L)", -1, base + "_r", "custom"});
+            lms.push_back({base + "_r", name + " (R)", -1, base + "_l", "custom"});
+        } else {
+            lms.push_back({base, name, -1, "", "custom"});
+        }
+        editor_.dirty = true;
+    }
+    if (a.mirrorFill) editor_.mirrorFill = *a.mirrorFill;
+    if (a.symmetryAxis) {
+        editor_.draft.symmetryAxis = *a.symmetryAxis;
+        project_->GetPointReferenceData().symmetryAxis = *a.symmetryAxis;
+        midlineCache_.valid = false;
+        editor_.dirty = true;
+    }
+    if (a.rename) {
+        editor_.draft.name = *a.rename;
+        editor_.dirty = true;
+    }
+    if (a.maskTab) {
+        project_->SetCurrentStage(*a.maskTab ? WorkflowStage::Morph : WorkflowStage::PointReference);
+        ApplyStageViewportMode();
+        RefreshMaskOverlay();
+    }
+    if (a.save) SaveProfileEditor();
+    else if (a.cancel) RequestCancelProfileEditor();
+}
+
+void AppWindow::RefreshProfileEditorView() {
+    if (!editor_.active || !project_) return;
+    editorView_.name = editor_.draft.name;
+    editorView_.isNew = editor_.isNew;
+    editorView_.landmarks = &editor_.draft.landmarks;
+    editorView_.placed.assign(editor_.draft.landmarks.size(), false);
+    for (size_t i = 0; i < editor_.draft.landmarks.size(); ++i) {
+        editorView_.placed[i] = EditorPointIndexOf(editor_.draft.landmarks[i].id) >= 0;
+    }
+    editorView_.activeLandmark = editor_.activeLandmark;
+    editorView_.mirrorFill = editor_.mirrorFill;
+    editorView_.symmetryAxis = editor_.draft.symmetryAxis;
+    editorView_.maskTab = project_->GetCurrentStage() == WorkflowStage::Morph;
+    const auto& mask = project_->GetMorphData().vertexMask;
+    editorView_.hasMask = std::find(mask.begin(), mask.end(), true) != mask.end();
+}
+
+void AppWindow::HandleManageAction() {
+    const ProfileManageAction action = manageProfiles_.action;
+    if (action == ProfileManageAction::None) return;
+    const std::string id = manageProfiles_.targetId;
+    manageProfiles_.action = ProfileManageAction::None;
+    manageProfiles_.targetId.clear();
+    const SourceProfile* found = ProfileStore::FindById(sourceProfiles_, id);
+    switch (action) {
+        case ProfileManageAction::Edit:
+            if (found) {
+                const SourceProfile copy = *found;
+                OpenProfileEditor(&copy);
+            }
+            break;
+        case ProfileManageAction::Rename:
+            if (found && !found->isBuiltIn) {
+                namePrompt_.Open("Rename profile", "", found->name, [this, id](const std::string& name) {
+                    const SourceProfile* p = ProfileStore::FindById(sourceProfiles_, id);
+                    if (!p) return;
+                    SourceProfile renamed = *p;
+                    renamed.name = name;
+                    if (!ProfileStore::Save(renamed)) {
+                        errorModal_.Open("The profile couldn't be renamed.", "Manage Profiles");
+                        return;
+                    }
+                    ReloadSourceProfiles();
+                    manageProfiles_.Open();
+                }, "Rename");
+            }
+            break;
+        case ProfileManageAction::Duplicate:
+            if (found) {
+                namePrompt_.Open("Duplicate profile",
+                                 "Makes an editable copy, including its mesh.",
+                                 found->name + " copy", [this, id](const std::string& name) {
+                    const SourceProfile* p = ProfileStore::FindById(sourceProfiles_, id);
+                    if (!p || !ProfileStore::Duplicate(*p, name)) {
+                        errorModal_.Open("The profile couldn't be duplicated.", "Manage Profiles");
+                        return;
+                    }
+                    ReloadSourceProfiles();
+                    manageProfiles_.Open();
+                }, "Duplicate");
+            }
+            break;
+        case ProfileManageAction::Delete:
+            if (found && !found->isBuiltIn) {
+                confirmModal_.Open(std::format("Delete \"{}\"?", found->name),
+                                   "Its folder and mesh copy are removed. Projects that used it "
+                                   "still open with their points and mask.",
+                                   [this, id]() {
+                                       if (!ProfileStore::Delete(id)) {
+                                           errorModal_.Open("The profile couldn't be deleted.",
+                                                            "Manage Profiles");
+                                           return;
+                                       }
+                                       if (Config::Instance().DefaultSourceProfileId() == id) {
+                                           Config::Instance().SetDefaultSourceProfileId("");
+                                       }
+                                       ReloadSourceProfiles();
+                                       manageProfiles_.Open();
+                                   },
+                                   "Delete");
+            }
+            break;
+        case ProfileManageAction::SetDefault:
+            Config::Instance().SetDefaultSourceProfileId(id);
+            break;
+        case ProfileManageAction::Export:
+            if (found) ExportProfilePackage(*found);
+            break;
+        case ProfileManageAction::Import:
+            ImportProfilePackage();
+            break;
+        default:
+            break;
+    }
+}
+
+void AppWindow::ExportProfilePackage(const SourceProfile& profile) {
+    std::string defaultName = profile.name;
+    for (char& c : defaultName) {
+        if (std::string("\\/:*?\"<>|").find(c) != std::string::npos) c = '_';
+    }
+    const auto picked = FileDialogs::SaveFile({{"MetaVisage profile package", "zip"}},
+                                              defaultName + ".mvprofile.zip");
+    if (!picked) {
+        manageProfiles_.Open();
+        return;
+    }
+    std::string error;
+    if (!ProfileStore::ExportPackage(profile, *picked, &error)) {
+        errorModal_.Open(std::format("The profile couldn't be exported: {}", error), "Export Profile");
+        return;
+    }
+    statusMessage_ = std::format("Exported \"{}\" to {}", profile.name, *picked);
+    manageProfiles_.Open();
+}
+
+void AppWindow::ImportProfilePackage() {
+    const auto picked = FileDialogs::OpenFile({{"MetaVisage profile package", "zip"}});
+    if (!picked) {
+        manageProfiles_.Open();
+        return;
+    }
+    std::string error;
+    const auto imported = ProfileStore::ImportPackage(*picked, &error);
+    if (!imported) {
+        errorModal_.Open(std::format("The profile couldn't be imported: {}", error), "Import Profile");
+        return;
+    }
+    ReloadSourceProfiles();
+    statusMessage_ = std::format("Imported profile \"{}\" ({} landmarks)", imported->name,
+                                 imported->landmarks.size());
+    manageProfiles_.Open();
 }
 
 } // namespace MetaVisage

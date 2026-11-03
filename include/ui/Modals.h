@@ -1,6 +1,7 @@
 #ifndef METAVISAGE_UI_MODALS_H
 #define METAVISAGE_UI_MODALS_H
 
+#include "core/SourceProfile.h"
 #include "io/MeshExporter.h"
 
 #include <functional>
@@ -160,6 +161,66 @@ struct ShortcutsModalState {
     void Open();
 };
 void RenderShortcutsModal(ShortcutsModalState& state);
+
+// ---------------------------------------------------------------------------
+// Auto-map (Sprint 13) — the Auto / Manual prompt on entering Stage 2, the
+// replace-or-fill choice when re-running over existing points, and the
+// progress modal with Cancel while the solver runs. The renderer records
+// the user's answer in `choice`; AppWindow consumes and resets it.
+// ---------------------------------------------------------------------------
+
+enum class AutoMapChoice { None, AutoMap, Manual, Replace, Fill, Cancel, CancelRun };
+
+struct AutoMapModalState {
+    enum class Ask { Prompt, Rerun };
+    bool pendingChoice = false;
+    bool pendingProgress = false;
+    Ask ask = Ask::Prompt;
+    std::string profileName;
+    AutoMapChoice choice = AutoMapChoice::None;
+
+    // Progress, written by AppWindow each frame while the solver runs.
+    bool running = false;
+    float progress = 0.0f;
+    std::string stageText;
+
+    void OpenPrompt(const std::string& profile);
+    void OpenRerun();
+    void OpenProgress();
+};
+void RenderAutoMapModals(AutoMapModalState& state);
+
+// ---------------------------------------------------------------------------
+// Sprint 14 — a one-field name prompt (save source as profile, rename,
+// duplicate) and the Manage Profiles list. The list records the user's
+// request in `action` / `targetId`; AppWindow consumes and resets it.
+// ---------------------------------------------------------------------------
+
+struct NamePromptModalState {
+    bool pendingOpen = false;
+    std::string title;
+    std::string message;
+    std::string confirmLabel = "Save";
+    char buffer[128] = {};
+    std::function<void(const std::string&)> onConfirm;
+
+    void Open(const std::string& t, const std::string& msg, const std::string& initialName,
+              std::function<void(const std::string&)> confirm, const std::string& confirmLbl = "Save");
+};
+void RenderNamePromptModal(NamePromptModalState& state);
+
+enum class ProfileManageAction { None, Edit, Rename, Duplicate, Delete, SetDefault, Import, Export };
+
+struct ManageProfilesModalState {
+    bool pendingOpen = false;
+    ProfileManageAction action = ProfileManageAction::None;
+    std::string targetId;   // empty with SetDefault = no default
+
+    void Open() { pendingOpen = true; }
+};
+void RenderManageProfilesModal(ManageProfilesModalState& state,
+                               const std::vector<SourceProfile>& profiles,
+                               const std::string& defaultProfileId);
 
 } // namespace MetaVisage
 
